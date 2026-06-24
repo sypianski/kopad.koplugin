@@ -1,4 +1,4 @@
-# koreader-kopad
+# kopad.koplugin
 
 A [KOReader](https://github.com/koreader/koreader) plugin that turns a connected **gamepad** into a reading controller — page-turning, menu navigation, and a crosshair cursor that snaps to nearest words for highlight / dictionary / AI lookup.
 
