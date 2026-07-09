@@ -43,6 +43,7 @@ local LuaSettings    = require("luasettings")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local logger          = require("logger")
 local _               = require("gettext")
+local Pluginaro       = require("pluginaro")
 
 local kopad = WidgetContainer:extend{
     name        = "kopad",
@@ -135,6 +136,14 @@ function kopad:addToMainMenu(menu_items)
                 end
             end
         end
+    end
+
+    local ext_rows = Pluginaro.build_ext_menu("kopad")
+    if #ext_rows > 0 then
+        table.insert(sub_items, {
+            text = _("Rozszerzenia"),
+            sub_item_table = ext_rows,
+        })
     end
 
     menu_items.kopad = {
