@@ -31,6 +31,7 @@ local Event          = require("ui/event")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager      = require("ui/uimanager")
 local logger         = require("logger")
+local Pluginaro      = require("pluginaro")
 
 local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 
@@ -92,6 +93,14 @@ end
 
 function PadNav:_is_enabled()
     if self.ui and self.ui._kokb_overlay then return false end
+    -- Modal arbitration: while a KOReader Menu / dialog owns the top of the
+    -- window stack, stand down from every reader-context gamepad handler
+    -- (crosshair / selector openers, shoulder-button page turns, face
+    -- buttons). Menu D-pad navigation is unaffected: the Menu sits on top of
+    -- the window stack and consumes Up/Down/Left/Right/Press before padnav
+    -- (in active_widgets) is ever consulted. kopad's own overlay is a Widget,
+    -- not in MODAL_CLASSES, so selection handling inside it still works.
+    if Pluginaro.is_modal_active() then return false end
     return self.enabled_ref and self.enabled_ref.enabled
 end
 
