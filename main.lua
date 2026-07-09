@@ -66,6 +66,22 @@ function kopad:init()
 
     self:_load_subs()
 
+    -- Integration A (pluginaro): kopad can steer visel's selection with the
+    -- gamepad. The toggle lives in visel's menu (menu_location = "host");
+    -- kopad's menu shows the auto-generated signpost annotation. Routing
+    -- checks is_enabled per event through Pluginaro.call_provided, so no
+    -- on_enable/on_disable hooks are needed. Registering when visel
+    -- (keyreader) is absent is harmless: nothing provides the impl, so
+    -- call_provided keeps returning nil and behaviour stays as today.
+    Pluginaro.register("visel", {
+        id              = "gamepad_select",
+        provider        = "kopad",
+        section         = "extensions",
+        menu_location   = "host",
+        label           = "Steruj także z gamepada (kopad)",
+        default_enabled = false,
+    })
+
     if self.ui and self.ui.menu then
         self.ui.menu:registerToMainMenu(self)
     end

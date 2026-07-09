@@ -25,6 +25,11 @@ Selection (struct/walk overlay):
 Dictionary popup:
   LB / RB               Cycle dictionaries
   Y                     AI explain
+
+Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
+  D-pad / L-stick ←/→   Move visel selection (as keyboard ←/→)
+  RB / LB               Extend / trim selection (as Shift+→ / Shift+←)
+  B                     Close visel
 ]]
 
 local Event          = require("ui/event")
@@ -174,6 +179,28 @@ function PadNav:_selector()
         and self.enabled_ref.subs.selector
 end
 
+-- Integration A (pluginaro): route a gamepad event into visel's selection
+-- while the visel overlay is open AND the user opted in
+-- (`visel.ext.kopad.gamepad_select`). Returns true when the event was
+-- routed (caller consumes it). call_provided returns nil when the toggle
+-- is OFF, visel is absent (nothing provided) or the impl errors — in all
+-- of those cases we return false and the handler falls through to today's
+-- behaviour (which, with the visel overlay open, is `_is_enabled() ==
+-- false` → stand down, exactly as before this integration).
+-- Note this check runs BEFORE _is_enabled() in the handlers, because
+-- _is_enabled() deliberately returns false while `ui._kokb_overlay` is set
+-- — the very state we are routing for. The kopad master switch and the
+-- Task-2 modal guard are re-checked here so neither is bypassed.
+function PadNav:_visel_route(method, arg)
+    if not (self.enabled_ref and self.enabled_ref.enabled) then return false end
+    if Pluginaro.is_modal_active() then return false end
+    if not Pluginaro.call_provided("visel", "kopad", "gamepad_select", "is_active") then
+        return false
+    end
+    Pluginaro.call_provided("visel", "kopad", "gamepad_select", method, arg)
+    return true
+end
+
 function PadNav:_is_rtl()
     if not self.ui or not self.ui.document then return false end
     local ok, props = pcall(function() return self.ui.document:getProps() end)
@@ -270,6 +297,7 @@ function PadNav:onKPDown()
     return true
 end
 function PadNav:onKPLeft()
+    if self:_visel_route("move", -1) then return true end
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if selector and selector.overlay then
@@ -284,6 +312,7 @@ function PadNav:onKPLeft()
     self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
 end
 function PadNav:onKPRight()
+    if self:_visel_route("move", 1) then return true end
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if selector and selector.overlay then
@@ -343,6 +372,7 @@ function PadNav:onKPDown2()
     self:_dpad(0, 1); return true
 end
 function PadNav:onKPLeft2()
+    if self:_visel_route("move", -1) then return true end
     if not self:_is_enabled() then return false end
     if self._x_mode then
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowHist")) end)
@@ -351,6 +381,7 @@ function PadNav:onKPLeft2()
     self:_dpad(-1, 0); return true
 end
 function PadNav:onKPRight2()
+    if self:_visel_route("move", 1) then return true end
     if not self:_is_enabled() then return false end
     if self._x_mode then
         self:_x_combo(function() self.ui:handleEvent(Event:new("Home")) end)
@@ -547,6 +578,7 @@ end
 
 -- RB: X+RB=bm, enter/quick extend right (overlay), page forward (reading)
 function PadNav:onKPPgFwd()
+    if self:_visel_route("extend", 1) then return true end
     if not self:_is_enabled() then return false end
     if self._x_mode then
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowBookmark")) end)
@@ -575,6 +607,7 @@ end
 
 -- LB: X+LB=TOC, enter/quick extend left (overlay), page back (reading)
 function PadNav:onKPPgBk()
+    if self:_visel_route("extend", -1) then return true end
     if not self:_is_enabled() then return false end
     if self._x_mode then
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowToc")) end)
@@ -621,6 +654,7 @@ end
 
 -- B: exit extend mode, or close overlay
 function PadNav:onKPBack()
+    if self:_visel_route("close") then return true end
     if not self:_is_enabled() then return false end
 
     local selector = self:_selector()
