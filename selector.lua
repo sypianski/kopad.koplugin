@@ -1130,13 +1130,6 @@ end
 function SelectorOverlay:_do_ai(sel)
     local text = util.cleanupSelectedText(sel.text)
     if text == "" then return end
-    local assistant = self.ui and self.ui.assistant
-    if not assistant or not assistant.querier then
-        UIManager:show(InfoMessage:new{ text = _("AI not available"), timeout = 2 })
-        return
-    end
-    local ok_v, ChatGPTViewer = pcall(require, "assistant_viewer")
-    if not ok_v then return end
 
     local passage = sel.text
     if self.words and #self.words > 0 then
@@ -1147,7 +1140,8 @@ function SelectorOverlay:_do_ai(sel)
         if ok_p and p and p ~= "" then passage = p end
     end
 
-    local lang = assistant.ui_language or "English"
+    local assistant = self.ui and self.ui.assistant
+    local lang = (assistant and assistant.ui_language) or "English"
     local messages = {
         { role = "system",
           content = "You are a concise literary assistant. Be brief and direct." },
@@ -1156,19 +1150,8 @@ function SelectorOverlay:_do_ai(sel)
                  .. lang .. ". 2-4 sentences.\n\nPassage:\n" .. passage },
     }
 
-    local ui = self.ui
-    local NetworkMgr = require("ui/network/manager")
-    local Trapper    = require("ui/trapper")
-    NetworkMgr:runWhenOnline(function()
-        Trapper:wrap(function()
-            local ret, err = assistant.querier:query(messages, _("Looking up..."))
-            if err then assistant.querier:showError(err); return end
-            UIManager:show(ChatGPTViewer:new{
-                assistant = assistant, ui = ui,
-                title = _("AI"), text = (ret or ""),
-            })
-        end)
-    end)
+    -- Own transport when configured, assistant.koplugin as fallback (see lib/llm.lua).
+    require("llm").ask(self.ui, messages, { title = _("AI"), err_timeout = 2 })
 end
 
 function SelectorOverlay:_do_vortuyo(sel)
