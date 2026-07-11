@@ -1,0 +1,130 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+`kopad` is a **KOReader plugin** (pure Lua, AGPL-3.0) that turns a connected SDL3
+gamepad into a reading controller: page-turning, menu navigation, and a
+crosshair cursor that snaps to nearest words for highlight / dictionary / AI
+lookup. Name = KO(Reader) + (game)pad.
+
+There is **no build step, no test suite, no package manager**. Development is
+edit-Lua → load into KOReader → observe. The repo *is* the plugin source.
+
+## Runtime requirements (not satisfiable from this repo alone)
+
+The plugin cannot run without two things that live upstream in `sypianski/koreader-konfig`:
+
+1. **KOReader built with the SDL3 gamepad patch** (`sdl3_gamepad.patch`) — feeds
+   gamepad buttons in as standard KOReader key names.
+2. **The `1-lstick-keys.lua` userpatch** — splits the left analog stick into
+   distinct `LStickUp/Down/Left/Right` key events. Without it, `padnav.lua`
+   falls back to `Up/Down/Left/Right` (the `KP*2` bindings), which also carry
+   the D-pad — so L-stick and D-pad become indistinguishable.
+
+## Install / test loop
+
+The plugin directory must be named `kopad.koplugin/` when deployed. Copy the
+repo's `.lua` files into it, then drop it into KOReader's `plugins/` dir:
+
+| Platform | Path |
+|---|---|
+| Linux (native) | `~/.config/koreader/plugins/` |
+| Linux (Flatpak) | `~/.var/app/rocks.koreader.KOReader/config/koreader/plugins/` |
+
+Restart KOReader, plug in a gamepad, enable via menu → *more tools* → *kopad* →
+*Enable kopad*. Settings persist to KOReader's settings dir as `kopad.lua`
+(`enabled` flag only). Debug via KOReader's `logger` output (`logger.warn`
+calls in `main.lua`, `logger.dbg` elsewhere).
+
+## Architecture
+
+Three-layer design. Understanding the split is the fastest way to be productive.
+
+### `main.lua` — plugin shell (`WidgetContainer`)
+Thin glue. On `init` it opens `LuaSettings`, then lazily loads two sub-modules
+into `self.subs` via `safe_require` (pcall-wrapped so a failure warns instead of
+crashing KOReader):
+- `self.subs.nav` = `PadNav` (always)
+- `self.subs.selector` = `Selector` (only when `ui.rolling` exists, i.e. EPUB/
+  reflowable docs — created lazily in `_ensure_selector`, retried on
+  `onReaderReady`).
+
+The main-menu toggle flips `self.enabled` and calls
+`nav:_suppress_reader_keys()` / `nav:restore_reader_keys()`. Sub-modules
+contribute menu entries via an optional `getMenuItems()` method that
+`addToMainMenu` collects reflectively.
+
+### `padnav.lua` — event router (`InputContainer`, `PadNav`)
+Owns all gamepad `key_events` bindings and the **key-suppression** mechanism.
+It inserts itself at the front of `ui.active_widgets` so it sees events first,
+then *removes* conflicting bindings (`MoveUp`, `GotoNextView`, any `Press`
+binding, …) from every reader module (`ui.rolling`, `ui.paging`, `ui.view`,
+footer, highlight, bookmark, and every active widget) — saving them in
+`_saved_keys` for restore on disable. This is why toggling the plugin, or
+`onReaderReady` re-applying suppression, matters: KOReader modules set their
+`key_events` at different lifecycle points.
+
+Every `on<Key>` handler first checks `_is_enabled()` (returns `false` to pass
+the event through when disabled or when a `_kokb_overlay` is up). Handlers
+branch on whether `selector.overlay` exists and which `mode` it's in, then
+delegate to overlay methods. Reading-mode-only state: `_x_mode` (X button acts
+as a modifier for D-pad/shoulder combos: menu / footer / history / files / TOC /
+bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
+
+### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
+The visual selection engine. `Selector` is the factory/lifecycle wrapper
+(`_open`, `_open_walk`, `_close`); `SelectorOverlay` is the painted widget with
+a single `self.mode` state machine:
+
+- **`cross`** — free crosshair driven by R-stick; snaps to nearest word by
+  Euclidean distance (`_nearest_word`). Entry mode.
+- **`struct`** — sentence/paragraph/word structured selection after confirming.
+  Navigates `self.sentences[]` (from `paginmapo`), tracks `sel_sent`/`sel_tail`/
+  `sel_word`, cycles page highlights (`hl_items`/`hl_cur`), supports
+  extend/trim (`enter_extend`, `quick_extend_*`, `extend_dpad`).
+- **`walk`** — linear word-by-word walk across the whole page (`_ww_move`,
+  `_ww_line`), including split-word fragment handling for hyphenated/wrapped
+  words (`_is_split_word`, `_resolve_split_fragment`).
+
+Actions on the current selection (`_get_selection`): `_do_dict`, `_do_ai`,
+`_do_vortuyo`, `_do_highlight`/`_do_toggle_highlight`, `_do_copy`, `_do_note`.
+`_hook_dict_widget` patches the open dictionary popup so Y → AI explain and
+LB/RB cycle dictionaries. Painting is done with manual blitbuffer inversion
+(`invert_rounded_rect`, `_draw_*` methods) — no standard widgets for the
+selection rectangles.
+
+### `paginmapo.lua` — VENDORED word-extraction helper
+CRengine helper (`WordSource`) that walks the visible page and returns word
+items `{ text, xp0, xp1, next_xp0, sbox, sent_end }` plus sentence groupings.
+Sentence-boundary logic is deliberately careful: `.` ends a sentence only when
+the next word is capitalized (avoids `M.I.T.`, `Dr.`, `e.g.` splits); `!?؟۔` and
+paragraph breaks always end. Public API: `collect_words`, `collect_sentences`,
+`collect_sentences_from_words`, `find_sentence_start/end`,
+`page_starts_at_boundary`.
+
+**This file is vendored, not authored here.** Identical copies ship in sibling
+plugins `keyreader`, `marjenoti`, and `assistant` so each stays
+runtime-independent. If you edit `paginmapo.lua` here, the change must be
+mirrored to those upstream copies — do not let it diverge.
+
+## Key events reference
+
+Physical button → KOReader key name → `padnav` binding. Names come from SDL3 +
+the userpatch. When adding/changing controls, edit the `key_events` table in
+`PadNav:init` and the matching `on<Key>` handler; the docstring blocks at the
+top of `main.lua` and `padnav.lua` are the human-facing control maps and should
+be kept in sync with behavior. Note the two docstrings currently describe
+slightly different layouts — **`padnav.lua`'s handlers are the source of
+truth**, not the `main.lua` header comment.
+
+## Conventions
+
+- Load KOReader modules with `require` at file top (`ui/...`, `device`, etc.);
+  never assume they exist off the reader — guard with `pcall`/nil-checks the way
+  `safe_require` and `_ensure_selector` do.
+- Return `false` from an `on<Key>` handler to let KOReader handle the event;
+  return `true` to consume it.
+- RTL correctness: any new horizontal navigation must respect `_is_rtl()`
+  direction flipping.
