@@ -103,7 +103,11 @@ function PadNav:init()
 end
 
 function PadNav:_is_enabled()
-    if self.ui and self.ui._kokb_overlay then return false end
+    -- A FOREIGN family overlay (visel / hilite) owns the screen — stand
+    -- down. kopad's own selector overlay also claims ui._kokb_overlay
+    -- (as "kopad", see selector._open*), and must NOT lock out the very
+    -- gamepad that drives it — hence the `except` argument.
+    if Pluginaro.overlay_active(self.ui, "kopad") then return false end
     -- Modal arbitration: while a KOReader Menu / dialog owns the top of the
     -- window stack, stand down from every reader-context gamepad handler
     -- (crosshair / selector openers, shoulder-button page turns, face
@@ -202,7 +206,8 @@ end
 -- behaviour (which, with the visel overlay open, is `_is_enabled() ==
 -- false` → stand down, exactly as before this integration).
 -- Note this check runs BEFORE _is_enabled() in the handlers, because
--- _is_enabled() deliberately returns false while `ui._kokb_overlay` is set
+-- _is_enabled() deliberately returns false while `ui._kokb_overlay` is
+-- claimed by a foreign overlay (visel/hilite)
 -- — the very state we are routing for. The kopad master switch and the
 -- Task-2 modal guard are re-checked here so neither is bypassed.
 function PadNav:_visel_route(method, arg)
