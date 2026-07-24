@@ -30,6 +30,12 @@ Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   D-pad / L-stick ←/→   Move visel selection (as keyboard ←/→)
   RB / LB               Extend / trim selection (as Shift+→ / Shift+←)
   B                     Close visel
+
+Scope: the selector (word walk / struct / crosshair) only exists for
+crengine (rolling) documents. In paged documents (PDF/DjVu) and in the
+FileManager no reader keys are suppressed and the selector-dependent
+handlers return false (pass-through) — only LB/RB page turns and X-combos
+remain active there.
 ]]
 
 local Event          = require("ui/event")
@@ -110,6 +116,14 @@ function PadNav:_is_enabled()
 end
 
 function PadNav:_suppress_reader_keys()
+    -- Selector-driven navigation only exists for crengine (rolling) documents
+    -- (main.lua:_ensure_selector requires ui.rolling). In paged documents
+    -- (PDF/DjVu) and in the FileManager there is no ui.rolling, so we leave
+    -- every original key binding untouched — the selector-dependent handlers
+    -- below return false in that case, letting arrows/Press pass through to
+    -- the reader's / file manager's own navigation. Only LB/RB page turns
+    -- (which need no selector) stay active in paged documents.
+    if not (self.ui and self.ui.rolling) then return end
     if self._saved_keys then return end
     self._saved_keys = {}
 
@@ -293,7 +307,10 @@ function PadNav:onKPDown()
         end
         self:_lstick_dir(0, 1); return true
     end
-    if selector then selector:_open() end
+    -- No selector (paged doc / FileManager): pass the key through instead of
+    -- consuming it as a no-op.
+    if not selector then return false end
+    selector:_open()
     return true
 end
 function PadNav:onKPLeft()
@@ -324,6 +341,7 @@ function PadNav:onKPRight()
         end
         self:_lstick_dir(1, 0); return true
     end
+    if not self:_selector() then return false end
     self:_rstick_dir(1, 0); return true
 end
 
@@ -358,6 +376,9 @@ function PadNav:onKPUp2()
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowMenu")) end)
         return true
     end
+    -- No selector (paged doc / FileManager): keys are not suppressed there,
+    -- so return false to let the original arrow bindings handle navigation.
+    if not self:_selector() then return false end
     self:_dpad(0, -1); return true
 end
 function PadNav:onKPDown2()
@@ -369,6 +390,7 @@ function PadNav:onKPDown2()
         end)
         return true
     end
+    if not self:_selector() then return false end
     self:_dpad(0, 1); return true
 end
 function PadNav:onKPLeft2()
@@ -378,6 +400,7 @@ function PadNav:onKPLeft2()
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowHist")) end)
         return true
     end
+    if not self:_selector() then return false end
     self:_dpad(-1, 0); return true
 end
 function PadNav:onKPRight2()
@@ -387,6 +410,7 @@ function PadNav:onKPRight2()
         self:_x_combo(function() self.ui:handleEvent(Event:new("Home")) end)
         return true
     end
+    if not self:_selector() then return false end
     self:_dpad(1, 0); return true
 end
 
@@ -547,18 +571,22 @@ end
 
 function PadNav:onKPRStickUp()
     if not self:_is_enabled() then return false end
+    if not self:_selector() then return false end
     self:_cross_dir(0, -1); return true
 end
 function PadNav:onKPRStickDown()
     if not self:_is_enabled() then return false end
+    if not self:_selector() then return false end
     self:_cross_dir(0, 1); return true
 end
 function PadNav:onKPRStickLeft()
     if not self:_is_enabled() then return false end
+    if not self:_selector() then return false end
     self:_cross_dir(-1, 0); return true
 end
 function PadNav:onKPRStickRight()
     if not self:_is_enabled() then return false end
+    if not self:_selector() then return false end
     self:_cross_dir(1, 0); return true
 end
 
@@ -648,6 +676,9 @@ function PadNav:onKPConfirm()
         selector.overlay:confirm()
         return true
     end
+    -- No selector (paged doc / FileManager): Press bindings are not
+    -- suppressed there — pass through so e.g. FileManager item selection works.
+    if not selector then return false end
     self:_open_sentence_select(1)
     return true
 end
@@ -684,7 +715,8 @@ function PadNav:onKPMenu()
         end
     end
 
-    if not selector then return true end
+    -- No selector (paged doc / FileManager): pass through, don't eat the key.
+    if not selector then return false end
     selector:_open()
     if not selector.overlay then return true end
     if #selector.overlay.hl_items > 0 then
