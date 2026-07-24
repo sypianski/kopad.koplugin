@@ -24,32 +24,41 @@ Restart KOReader and plug in a gamepad.
 
 ## Controls
 
+The canonical, up-to-date key map lives in the header of `padnav.lua` (the
+actual gamepad event handler) — read that file if these tables and the code
+ever drift. Summary as of this writing:
+
 ### Reading mode
 
 | Button | Action |
 |---|---|
-| **D-pad ↑** / **↓** | scroll up / down |
-| **D-pad ←** / **→** | previous / next page |
-| **L1** / **R1** (shoulders) | previous / next chapter |
-| **L2** / **R2** (triggers) | font size − / + |
-| **A** (south) | open selector / confirm word |
-| **B** (east) | dictionary lookup of current word |
-| **X** (west) | highlight |
-| **Y** (north) | AI assistant on current word |
-| **Start** | menu |
-| **Select** | book map |
+| **D-pad** | open word walk |
+| **R-stick** | open crosshair selector (immediate) |
+| **A** | open sentence selector |
+| **Y** | open highlight mode (crosshair if none open) |
+| **LB** / **RB** (shoulders) | page back / forward |
+| **X + D-pad ↑/↓/←/→** | menu / footer toggle / history / file manager |
+| **X + LB** / **X + RB** | table of contents / bookmarks |
 
-### Selector mode (right-stick crosshair)
+### Selection overlay (struct / word-walk)
 
-Press **A** to enter selector mode. A crosshair appears at the screen centre.
+Opened via A (sentence), D-pad (word walk), R-stick (crosshair), or Y
+(highlights). Once open:
 
-- **Right stick** — move crosshair freely
-- **A** — snap to nearest word, then enter word mode
-- **D-pad** — in word mode, step word-by-word
-- **B** — dictionary lookup
-- **X** — highlight selected word
-- **Y** — AI assistant
-- **A** (again) — exit selector
+- **L-stick ←/→** — move sentence · **↑/↓** — jump paragraph
+- **D-pad** — word navigation (word-walk / struct mode)
+- **R-stick ↑/↓** — cycle highlights (struct mode, no word selected) ·
+  otherwise word navigation
+- **Y** — Vortuyo (dictionary/vocab) lookup
+- **X** — toggle highlight on current selection
+- **A** — open action menu (dict, AI, copy, note)
+- **B** — close overlay (or exit extend mode if active)
+- **RB** — extend selection · **LB** — trim selection
+
+### Dictionary popup
+
+- **LB** / **RB** — cycle dictionaries
+- **Y** — AI explain
 
 ## How it works
 

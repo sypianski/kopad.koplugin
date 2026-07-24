@@ -444,49 +444,6 @@ function PadNav:_open_sentence_select(start_idx)
     end
 end
 
-function PadNav:_sent_move(dy)
-    local selector = self:_selector()
-    if not selector then return end
-    if not selector.overlay then
-        self:_open_sentence_select(1)
-        return
-    end
-    local ov = selector.overlay
-    if ov.mode ~= "struct" then
-        ov.mode = "struct"; ov.sel_sent = 1; ov.sel_tail = 1; ov.sel_word = nil
-        ov:_refresh(); return
-    end
-    local new = (ov.sel_sent or 1) + dy
-    if new >= 1 and new <= #ov.sentences then
-        ov.sel_sent = new; ov.sel_tail = new; ov.sel_word = nil
-        ov:_refresh()
-    end
-end
-
-function PadNav:_sent_extend()
-    local selector = self:_selector()
-    if not selector or not selector.overlay then return end
-    local ov = selector.overlay
-    if ov.mode ~= "struct" then return end
-    local new_tail = (ov.sel_tail or ov.sel_sent) + 1
-    if new_tail <= #ov.sentences then
-        ov.sel_tail = new_tail; ov.sel_word = nil
-        ov:_refresh()
-    end
-end
-
-function PadNav:_sent_trim()
-    local selector = self:_selector()
-    if not selector or not selector.overlay then return end
-    local ov = selector.overlay
-    if ov.mode ~= "struct" then return end
-    local new_tail = (ov.sel_tail or ov.sel_sent) - 1
-    if new_tail >= ov.sel_sent then
-        ov.sel_tail = new_tail; ov.sel_word = nil
-        ov:_refresh()
-    end
-end
-
 -- R-stick: immediate crosshair — opens crosshair if needed, moves cursor in any mode
 function PadNav:_cross_dir(dx, dy)
     if self:_is_rtl() then dx = -dx end
