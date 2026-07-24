@@ -286,12 +286,22 @@ function PadNav:_lstick_dir(dx, dy)
     end
 end
 
+-- Walk mode L-stick = page turn. After the page reflows we must recollect the
+-- overlay's words so it re-anchors to the new page; GotoViewRel changes the
+-- visible page synchronously (same pattern _ww_move uses after its own off-page
+-- page turn), so reload() right after is safe. Without it the overlay keeps
+-- drawing/selecting the previous page's stale word.
+function PadNav:_walk_page(ov, dir)
+    self.ui:handleEvent(Event:new("GotoViewRel", dir))
+    ov:reload()
+end
+
 function PadNav:onKPUp()
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if selector and selector.overlay then
         if selector.overlay.mode == "walk" then
-            self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
+            self:_walk_page(selector.overlay, 1); return true
         end
         if selector.overlay.mode == "cross" then
             selector.overlay:_cross_move(0, -1); return true
@@ -305,7 +315,7 @@ function PadNav:onKPDown()
     local selector = self:_selector()
     if selector and selector.overlay then
         if selector.overlay.mode == "walk" then
-            self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
+            self:_walk_page(selector.overlay, -1); return true
         end
         if selector.overlay.mode == "cross" then
             selector.overlay:_cross_move(0, 1); return true
@@ -324,7 +334,7 @@ function PadNav:onKPLeft()
     local selector = self:_selector()
     if selector and selector.overlay then
         if selector.overlay.mode == "walk" then
-            self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
+            self:_walk_page(selector.overlay, 1); return true
         end
         if selector.overlay.mode == "cross" then
             selector.overlay:_cross_move(-1, 0); return true
@@ -339,7 +349,7 @@ function PadNav:onKPRight()
     local selector = self:_selector()
     if selector and selector.overlay then
         if selector.overlay.mode == "walk" then
-            self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
+            self:_walk_page(selector.overlay, -1); return true
         end
         if selector.overlay.mode == "cross" then
             selector.overlay:_cross_move(1, 0); return true
@@ -503,14 +513,18 @@ function PadNav:_cross_dir(dx, dy)
             end
             ov:_refresh()
         else
-            self:_rstick_dir(dx, dy)
+            -- dx was already RTL-flipped at the top of _cross_dir; tell
+            -- _rstick_dir not to flip again (M1).
+            self:_rstick_dir(dx, dy, true)
         end
     end
 end
 
 -- D-pad word handling: walk mode (no overlay) or word-within-sentence (struct)
-function PadNav:_rstick_dir(dx, dy)
-    if self:_is_rtl() then dx = -dx end
+-- already_flipped: set by callers (e.g. _cross_dir) that have already applied
+-- the RTL dx flip, so we don't flip a second time (M1: double-flip netting zero).
+function PadNav:_rstick_dir(dx, dy, already_flipped)
+    if not already_flipped and self:_is_rtl() then dx = -dx end
     local selector = self:_selector()
     if not selector then return end
     if not selector.overlay then

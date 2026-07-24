@@ -116,6 +116,18 @@ function kopad:onReaderReady()
     end
 end
 
+function kopad:onCloseDocument()
+    -- The selector overlay is a UIManager window bound to this document's
+    -- ReaderUI. When the document is torn down (e.g. end of book -> next book)
+    -- while the overlay is open, it would otherwise linger on the window stack
+    -- with dead references and the fresh ReaderUI's PadNav (a brand-new
+    -- selector) could never close it. Close it here; _close also releases the
+    -- pluginaro overlay claim.
+    if self.subs.selector and self.subs.selector.overlay then
+        self.subs.selector:_close()
+    end
+end
+
 function kopad:addToMainMenu(menu_items)
     local sub_items = {
         {
