@@ -75,20 +75,39 @@ function LLM.query(messages, opts)
     }
 
     local url = cfg.base_url or "https://openrouter.ai/api/v1/chat/completions"
-    if url:sub(1, 8) == "https://" then
-        https.cert_verify = false  -- match assistant/base.lua: e-ink devices lack a fresh CA bundle
-    end
 
     local sink = {}
     socketutil:set_timeout(opts.timeout or 20, opts.maxtime or 45)
-    local code = socket.skip(1, http.request{
-        url     = url,
-        method  = "POST",
-        headers = headers,
-        source  = ltn12.source.string(body),
-        sink    = ltn12.sink.table(sink),
-    })
+    -- `https.cert_verify` is a module-level flag on the shared ssl.https module,
+    -- so writing it leaks to every other plugin in the KOReader process. E-ink
+    -- devices often lack a fresh CA bundle, so we still need verification off for
+    -- THIS request — but scoped to it: save the previous value, override for the
+    -- blocking call, and restore on every exit path. Lua is single-threaded and
+    -- http.request blocks, so no other request runs in between; pcall guarantees
+    -- the flag is restored even if the request raises.
+    local is_https = url:sub(1, 8) == "https://"
+    local prev_cert_verify
+    if is_https then
+        prev_cert_verify = https.cert_verify
+        https.cert_verify = false
+    end
+    local ok_req, code = pcall(function()
+        return socket.skip(1, http.request{
+            url     = url,
+            method  = "POST",
+            headers = headers,
+            source  = ltn12.source.string(body),
+            sink    = ltn12.sink.table(sink),
+        })
+    end)
+    if is_https then
+        https.cert_verify = prev_cert_verify
+    end
     socketutil:reset_timeout()
+    if not ok_req then
+        logger.warn("llm.query: request raised", code)
+        return nil, _("Network error.")
+    end
     local content = table.concat(sink)
 
     if code == socketutil.TIMEOUT_CODE or code == socketutil.SSL_HANDSHAKE_CODE
