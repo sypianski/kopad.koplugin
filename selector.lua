@@ -1,27 +1,12 @@
 --[[
-Selector — two-layer gamepad text selector for EPUB documents.
+Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
+documents: crosshair mode, word-walk mode, and structured (sentence/word)
+selection mode, driven by the handlers in padnav.lua.
 
-Layer 1: Crosshair mode (default when opened)
-  D-pad / L-stick moves a crosshair that snaps to the nearest word.
-  The containing sentence is softly highlighted.
-  A = confirm word → enters structured mode.
-
-Layer 2: Structured mode (after confirming a word)
-  Up/Down = move sentence selection
-  Left/Right = move word within sentence
-  A = action menu
-  B = back to crosshair mode
-  X = highlight selection
-  Y = dictionary lookup
-
-Key mapping (SDL3 gamepad → KOReader key names):
-  Up/Down/Left/Right  D-pad or L-stick
-  Press               A button (South)
-  Back                B button (East)
-  ContextMenu         Y button (North)
-  RPgBack             Select button — toggle overlay
-  RPgFwd              Guide/Home button — page forward
-  Menu                Start button — open menu
+This file owns the overlay widget and its drawing/selection logic; it does
+not bind its own gamepad keys (key_events is intentionally left empty — see
+`self.key_events = {}` below) — every button press is routed in from
+padnav.lua, which is the canonical, up-to-date source for the key map.
 ]]
 
 local Blitbuffer     = require("ffi/blitbuffer")
@@ -36,6 +21,7 @@ local util           = require("util")
 local _              = require("gettext")
 local Screen         = Device.screen
 
+local Pluginaro  = require("pluginaro")
 local WordSource = require("paginmapo")
 
 local STATUS_FACE = require("ui/font"):getFace("infofont", 14)
@@ -169,7 +155,14 @@ end
 function SelectorOverlay:reload()
     self:_collect()
     self:_collect_highlights()
-    if #self.words > 0 then
+    if self.mode == "walk" then
+        -- Walk mode tracks ww_word (an xpointer), not the crosshair cursor; after
+        -- a page reflow re-anchor it to the first word of the freshly collected
+        -- page instead of snapping the (unused-in-walk) crosshair cursor.
+        self.ww_extend_pos0 = nil
+        self.ww_word = (#self.words > 0)
+            and self:_ww_word_from_xp(self.words[1].xp0) or nil
+    elseif #self.words > 0 then
         self:_snap_to_center()
     end
     self:_refresh()
@@ -233,14 +226,6 @@ end
 -- Crosshair movement
 ----------------------------------------------------------------------
 
-function SelectorOverlay:move(dx, dy)
-    if self.mode == "cross" then
-        self:_cross_move(dx, dy)
-    else
-        self:_struct_move(dx, dy)
-    end
-end
-
 function SelectorOverlay:_cross_move(dx, dy)
     if #self.words == 0 then return end
     local cur = self.words[self.cursor_word]
@@ -275,81 +260,6 @@ function SelectorOverlay:_cross_move(dx, dy)
 
     self.cursor_sent = self.word_to_sent[self.cursor_word]
     self:_refresh()
-end
-
-----------------------------------------------------------------------
--- Structured movement
-----------------------------------------------------------------------
-
-function SelectorOverlay:_struct_move(dx, dy)
-    if #self.sentences == 0 then return end
-
-    if dy ~= 0 and self.sel_word == nil then
-        local new = self.sel_sent + dy
-        if new >= 1 and new <= #self.sentences then
-            self.sel_sent = new
-        end
-    elseif dy ~= 0 and self.sel_word ~= nil then
-        local sent = self.sentences[self.sel_sent]
-        if not sent or not sent.word_list then return end
-        local cur_w = sent.word_list[self.sel_word]
-        if not cur_w or not cur_w.sbox then return end
-        local cxw = cur_w.sbox.x + cur_w.sbox.w / 2
-        local cyw = cur_w.sbox.y + cur_w.sbox.h / 2
-        local lhw = cur_w.sbox.h
-        local best, best_dist = self.sel_word, math.huge
-        for i, w in ipairs(sent.word_list) do
-            if w.sbox then
-                local wy = w.sbox.y + w.sbox.h / 2
-                if (dy > 0 and wy > cyw + lhw * 0.5) or
-                   (dy < 0 and wy < cyw - lhw * 0.5) then
-                    local d = math.abs(wy - (cyw + dy * lhw)) * 2 + math.abs(w.sbox.x + w.sbox.w/2 - cxw)
-                    if d < best_dist then
-                        best = i; best_dist = d
-                    end
-                end
-            end
-        end
-        self.sel_word = best
-    elseif dx ~= 0 then
-        if self.sel_word == nil then
-            local sent = self.sentences[self.sel_sent]
-            if sent and sent.word_list and #sent.word_list > 0 then
-                self.sel_word = dx > 0 and 1 or #sent.word_list
-            end
-        else
-            local sent = self.sentences[self.sel_sent]
-            if not sent or not sent.word_list then return end
-            local new = self.sel_word + dx
-            if new >= 1 and new <= #sent.word_list then
-                self.sel_word = new
-            end
-        end
-    end
-
-    self:_refresh()
-end
-
-function SelectorOverlay:para_jump(delta)
-    if #self.sentences == 0 then return end
-    local cur_para = self.sentences[self.sel_sent] and self.sentences[self.sel_sent].para
-    if delta > 0 then
-        for j = self.sel_sent + 1, #self.sentences do
-            if self.sentences[j].para ~= cur_para then
-                self.sel_sent = j; self.sel_word = nil
-                self:_refresh(); return
-            end
-        end
-    else
-        local j = self.sel_sent - 1
-        while j >= 1 and self.sentences[j].para == cur_para do j = j - 1 end
-        if j >= 1 then
-            local prev_para = self.sentences[j].para
-            while j > 1 and self.sentences[j - 1].para == prev_para do j = j - 1 end
-            self.sel_sent = j; self.sel_word = nil
-            self:_refresh()
-        end
-    end
 end
 
 ----------------------------------------------------------------------
@@ -856,12 +766,6 @@ function SelectorOverlay:confirm()
     end
 end
 
-function SelectorOverlay:to_crosshair()
-    self.mode = "cross"
-    self.sel_word = nil
-    self:_refresh()
-end
-
 ----------------------------------------------------------------------
 -- Action menu (Y button or A in struct mode)
 ----------------------------------------------------------------------
@@ -1080,6 +984,10 @@ function SelectorOverlay:_do_toggle_highlight(sel)
                     { a, nb_highlights_added = -1,
                       nb_notes_added = a.note and -1 or 0 }))
                 UIManager:show(InfoMessage:new{ text = _("Highlight removed"), timeout = 1 })
+                -- Rebuild hl_items and reset hl_cur so the deleted highlight is
+                -- no longer drawn, focusable, or actionable (otherwise X could
+                -- re-add it and Y would run AI on a now-gone annotation).
+                self:_collect_highlights()
                 self:_refresh()
                 return
             end
@@ -1157,12 +1065,12 @@ end
 function SelectorOverlay:_do_vortuyo(sel)
     local word = util.cleanupSelectedText(sel.text)
     if word == "" then return end
-    local vortuyo = self.ui and self.ui.vortuyo
+    local vortuyo = self.ui and self.ui.vortpaf
     if not vortuyo then
         UIManager:show(InfoMessage:new{ text = _("Vortuyo not available"), timeout = 2 })
         return
     end
-    vortuyo:_vortuyoLookup(word)
+    vortuyo:_vortpafLookup(word)
 end
 
 ----------------------------------------------------------------------
@@ -1486,11 +1394,17 @@ function Selector:_open()
     if self.overlay then return end
     if not self.ui or not self.ui.document then return end
     if not self.ui.rolling then return end
+    -- Family overlay claim: refused while visel/hilite own the screen;
+    -- claiming here makes keyboard openers (Space/D/O/I…) stand down over
+    -- the gamepad overlay. padnav._is_enabled exempts our own claim, so
+    -- the gamepad keeps driving this overlay.
+    if not Pluginaro.claim_overlay(self.ui, "kopad") then return end
     local ok, ov = pcall(SelectorOverlay.new, SelectorOverlay, {
         doc  = self.ui.document,
         ui   = self.ui,
     })
     if not ok then
+        Pluginaro.release_overlay(self.ui, "kopad")
         UIManager:show(InfoMessage:new{ text = _("kopad error: ") .. tostring(ov) })
         return
     end
@@ -1503,11 +1417,14 @@ function Selector:_open_walk(from_end)
     if self.overlay then return end
     if not self.ui or not self.ui.document then return end
     if not self.ui.rolling then return end
+    -- Same claim contract as _open (see comment there).
+    if not Pluginaro.claim_overlay(self.ui, "kopad") then return end
     local ok, ov = pcall(SelectorOverlay.new, SelectorOverlay, {
         doc  = self.ui.document,
         ui   = self.ui,
     })
     if not ok then
+        Pluginaro.release_overlay(self.ui, "kopad")
         UIManager:show(InfoMessage:new{ text = _("kopad error: ") .. tostring(ov) })
         return
     end
@@ -1523,16 +1440,21 @@ end
 
 function Selector:_close()
     if self.overlay then
-        UIManager:close(self.overlay)
+        -- pcall: _close may run during document teardown (onCloseDocument),
+        -- where UIManager stack / widget refs can already be partly gone.
+        pcall(UIManager.close, UIManager, self.overlay)
         self.overlay = nil
-        UIManager:setDirty(self.ui, "ui")
+        -- Owner-checked release: never drops a claim held by another
+        -- family overlay (visel / hilite).
+        Pluginaro.release_overlay(self.ui, "kopad")
+        pcall(UIManager.setDirty, UIManager, self.ui, "ui")
     end
 end
 
 function Selector:getMenuItems()
     return {
         {
-            text = _("Crosshair selector  [Select]"),
+            text = _("Crosshair selector"),
             callback = function() self:_open() end,
         },
     }
