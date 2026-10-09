@@ -1,26 +1,31 @@
 --[[
 kopad — gamepad control for KOReader.
 
-When enabled, replaces KOReader's default key bindings with gamepad-optimized ones:
+When enabled, replaces KOReader's default key bindings with gamepad-optimized ones.
+The authoritative control map (and the exact key names) lives in the header of
+padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device.
 
   Reading:
-    L-stick ↑/←             Page turn
-    L-stick ↓                Open crosshair selector
-    L-stick →                Open word walk
-    D-pad / R-stick          Word walk (opens walk mode)
-    X + D-pad                Combo: menu / footer / bookmarks / TOC
-    Y                        Open menu
+    RT / LT                  Next / previous page (always)
+    RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
+    Select / Start           Top menu / footer menu
+    D-pad                    Open word walk
+    R-stick                  Open crosshair
+    L-stick ↑/←              Page turn; ↓ crosshair selector; → word walk
+    A                        Sentence selector
+    Y                        Highlight mode
+    X + D-pad                Combo: ↑menu ↓footer ←history →files
 
-  Selection (struct/walk):
+  Selection (struct/walk/cross):
     L-stick ←/→              Sentence move    ↑/↓  Paragraph jump
-    D-pad ↑/↓                Cycle highlights (if any on page)
-    D-pad ←/→ / R-stick      Word navigation
+    D-pad / R-stick          Word navigation (R-stick ↑/↓ cycles highlights)
     Y                        Vortuyo lookup
     X                        Toggle highlight
     A                        Action menu (dict, AI, copy, note)
-    B                        Close overlay
-    RB                       Extend selection
-    LB                       Trim selection
+    B                        Exit extend / close overlay
+    RB / LB                  Extend selection right / left
+    RT / LT                  Close overlay and turn page
+    Select / Start           Close overlay and open top / footer menu
 
   Dictionary popup:
     LB / RB                  Cycle dictionaries
@@ -34,8 +39,10 @@ Gamepad buttons arrive from SDL3 as standard key names:
   B (East)         →  Back
   X (West)         →  F10
   Y (North)        →  ContextMenu
-  LB / RB          →  RPgBack / RPgFwd
-  Start            →  Menu
+  LB / RB          →  RPgBack (F9) / RPgFwd (F11)
+  LT / RT          →  LPgBack (F6) / LPgFwd (F7)
+  Select / Start   →  F12 / F2 (ASSUMED; needs a hunk in sdl3_gamepad.patch,
+                      see padnav.lua header — inert if the keys never arrive)
 ]]
 
 local DataStorage    = require("datastorage")

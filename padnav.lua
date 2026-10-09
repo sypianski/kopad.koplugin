@@ -1,30 +1,36 @@
 --[[
 PadNav — gamepad reading controls for KOReader (active when kopad is enabled).
+The on<Key> handlers below are the source of truth; keep this block, the
+header of main.lua, README.md and CHEAT_READING/CHEAT_SELECTION in sync with them.
 
 Reading:
-  D-pad                   Open word walk
+  RT / LT (triggers)     Next / previous page (always, also with overlay open)
+  RB / LB                Next / previous page (X+RB = bookmarks, X+LB = TOC)
+  L4 / R4 (back paddles) Same as LB / RB
+  Select                 Top menu          Start   Footer (bottom) menu
+  D-pad                  Open word walk
+  L-stick ↑/←            Page turn (↑/← = next page, legacy)
+  L-stick ↓              Open crosshair   L-stick → Open word walk
   R-stick                Open crosshair (immediate)
   A                      Open sentence selector
   Y                      Open highlight mode (crosshair if none)
-  LB / RB                Page back / forward
-  X + D-pad              Combo: ↑menu ↓footer ←hist →files
-  X + LB/RB              Combo: LB=TOC  RB=bookmarks
+  X                      Modifier: X + D-pad = ↑menu ↓footer ←history →files
 
-Selection (struct/walk overlay):
-  L-stick ←/→           Sentence move    ↑/↓  Paragraph jump
-  D-pad                  Word navigation
-  R-stick ↑/↓            Cycle highlights (struct, no word)
-  R-stick ←/→            Word navigation
-  Y                     Vortuyo lookup
-  X                     Toggle highlight
-  A                     Action menu (dict, AI, copy, note)
-  B                     Close overlay
-  RB                    Extend selection
-  LB                    Trim selection
+Selection (struct/walk/cross overlay):
+  L-stick ←/→            Sentence move    ↑/↓  Paragraph jump
+  D-pad / R-stick        Word navigation (R-stick ↑/↓ cycles highlights in struct)
+  Y                      Vortuyo lookup
+  X                      Toggle highlight
+  A                      Action menu (dict, AI, copy, note)
+  B                      Exit extend mode / close overlay
+  RB                     Extend selection right (quick extend when active)
+  LB                     Extend selection left (quick extend when active)
+  RT / LT                Close overlay and turn page
+  Select / Start         Close overlay and open top / footer menu
 
 Dictionary popup:
-  LB / RB               Cycle dictionaries
-  Y                     AI explain
+  LB / RB                Cycle dictionaries
+  Y                      AI explain
 
 Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   D-pad / L-stick ←/→   Move visel selection (as keyboard ←/→)
@@ -36,6 +42,16 @@ crengine (rolling) documents. In paged documents (PDF/DjVu) and in the
 FileManager no reader keys are suppressed and the selector-dependent
 handlers return false (pass-through) — only LB/RB page turns and X-combos
 remain active there.
+
+Key names (from SDL3 patch + userpatch):
+  LT = LPgBack (F6), RT = LPgFwd (F7), LB = RPgBack (F9), RB = RPgFwd (F11)
+  X = F10, R-stick = F3/F4/F5/F8.
+  ASSUMPTION (unverifiable, KOReader SDL3.lua not available): the stock
+  patch emits no known key for Select/Start. We bind Select = F12 and
+  Start = F2 (see SELECT_KEYS/START_KEYS; proposed hunk for
+  sdl3_gamepad.patch maps BACK -> 1073741893 (F12), START -> 1073741883 (F2)).
+  If those keys never arrive, the bindings are simply inert; nothing else
+  breaks and X + D-pad still reaches the menus.
 ]]
 
 local Event          = require("ui/event")
@@ -43,6 +59,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager      = require("ui/uimanager")
 local logger         = require("logger")
 local Pluginaro      = require("pluginaro")
+local _              = require("gettext")
 
 local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 
@@ -50,6 +67,13 @@ local PadNav = InputContainer:extend{
     name        = "kopad_padnav",
     enabled_ref = nil,
 }
+
+-- Select/Start key names: unverifiable without KOReader's SDL3.lua. These are
+-- unused F-keys; the matching hunk must be added to sdl3_gamepad.patch
+-- (BACK -> 1073741893 "F12", START -> 1073741883 "F2"). Unknown/absent keys
+-- just never fire, so a wrong guess is harmless.
+local SELECT_KEYS = { "F12" }
+local START_KEYS  = { "F2" }
 
 local SUPPRESS_KEYS = {
     "MoveUp", "MoveDown",
@@ -81,8 +105,12 @@ function PadNav:init()
         -- shoulder buttons: page turn
         KPPgBk    = { { "RPgBack" } },    -- LB
         KPPgFwd   = { { "RPgFwd" } },     -- RB
-        KPPgBk2   = { { "LPgBack" } },    -- LT (if available)
-        KPPgFwd2  = { { "LPgFwd" } },     -- RT (if available)
+        KPPgBk2   = { { "LPgBack" } },    -- LT (F6): always previous page
+        KPPgFwd2  = { { "LPgFwd" } },     -- RT (F7): always next page
+        -- Select / Start: top menu / footer menu (key names are an ASSUMPTION,
+        -- see header docstring and SELECT_KEYS/START_KEYS)
+        KPSelect  = { SELECT_KEYS },
+        KPStart   = { START_KEYS },
         KPPgBk3   = { { "ScrollLock" } }, -- L4 back paddle
         KPPgFwd3  = { { "Pause" } },      -- R4 back paddle
         -- face buttons
@@ -580,7 +608,7 @@ function PadNav:onKPExtend()
     return true
 end
 
--- RB: X+RB=bm, enter/quick extend right (overlay), page forward (reading)
+-- RB: X+RB=bm, enter/quick extend right (overlay), next page (reading)
 function PadNav:onKPPgFwd()
     if self:_visel_route("extend", 1) then return true end
     if not self:_is_enabled() then return false end
@@ -606,10 +634,10 @@ function PadNav:onKPPgFwd()
         end
         return true
     end
-    self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
+    self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
 end
 
--- LB: X+LB=TOC, enter/quick extend left (overlay), page back (reading)
+-- LB: X+LB=TOC, enter/quick extend left (overlay), previous page (reading)
 function PadNav:onKPPgBk()
     if self:_visel_route("extend", -1) then return true end
     if not self:_is_enabled() then return false end
@@ -635,11 +663,51 @@ function PadNav:onKPPgBk()
         end
         return true
     end
-    self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
+    self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
 end
 
-function PadNav:onKPPgBk2()  return self:onKPPgBk()  end
-function PadNav:onKPPgFwd2() return self:onKPPgFwd() end
+-- LT/RT: page turn, independent of overlay state. GotoViewRel +1 = next page
+-- (KOReader semantics, same in RTL books: "next" is reading order, so no
+-- _is_rtl() flip here — triggers are semantic, not spatial).
+function PadNav:_turn_page(dir)
+    if self:_find_dict_widget() then return false end
+    local selector = self:_selector()
+    if selector and selector.overlay then selector:_close() end
+    self._x_mode = false
+    self.ui:handleEvent(Event:new("GotoViewRel", dir)); return true
+end
+function PadNav:onKPPgBk2()
+    if not self:_is_enabled() then return false end
+    return self:_turn_page(-1)
+end
+function PadNav:onKPPgFwd2()
+    if not self:_is_enabled() then return false end
+    return self:_turn_page(1)
+end
+
+-- Select: top menu. Start: footer (bottom) menu. No X modifier needed.
+function PadNav:_menu_action(fn)
+    local selector = self:_selector()
+    if selector and selector.overlay then selector:_close() end
+    self._x_mode = false
+    fn()
+    return true
+end
+function PadNav:onKPSelect()
+    if not self:_is_enabled() then return false end
+    if self:_find_dict_widget() then return false end
+    return self:_menu_action(function()
+        self.ui:handleEvent(Event:new("ShowMenu"))
+    end)
+end
+function PadNav:onKPStart()
+    if not self:_is_enabled() then return false end
+    if self:_find_dict_widget() then return false end
+    return self:_menu_action(function()
+        local footer = self.ui.view and self.ui.view.footer
+        if footer then footer:onToggleFooterMode() end
+    end)
+end
 function PadNav:onKPPgBk3()  return self:onKPPgBk()  end
 function PadNav:onKPPgFwd3() return self:onKPPgFwd() end
 
@@ -707,34 +775,50 @@ function PadNav:onKPMenu()
 end
 
 
+local CHEAT_READING = _("Reading mode")
+    .. "\nRT / LT: next / previous page"
+    .. "\nRB / LB: next / previous page (also L4/R4)"
+    .. "\nSelect: top menu    Start: footer menu"
+    .. "\nA: sentence selector    Y: highlights"
+    .. "\nD-pad: word walk    R-stick: crosshair"
+    .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
+    .. "\nX + LB: TOC    X + RB: bookmarks"
+
+local CHEAT_SELECTION = _("Selection mode")
+    .. "\nL-stick \xE2\x86\x90/\xE2\x86\x92: sentence    \xE2\x86\x91/\xE2\x86\x93: paragraph"
+    .. "\nD-pad / R-stick: word navigation"
+    .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: cycle highlights"
+    .. "\nA: action menu    Y: Vortuyo"
+    .. "\nX: toggle highlight    B: close / exit extend"
+    .. "\nRB / LB: extend right / left"
+    .. "\nRT / LT: close and turn page"
+    .. "\nSelect / Start: close and open menu"
+    .. "\n\n" .. _("Dictionary popup")
+    .. "\nLB / RB: cycle dictionaries    Y: AI explain"
+
+function PadNav:_show_text(text)
+    local InfoMessage = require("ui/widget/infomessage")
+    UIManager:show(InfoMessage:new{ text = text })
+end
+
 function PadNav:getMenuItems()
     return {
         {
+            text = _("Button cheat sheet: reading"),
+            keep_menu_open = true,
+            callback = function() self:_show_text(CHEAT_READING) end,
+        },
+        {
+            text = _("Button cheat sheet: selection"),
+            keep_menu_open = true,
+            callback = function() self:_show_text(CHEAT_SELECTION) end,
+        },
+        {
             text = _("About kopad"),
+            keep_menu_open = true,
             callback = function()
-                local InfoMessage = require("ui/widget/infomessage")
-                UIManager:show(InfoMessage:new{
-                    text = _("kopad: gamepad control for KOReader.\n\n"
-                        .. "Reading:\n"
-                        .. "  D-pad: walk  R-stick: crosshair\n"
-                        .. "  A: sentence  Y: highlights\n"
-                        .. "  LB/RB: page turn\n"
-                        .. "  X + D\xE2\x86\x91 menu  X + D\xE2\x86\x93 footer\n"
-                        .. "  X + D\xE2\x86\x90 hist  X + D\xE2\x86\x92 files\n"
-                        .. "  X + LB TOC  X + RB bookmarks\n\n"
-                        .. "Selection:\n"
-                        .. "  L-stick: sentence / paragraph\n"
-                        .. "  D-pad \xE2\x86\x95: cycle highlights\n"
-                        .. "  D-pad / R-stick: word navigation\n"
-                        .. "  Y: Vortuyo\n"
-                        .. "  X: highlight (toggle)\n"
-                        .. "  A: action menu\n"
-                        .. "  B: close\n"
-                        .. "  RB: extend  \xC2\xB7  LB: trim\n\n"
-                        .. "Dictionary:\n"
-                        .. "  LB / RB: cycle dictionaries\n"
-                        .. "  Y: AI explain"),
-                })
+                self:_show_text(_("kopad: gamepad control for KOReader.\n\n")
+                    .. CHEAT_READING .. "\n\n" .. CHEAT_SELECTION)
             end,
         },
     }
