@@ -85,7 +85,7 @@ function kopad:init()
         provider        = "kopad",
         section         = "extensions",
         menu_location   = "host",
-        label           = "Steruj także z gamepada (kopad)",
+        label           = _("Steer also with gamepad (kopad)"),
         default_enabled = false,
     })
 
@@ -176,7 +176,7 @@ function kopad:addToMainMenu(menu_items)
     local ext_rows = Pluginaro.build_ext_menu("kopad")
     if #ext_rows > 0 then
         table.insert(sub_items, {
-            text = _("Rozszerzenia"),
+            text = _("Extensions"),
             sub_item_table = ext_rows,
         })
     end
