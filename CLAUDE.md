@@ -95,19 +95,35 @@ LB/RB cycle dictionaries. Painting is done with manual blitbuffer inversion
 (`invert_rounded_rect`, `_draw_*` methods) — no standard widgets for the
 selection rectangles.
 
-### `paginmapo.lua` — VENDORED word-extraction helper
-CRengine helper (`WordSource`) that walks the visible page and returns word
-items `{ text, xp0, xp1, next_xp0, sbox, sent_end }` plus sentence groupings.
-Sentence-boundary logic is deliberately careful: `.` ends a sentence only when
-the next word is capitalized (avoids `M.I.T.`, `Dr.`, `e.g.` splits); `!?؟۔` and
-paragraph breaks always end. Public API: `collect_words`, `collect_sentences`,
-`collect_sentences_from_words`, `find_sentence_start/end`,
-`page_starts_at_boundary`.
+### Vendored family libraries: `paginmapo.lua`, `pluginaro.lua`, `llm.lua`
 
-**This file is vendored, not authored here.** Identical copies ship in sibling
-plugins `keyreader`, `marjenoti`, and `assistant` so each stays
-runtime-independent. If you edit `paginmapo.lua` here, the change must be
-mirrored to those upstream copies — do not let it diverge.
+**These three files are vendored, not authored here.** Verbatim copies ship in
+the sibling plugins (`keyreader`/`visel`, `marjenoti`, `assistant`, `wordsearch`)
+so each stays runtime-independent. Canonical sources live upstream in
+`lib/` of the plugin-family repo (propagated by `bin/sync-*.fish`, drift-guarded
+by a pre-commit hook there). Edit them upstream, or mirror any local edit — do
+not let copies diverge. Recent history ("Sync paginmapo", "sync pluginaro")
+shows they arrive as sync commits.
+
+- **`paginmapo.lua`** — CRengine helper (`WordSource`) that walks the visible
+  page and returns word items `{ text, xp0, xp1, next_xp0, sbox, sent_end }`
+  plus sentence groupings. Sentence-boundary logic is deliberately careful:
+  `.` ends a sentence only when the next word is capitalized (avoids `M.I.T.`,
+  `Dr.`, `e.g.`); `!?؟۔` and paragraph breaks always end. Public API:
+  `collect_words` (memoized per page), `collect_sentences`,
+  `collect_sentences_from_words`, `find_sentence_start/end`,
+  `page_starts_at_boundary`.
+- **`pluginaro.lua`** — opt-in extension registry + overlay arbitration shared
+  by the plugin family. `main.lua` registers extensions and builds the
+  extension menu; `selector` calls `claim_overlay`/`release_overlay` so only one
+  family plugin owns the screen/keys at a time; `padnav` yields
+  (`return false`) when `overlay_active` for another owner or `is_modal_active`.
+  Extensions are strictly opt-in (`default_enabled` must be literally `false`).
+  Requirable in bare Lua (deps injected via `Pluginaro._deps`).
+- **`llm.lua`** — self-contained one-shot chat-completion POST to OpenRouter
+  (`LLM.query`/`LLM.ask`), used by `selector`'s AI action. Needs a gitignored
+  `llm_config.lua` with an `api_key` in the plugin root; without it
+  `LLM.available()` is false. Never commit that file.
 
 ## Key events reference
 
@@ -128,3 +144,8 @@ truth**, not the `main.lua` header comment.
   return `true` to consume it.
 - RTL correctness: any new horizontal navigation must respect `_is_rtl()`
   direction flipping.
+
+## Task tracking
+
+`backlog/` is a Backlog.md workspace (`TASK-N`; commits reference e.g.
+`TASK-1`). Currently untracked in git. Task files live in `backlog/tasks/`.
