@@ -90,6 +90,15 @@ Input paths (two, both end in the same on<Key> handlers):
        auto-repeat flips pages endlessly, so while kopad is active axes 2/3
        are always consumed (axis 2 has no stock mapping).
 
+   Remapping (padmap.lua, PC-011): onGamepadButtonDown / onGamepadAxisMotion
+     first translate the PHYSICAL control into its logical ROLE (the ids
+     above, Xbox labels) via the table main.lua passes to set_padmap(); all
+     handlers below this point see roles only. Remappable: buttons 0-4, 6, 9,
+     10 and trigger axes 4/5 (a button may become a trigger and vice versa:
+     _trigger_event / _trigger_as_button). D-pad, sticks, Guide/L3/R3 and the
+     legacy key_events path are never remapped. No table = identity. When an
+     event is passed through (false), KOReader sees the physical control.
+
 2. Older builds with sdl3_gamepad.patch + 1-lstick-keys.lua userpatch: no
    Gamepad* broadcast, buttons/axes arrive as key names and hit the
    key_events table in PadNav:init (kept for compatibility):
@@ -116,6 +125,12 @@ local ok_trace, Trace = pcall(require, "kopad_trace")
 if not ok_trace or type(Trace) ~= "table" then
     Trace = { log = function() end, active = function() return false end }
 end
+
+-- Optional button remapping (padmap.lua, PC-011). PadNav only calls
+-- Padmap.resolve on the table main.lua hands over via set_padmap(); a missing
+-- module or no table = identity mapping (behaviour before remapping existed).
+local ok_padmap, Padmap = pcall(require, "padmap")
+if not ok_padmap or type(Padmap) ~= "table" then Padmap = nil end
 
 local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 
@@ -891,7 +906,41 @@ end
 -- or the menu exactly as it would without kopad.
 -- ---------------------------------------------------------------------------
 
+-- Remapping (padmap.lua): main.lua builds the resolution table from
+-- settings/kopad.lua (`padmap`, synced) + settings/kopad_device.lua
+-- (`padmap_layout`, local) and passes it here; nil = identity.
+function PadNav:set_padmap(resolved)
+    self._padmap = resolved
+end
+
+-- Physical control (kind "button"/"axis", SDL id) -> logical role kind, id.
+function PadNav:_resolve(kind, id)
+    if Padmap and self._padmap then
+        local ok, rk, rid = pcall(Padmap.resolve, self._padmap, kind, id)
+        if ok and rk ~= nil and rid ~= nil then return rk, rid end
+    end
+    return kind, id
+end
+
+-- Entry point for the physical button: remap, then handle the LOGICAL role.
+-- A button remapped to a trigger role (lt/rt) acts as one trigger press.
 function PadNav:onGamepadButtonDown(ev)
+    if type(ev) == "table" and ev.button ~= nil then
+        local kind, id = self:_resolve("button", ev.button)
+        if kind == "axis" then
+            Trace.log("padnav btn=%s: remapped to trigger axis=%s", tostring(ev.button), tostring(id))
+            return self:_trigger_event(id, 32767, true)
+        end
+        if id ~= ev.button then
+            Trace.log("padnav btn=%s: remapped to btn=%s", tostring(ev.button), tostring(id))
+            ev = { button = id }
+        end
+    end
+    return self:_button_down(ev)
+end
+
+-- LOGICAL button down (after remapping).
+function PadNav:_button_down(ev)
     local tr = Trace.active()
     -- Top menu first (before the modal guard): LB/RB switch categories there.
     if type(ev) == "table" and self:_menu_button(ev.button) then
@@ -1071,12 +1120,12 @@ end
 -- LT / RT with the top menu up: previous / next page of the menu. One press =
 -- one page (_trigger_is_new_press); auto-repeats are consumed without action.
 -- Returns true when the event belongs to the menu, false = caller continues.
-function PadNav:_menu_trigger(axis, value)
+function PadNav:_menu_trigger(axis, value, from_button)
     local menu = self:_top_menu()
     if not menu then return false end
     Trace.log("padnav axis=%s value=%s: menu page branch (new_press check next)",
         tostring(axis), tostring(value))
-    if value > 0 and self:_trigger_is_new_press(axis) then
+    if value > 0 and (from_button or self:_trigger_is_new_press(axis)) then
         local method = axis == AXIS_RT and "onNextPage" or "onPrevPage"
         if type(menu[method]) == "function" then
             local ok, err = pcall(menu[method], menu)
@@ -1088,16 +1137,61 @@ function PadNav:_menu_trigger(axis, value)
     return true
 end
 
+-- LOGICAL trigger (axis AXIS_LT / AXIS_RT after remapping), numeric value.
+-- from_button = true when a remapped BUTTON produced it: buttons fire once
+-- per press, so the auto-repeat filter is skipped.
+function PadNav:_trigger_event(axis, value, from_button)
+    local tr = Trace.active()
+    if self:_menu_trigger(axis, value, from_button) then
+        if tr then
+            Trace.log("padnav axis=%s value=%s: menu-branch handled -> result=true",
+                tostring(axis), tostring(value))
+        end
+        return true
+    end
+    if not self:_is_enabled() then
+        if tr then
+            Trace.log("padnav axis=%s value=%s: passthrough, %s -> result=false",
+                tostring(axis), tostring(value), self:_why_disabled())
+        end
+        return false
+    end
+    -- Triggers: 0..32767, only positive values are a press.
+    local new_press = value > 0 and (from_button or self:_trigger_is_new_press(axis))
+    if new_press then
+        if axis == AXIS_LT then self:onKPPgBk2() else self:onKPPgFwd2() end
+    end
+    if tr then
+        Trace.log("padnav axis=%s value=%s: trigger new_press=%s handler=%s swallowed -> result=true",
+            tostring(axis), tostring(value), tostring(new_press),
+            new_press and (axis == AXIS_LT and "onKPPgBk2" or "onKPPgFwd2") or "none")
+    end
+    return true
+end
+
+-- Physical trigger remapped to a BUTTON role: one new press (auto-repeat
+-- filtered on the physical axis) = one logical button down. Consumed while
+-- kopad is switched on (stock has no mapping for axes 4/5 anyway).
+function PadNav:_trigger_as_button(phys_axis, value, btn)
+    if not (self.enabled_ref and self.enabled_ref.enabled) then return false end
+    if value > 0 and self:_trigger_is_new_press(phys_axis) then
+        Trace.log("padnav axis=%s: remapped to btn=%s", tostring(phys_axis), tostring(btn))
+        self:_button_down({ button = btn })
+    end
+    return true
+end
+
+-- Entry point for the physical axis. Triggers (numeric value) are remapped
+-- and handled above; sticks (and malformed events) continue below unchanged.
 function PadNav:onGamepadAxisMotion(ax)
     local tr = Trace.active()
     if type(ax) == "table" and (ax.axis == AXIS_LT or ax.axis == AXIS_RT)
-            and type(ax.value) == "number"
-            and self:_menu_trigger(ax.axis, ax.value) then
-        if tr then
-            Trace.log("padnav axis=%s value=%s: menu-branch handled -> result=true",
-                tostring(ax.axis), tostring(ax.value))
+            and type(ax.value) == "number" then
+        local kind, id = self:_resolve("axis", ax.axis)
+        if kind == "button" then
+            return self:_trigger_as_button(ax.axis, ax.value, id)
         end
-        return true
+        return self:_trigger_event(id, ax.value, false)
     end
     if not self:_is_enabled() then
         if tr then

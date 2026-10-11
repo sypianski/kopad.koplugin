@@ -88,12 +88,32 @@ On **older patched builds** there are no such events; buttons arrive as key name
 
 With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** move the selection, **RB** / **LB** extend / trim it, **B** closes it.
 
+### Button remapping (gamepad layouts)
+
+Button names in this README are Xbox-style **roles** (A = bottom face button, etc.). On KOReader 2026.07+ you can tell kopad which physical button plays which role, per known pad layout:
+
+- **menu → kopad → Gamepad layout (this device)** picks the layout of the pad used on *this* device: *Xbox / Steam Deck / generic* (default), *PlayStation* (same positions as Xbox, only the symbols differ) or *Nintendo* (printed A is on the right, so by default A↔B and X↔Y are swapped and "press A" means the A-labelled key). The choice is stored in `settings/kopad_device.lua`, which [koligilo](https://sypian.ski/koligilo) never syncs, so a Steam Deck and a reader can use different pads.
+- Per-layout overrides live in `settings/kopad.lua` under `padmap` (shared; koligilo syncs and edits it):
+
+```lua
+["padmap"] = {
+    ["version"] = 1,
+    ["layouts"] = {
+        ["nintendo"] = { ["south"] = "a", ["east"] = "b" },   -- keep A/B by position
+        ["xbox"]     = { ["ltrigger"] = "rt", ["rtrigger"] = "lt" },
+    },
+},
+```
+
+Keys are physical controls by position — `south east west north back start lshoulder rshoulder ltrigger rtrigger` — and values are roles — `a b x y select start lb rb lt rt`. A button may take a trigger role and vice versa. Controls not listed keep the layout's default. Anything malformed (other `version`, unknown names, wrong types) is skipped with a log warning; with no data kopad behaves exactly as without remapping. The D-pad, sticks, Guide/L3/R3 and the older patched-build key path are not remappable, and when kopad passes an event through to KOReader (kopad off, a dialog on top), KOReader sees the physical button. The pure logic is `padmap.lua`, tested by `lua tests/padmap_test.lua`.
+
 ### Scope
 
 The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) and in the FileManager no reader keys are suppressed and selector-dependent handlers pass through — only page turns and X-combos remain active there.
 
 ## How it works
 
+- **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **selector.lua** — crosshair widget + word-snap logic. Pulls visible word positions from the bundled `paginmapo.lua` (Ido for "page-map") and finds the nearest by Euclidean distance.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).

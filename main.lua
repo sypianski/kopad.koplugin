@@ -41,6 +41,12 @@ Input paths:
   :onGamepadAxisMotion below relay them to PadNav (see padnav.lua header for
   the SDL button/axis ids). LT/RT/Select/Start work without any patch.
 
+  Button remapping (KOReader >= 2026.07 path only, padmap.lua / PC-011):
+  the shared `padmap` table in settings/kopad.lua (synced by koligilo) holds
+  per-layout overrides; the layout of THIS device's pad (menu > kopad >
+  "Gamepad layout") lives in settings/kopad_device.lua, which koligilo does
+  not sync. No data = identity = the map above.
+
   Older builds (sdl3_gamepad.patch + 1-lstick-keys.lua userpatch): buttons
   arrive from SDL3 as standard key names:
   L-stick          →  LStickUp/Down/Left/Right (via userpatch)
@@ -74,6 +80,9 @@ if not ok_trace or type(Trace) ~= "table" then
               active = function() return false end,
               file_stamp = function() return "" end }
 end
+
+-- padmap.lua (pure remapping layer), loaded lazily via safe_require.
+local Padmap
 
 local kopad = WidgetContainer:extend{
     name        = "kopad",
@@ -113,11 +122,15 @@ end
 
 function kopad:init()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/kopad.lua")
+    -- Device-local settings: never listed in koligilo's catalog, so they do
+    -- not travel between devices (the pad layout differs per device).
+    self.device_settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/kopad_device.lua")
     self.enabled  = self.settings:isTrue("enabled")
     self.subs     = {}
 
     if Trace.active() then self:_trace_start() end
     self:_load_subs()
+    self:_apply_padmap()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
         tostring(self.subs.selector ~= nil))
@@ -184,7 +197,67 @@ function kopad:_ensure_selector()
     end
 end
 
+-- (Re)build the button remapping and hand it to PadNav. Called on init, on
+-- onReaderReady / onResume (koligilo may have rewritten `padmap` in place in
+-- self.settings) and after a layout change in the menu. Any failure leaves
+-- PadNav on the identity mapping.
+function kopad:_apply_padmap()
+    local nav = self.subs and self.subs.nav
+    if not nav or not nav.set_padmap then return end
+    Padmap = Padmap or safe_require("padmap")
+    if not Padmap then nav:set_padmap(nil); return end
+    local ok, res = pcall(Padmap.build,
+        self.settings:readSetting("padmap"),
+        self.device_settings and self.device_settings:readSetting("padmap_layout"),
+        function(msg) logger.warn("kopad: " .. msg) end)
+    if not ok then
+        logger.warn("kopad: padmap build failed: " .. tostring(res))
+        res = nil
+    end
+    Trace.log("padmap: layout=%s ok=%s", tostring(ok and res and res.layout), tostring(ok))
+    nav:set_padmap(res)
+end
+
+function kopad:_layout_menu()
+    local P = Padmap or safe_require("padmap")
+    if not P then return nil end
+    Padmap = P
+    local labels = {
+        xbox        = _("Xbox / Steam Deck / generic"),
+        playstation = _("PlayStation (DualShock / DualSense)"),
+        nintendo    = _("Nintendo (A/B and X/Y swapped)"),
+    }
+    local function current()
+        local l = self.device_settings and self.device_settings:readSetting("padmap_layout")
+        return P.LAYOUTS[l] and l or P.DEFAULT_LAYOUT
+    end
+    local items = {}
+    for _i, name in ipairs(P.LAYOUT_ORDER) do
+        table.insert(items, {
+            text = labels[name] or name,
+            radio = true,
+            checked_func = function() return current() == name end,
+            callback = function()
+                self.device_settings:saveSetting("padmap_layout", name)
+                self.device_settings:flush()
+                self:_apply_padmap()
+            end,
+        })
+    end
+    return {
+        text_func = function()
+            return _("Gamepad layout (this device)") .. ": " .. (labels[current()] or current())
+        end,
+        sub_item_table = items,
+    }
+end
+
+function kopad:onResume()
+    self:_apply_padmap()
+end
+
 function kopad:onReaderReady()
+    self:_apply_padmap()
     self:_ensure_selector()
     Trace.log("onReaderReady: enabled=%s nav=%s selector=%s", tostring(self.enabled),
         tostring(self.subs.nav ~= nil), tostring(self.subs.selector ~= nil))
@@ -235,6 +308,9 @@ function kopad:addToMainMenu(menu_items)
             separator = true,
         },
     }
+
+    local layout_item = self:_layout_menu()
+    if layout_item then table.insert(sub_items, layout_item) end
 
     for _, sub in pairs(self.subs) do
         if sub.getMenuItems then
@@ -307,6 +383,7 @@ end
 
 function kopad:onFlushSettings()
     self.settings:flush()
+    if self.device_settings then self.device_settings:flush() end
 end
 
 return kopad

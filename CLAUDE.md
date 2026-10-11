@@ -9,8 +9,10 @@ gamepad into a reading controller: page-turning, menu navigation, and a
 crosshair cursor that snaps to nearest words for highlight / dictionary / AI
 lookup. Name = KO(Reader) + (game)pad.
 
-There is **no build step, no test suite, no package manager**. Development is
-edit-Lua → load into KOReader → observe. The repo *is* the plugin source.
+There is **no build step and no package manager**. Development is
+edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
+only automated test covers the pure remapping layer: `lua tests/padmap_test.lua`
+(plain `assert`, KOReader stubbed; also checks the padnav wiring).
 
 ## Runtime requirements
 
@@ -43,7 +45,9 @@ repo's `.lua` files into it, then drop it into KOReader's `plugins/` dir:
 
 Restart KOReader, plug in a gamepad, enable via menu → *more tools* → *kopad* →
 *Enable kopad*. Settings persist to KOReader's settings dir as `kopad.lua`
-(`enabled` flag only). Debug via KOReader's `logger` output (`logger.warn`
+(`enabled` flag + the shared `padmap` remapping table; synced between devices
+by koligilo) and `kopad_device.lua` (`padmap_layout`, device-local, never
+synced). Debug via KOReader's `logger` output (`logger.warn`
 calls in `main.lua`, `logger.dbg` elsewhere).
 
 ## Architecture
@@ -85,6 +89,19 @@ branch on whether `selector.overlay` exists and which `mode` it's in, then
 delegate to overlay methods. Reading-mode-only state: `_x_mode` (X button acts
 as a modifier for D-pad/shoulder combos: menu / footer / history / files / TOC /
 bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
+
+### `padmap.lua` — button remapping (pure, PC-011)
+No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
+`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo>={<physical>=<role>}}}`,
+overrides on top of the layout's built-in default) plus the device's layout into
+a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
+the logical role id. Malformed data → `warn` + skip, never raises; no data =
+identity. `main.lua:_apply_padmap()` builds it (init, `onReaderReady`,
+`onResume`, layout menu) and calls `nav:set_padmap()`; `PadNav:onGamepadButtonDown`
+/ `onGamepadAxisMotion` resolve first, then `_button_down` / `_trigger_event` /
+`_trigger_as_button` run on roles. Legacy `key_events` path is not remapped.
+The vocabulary (physical names, roles, layouts) is a contract with koligilo's
+panel editor (TASK-25 there) — change both sides together.
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
