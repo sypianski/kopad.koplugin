@@ -86,6 +86,9 @@ delegate to overlay methods. Reading-mode-only state: `_x_mode` (X button acts
 as a modifier for D-pad/shoulder combos: menu / footer / history / files / TOC /
 bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
 
+### `kopad_trace.lua` — optional diagnostic trace
+Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
+
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
 (`_open`, `_open_walk`, `_close`); `SelectorOverlay` is the painted widget with

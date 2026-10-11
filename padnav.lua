@@ -110,6 +110,13 @@ local logger         = require("logger")
 local Pluginaro      = require("pluginaro")
 local _              = require("gettext")
 
+-- Optional on-device diagnostics (kopad_trace.lua, enabled by the flag file
+-- <settings dir>/kopad-trace). A missing module degrades to a no-op stub.
+local ok_trace, Trace = pcall(require, "kopad_trace")
+if not ok_trace or type(Trace) ~= "table" then
+    Trace = { log = function() end, active = function() return false end }
+end
+
 local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 
 -- Stock KOReader >= 2026.07 gamepad ids (frontend/device/sdl/gamepad.lua).
@@ -235,6 +242,16 @@ function PadNav:_is_enabled()
     -- not in MODAL_CLASSES, so selection handling inside it still works.
     if Pluginaro.is_modal_active() then return false end
     return self.enabled_ref and self.enabled_ref.enabled
+end
+
+-- Why _is_enabled() is false (same checks, same order). Trace output only;
+-- call it only when Trace.active().
+function PadNav:_why_disabled()
+    if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign overlay" end
+    if Pluginaro.is_modal_active() then return "modal active" end
+    if not self.enabled_ref then return "no enabled_ref" end
+    if not self.enabled_ref.enabled then return "not enabled" end
+    return "enabled"
 end
 
 function PadNav:_suppress_reader_keys()
@@ -875,15 +892,36 @@ end
 -- ---------------------------------------------------------------------------
 
 function PadNav:onGamepadButtonDown(ev)
+    local tr = Trace.active()
     -- Top menu first (before the modal guard): LB/RB switch categories there.
-    if type(ev) == "table" and self:_menu_button(ev.button) then return true end
-    if not self:_is_enabled() then return false end
+    if type(ev) == "table" and self:_menu_button(ev.button) then
+        if tr then Trace.log("padnav btn=%s: menu-branch handled -> result=true", tostring(ev.button)) end
+        return true
+    end
+    if not self:_is_enabled() then
+        if tr then
+            Trace.log("padnav btn=%s: passthrough, %s -> result=false",
+                tostring(type(ev) == "table" and ev.button), self:_why_disabled())
+        end
+        return false
+    end
     local btn = type(ev) == "table" and ev.button or nil
-    if btn == nil then return false end
+    if btn == nil then
+        if tr then Trace.log("padnav btn=nil: no button in event -> result=false") end
+        return false
+    end
     local method = BUTTON_HANDLERS[btn]
     local handled = method and self[method](self) or false
     -- D-pad (11..14) and the rest: false -> stock Up/Down/Left/Right key.
-    return handled or BUTTON_SWALLOW[btn] or false
+    local result = handled or BUTTON_SWALLOW[btn] or false
+    if tr then
+        Trace.log("padnav btn=%s: handler=%s returned %s, %s -> result=%s", tostring(btn),
+            tostring(method), tostring(handled),
+            handled and "handled" or (BUTTON_SWALLOW[btn] and "swallowed"
+                or ((type(btn) == "number" and btn >= 11 and btn <= 14) and "passthrough(dpad)" or "passthrough")),
+            tostring(result))
+    end
+    return result
 end
 
 -- True when this trigger event is a NEW press, false when it is stock
@@ -1014,11 +1052,19 @@ end
 function PadNav:_menu_button(btn)
     if btn ~= BTN_LB and btn ~= BTN_RB then return false end
     local menu = self:_top_menu()
-    if not menu then return false end
+    if not menu then
+        if Trace.active() then
+            Trace.log("padnav btn=%s: menu-branch no top menu (enabled=%s foreign_overlay=%s)",
+                tostring(btn), tostring(self.enabled_ref and self.enabled_ref.enabled),
+                tostring(Pluginaro.overlay_active(self.ui, "kopad")))
+        end
+        return false
+    end
     local ok, err = pcall(menu_tab_step, menu, btn == BTN_RB and 1 or -1)
     if not ok then
         logger.warn("kopad: menu tab switch failed: " .. tostring(err))
     end
+    Trace.log("padnav btn=%s: menu tab step ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
     return true
 end
 
@@ -1028,6 +1074,8 @@ end
 function PadNav:_menu_trigger(axis, value)
     local menu = self:_top_menu()
     if not menu then return false end
+    Trace.log("padnav axis=%s value=%s: menu page branch (new_press check next)",
+        tostring(axis), tostring(value))
     if value > 0 and self:_trigger_is_new_press(axis) then
         local method = axis == AXIS_RT and "onNextPage" or "onPrevPage"
         if type(menu[method]) == "function" then
@@ -1041,26 +1089,52 @@ function PadNav:_menu_trigger(axis, value)
 end
 
 function PadNav:onGamepadAxisMotion(ax)
+    local tr = Trace.active()
     if type(ax) == "table" and (ax.axis == AXIS_LT or ax.axis == AXIS_RT)
             and type(ax.value) == "number"
             and self:_menu_trigger(ax.axis, ax.value) then
+        if tr then
+            Trace.log("padnav axis=%s value=%s: menu-branch handled -> result=true",
+                tostring(ax.axis), tostring(ax.value))
+        end
         return true
     end
-    if not self:_is_enabled() then return false end
+    if not self:_is_enabled() then
+        if tr then
+            Trace.log("padnav axis=%s value=%s: passthrough, %s -> result=false",
+                tostring(type(ax) == "table" and ax.axis), tostring(type(ax) == "table" and ax.value),
+                self:_why_disabled())
+        end
+        return false
+    end
     if type(ax) ~= "table" then return false end
     local axis, value = ax.axis, ax.value
-    if axis == nil or value == nil then return false end
+    if axis == nil or value == nil then
+        if tr then Trace.log("padnav axis=%s value=%s: incomplete event -> result=false",
+            tostring(axis), tostring(value)) end
+        return false
+    end
 
     if axis == AXIS_LT or axis == AXIS_RT then
         -- Triggers: 0..32767, only positive values are a press.
-        if value > 0 and self:_trigger_is_new_press(axis) then
+        local new_press = value > 0 and self:_trigger_is_new_press(axis)
+        if new_press then
             if axis == AXIS_LT then self:onKPPgBk2() else self:onKPPgFwd2() end
+        end
+        if tr then
+            Trace.log("padnav axis=%s value=%s: trigger new_press=%s handler=%s swallowed -> result=true",
+                tostring(axis), tostring(value), tostring(new_press),
+                new_press and (axis == AXIS_LT and "onKPPgBk2" or "onKPPgFwd2") or "none")
         end
         return true
     end
 
     local pair = STICK_HANDLERS[axis]
-    if not pair then return false end
+    if not pair then
+        if tr then Trace.log("padnav axis=%s value=%s: no stick mapping, passthrough -> result=false",
+            tostring(axis), tostring(value)) end
+        return false
+    end
     local method = pair[value < 0 and 1 or 2]
 
     if axis == AXIS_RX or axis == AXIS_RY then
@@ -1068,15 +1142,30 @@ function PadNav:onGamepadAxisMotion(ax)
         -- RPgBack/RPgFwd and auto-repeats it -> endless page turning. The
         -- handlers return false without a selector (FileManager / paged
         -- docs); we still swallow the event there.
-        self[method](self)
+        local handled = self[method](self)
+        if tr then
+            Trace.log("padnav axis=%s value=%s: handler=%s returned %s, swallowed -> result=true",
+                tostring(axis), tostring(value), method, tostring(handled))
+        end
         return true
     end
 
     -- L-stick. Without a selector (FileManager / paged docs) the L-stick
     -- handlers would eat the event as a no-op or a page turn, so let the stock
     -- Up/Down/Left/Right key through to the original list/page navigation.
-    if not self:_selector() then return false end
-    return self[method](self) or false
+    if not self:_selector() then
+        if tr then
+            Trace.log("padnav axis=%s value=%s: L-stick, no selector, passthrough -> result=false",
+                tostring(axis), tostring(value))
+        end
+        return false
+    end
+    local result = self[method](self) or false
+    if tr then
+        Trace.log("padnav axis=%s value=%s: handler=%s -> result=%s",
+            tostring(axis), tostring(value), method, tostring(result))
+    end
+    return result
 end
 
 local CHEAT_READING = _("Reading mode")

@@ -65,6 +65,16 @@ local logger          = require("logger")
 local _               = require("gettext")
 local Pluginaro       = require("pluginaro")
 
+-- Optional on-device diagnostics (kopad_trace.lua, enabled by the flag file
+-- <settings dir>/kopad-trace). A missing module degrades to a no-op stub.
+local ok_trace, Trace = pcall(require, "kopad_trace")
+if not ok_trace or type(Trace) ~= "table" then
+    local nop = function() end
+    Trace = { log = nop, begin_event = nop, end_event = nop,
+              active = function() return false end,
+              file_stamp = function() return "" end }
+end
+
 local kopad = WidgetContainer:extend{
     name        = "kopad",
     is_doc_only = false,
@@ -74,9 +84,31 @@ local function safe_require(modname)
     local ok, mod = pcall(require, modname)
     if not ok then
         logger.warn("kopad: failed to load " .. modname .. ": " .. tostring(mod))
+        Trace.log("load %s: FAILED: %s", modname, tostring(mod))
         return nil
     end
+    Trace.log("load %s: ok (%s)", modname, type(mod))
     return mod
+end
+
+-- Directory this main.lua was loaded from ("@/path/main.lua" in the chunk's
+-- debug source), or nil.
+local function plugin_dir()
+    local ok, src = pcall(function() return debug.getinfo(1, "S").source end)
+    return ok and type(src) == "string" and src:match("^@(.*)/[^/]*$") or nil
+end
+
+-- Startup marker: which code is on disk (mtimes) and the initial state.
+function kopad:_trace_start()
+    local dir = plugin_dir()
+    Trace.log("=== kopad init: ui=%s rolling=%s enabled=%s dir=%s",
+        tostring(self.ui and self.ui.name), tostring(self.ui and self.ui.rolling ~= nil),
+        tostring(self.enabled), tostring(dir))
+    if dir then
+        for _, f in ipairs({ "main.lua", "padnav.lua", "keyhints.lua" }) do
+            Trace.log("file %s: %s", f, Trace.file_stamp(dir .. "/" .. f))
+        end
+    end
 end
 
 function kopad:init()
@@ -84,7 +116,11 @@ function kopad:init()
     self.enabled  = self.settings:isTrue("enabled")
     self.subs     = {}
 
+    if Trace.active() then self:_trace_start() end
     self:_load_subs()
+    Trace.log("subs: nav=%s keyhints=%s selector=%s",
+        tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
+        tostring(self.subs.selector ~= nil))
 
     -- FileManager instantiates plugins BEFORE it builds its FileChooser, so
     -- applying here is enough for the file browser created right after.
@@ -138,7 +174,10 @@ end
 
 function kopad:_ensure_selector()
     if self.subs.selector then return end
-    if not self.ui or not self.ui.rolling then return end
+    if not self.ui or not self.ui.rolling then
+        Trace.log("selector: skipped (no ui.rolling)")
+        return
+    end
     local Selector = safe_require("selector")
     if Selector then
         self.subs.selector = Selector:new{ ui = self.ui, enabled_ref = self }
@@ -147,6 +186,8 @@ end
 
 function kopad:onReaderReady()
     self:_ensure_selector()
+    Trace.log("onReaderReady: enabled=%s nav=%s selector=%s", tostring(self.enabled),
+        tostring(self.subs.nav ~= nil), tostring(self.subs.selector ~= nil))
     if self.enabled and self.subs.nav then
         -- Re-apply suppression now that all reader modules have their key_events set
         self.subs.nav:restore_reader_keys()
@@ -174,6 +215,7 @@ function kopad:addToMainMenu(menu_items)
             keep_menu_open = true,
             callback = function()
                 self.enabled = not self.enabled
+                Trace.log("toggle: enabled -> %s", tostring(self.enabled))
                 self.settings:saveSetting("enabled", self.enabled)
                 self.settings:flush()
                 self:_sync_key_hints()
@@ -227,12 +269,40 @@ end
 -- device skip the stock default key press; false keeps stock behaviour.
 function kopad:onGamepadButtonDown(ev)
     local nav = self.subs and self.subs.nav
-    return nav and nav:onGamepadButtonDown(ev) or false
+    local tr = Trace.active()
+    if tr then
+        Trace.begin_event(nil)
+        Trace.log("relay btn: button=%s nav=%s enabled=%s",
+            tostring(type(ev) == "table" and ev.button), tostring(nav ~= nil),
+            tostring(self.enabled))
+    end
+    local res = nav and nav:onGamepadButtonDown(ev) or false
+    if tr then
+        Trace.log("relay btn: returned %s", tostring(res))
+        Trace.end_event()
+    end
+    return res
 end
 
 function kopad:onGamepadAxisMotion(ax)
     local nav = self.subs and self.subs.nav
-    return nav and nav:onGamepadAxisMotion(ax) or false
+    local tr = Trace.active()
+    if tr then
+        local axis = type(ax) == "table" and ax.axis
+        local value = type(ax) == "table" and ax.value
+        -- Repeats of the same axis+direction within 0.3 s are collapsed.
+        local dir = type(value) ~= "number" and "?"
+            or (value < 0 and "-" or (value > 0 and "+" or "0"))
+        Trace.begin_event("axis:" .. tostring(axis) .. ":" .. dir)
+        Trace.log("relay axis: axis=%s value=%s nav=%s enabled=%s",
+            tostring(axis), tostring(value), tostring(nav ~= nil), tostring(self.enabled))
+    end
+    local res = nav and nav:onGamepadAxisMotion(ax) or false
+    if tr then
+        Trace.log("relay axis: returned %s", tostring(res))
+        Trace.end_event()
+    end
+    return res
 end
 
 function kopad:onFlushSettings()

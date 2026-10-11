@@ -97,7 +97,19 @@ The selector (word walk / struct / crosshair) only exists for crengine (rolling)
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **selector.lua** — crosshair widget + word-snap logic. Pulls visible word positions from the bundled `paginmapo.lua` (Ido for "page-map") and finds the nearest by Euclidean distance.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
+- **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
+
+## Diagnostics
+
+If kopad seems to do nothing on a device (and KOReader gives you no log), switch on the on-device trace by creating an empty flag file in KOReader's settings directory:
+
+```sh
+touch ~/.var/app/rocks.koreader.KOReader/config/koreader/settings/kopad-trace   # Flatpak
+# native Linux: ~/.config/koreader/settings/kopad-trace ; other devices: koreader/settings/kopad-trace
+```
+
+From then on (no restart needed, the flag is re-checked every ~2 s) `kopad-trace.log` next to it collects timestamped lines: the mtimes of `main.lua` / `padnav.lua` / `keyhints.lua` (which code actually loaded), the result of loading each sub-module, the `enabled` state, every `Gamepad*` event reaching kopad and why `padnav.lua` passed it through or which handler consumed it. Remove the flag file to stop; without it nothing is written. The log is capped (~256 KB, then only the newest ~64 KB are kept) and rate-limited (~20 lines/s, repeated stick events are collapsed). Implemented in `kopad_trace.lua`; the plugin works without that file.
 
 ## Bundled `paginmapo.lua`
 
