@@ -43,35 +43,98 @@ FileManager no reader keys are suppressed and the selector-dependent
 handlers return false (pass-through) — only LB/RB page turns and X-combos
 remain active there.
 
-Key names (from SDL3 patch + userpatch):
-  LT = LPgBack (F6), RT = LPgFwd (F7), LB = RPgBack (F9), RB = RPgFwd (F11)
-  X = F10, R-stick = F3/F4/F5/F8.
-  ASSUMPTION (unverifiable, KOReader SDL3.lua not available): the stock
-  patch emits no known key for Select/Start. We bind Select = F12 and
-  Start = F2 (see SELECT_KEYS/START_KEYS; proposed hunk for
-  sdl3_gamepad.patch maps BACK -> 1073741893 (F12), START -> 1073741883 (F2)).
-  If those keys never arrive, the bindings are simply inert; nothing else
-  breaks and X + D-pad still reaches the menus.
+Input paths (two, both end in the same on<Key> handlers):
+
+1. KOReader >= 2026.07 (stock, NO patch / userpatch needed):
+   frontend/device/sdl/device.lua broadcasts GamepadButtonDown {button} and
+   GamepadAxisMotion {axis,value,time}; if a handler returns true the stock
+   default key press (gamepad.lua button_key_names / axis_key_names) is NOT
+   sent. onGamepadButtonDown / onGamepadAxisMotion below map SDL ids to the
+   handlers; false = pass through to the stock default (kopad disabled, a
+   modal Menu/dialog on top, or a foreign overlay owning the screen).
+   main.lua relays the broadcast here (PadNav lives in ui.active_widgets,
+   which UIManager:broadcastEvent does not visit).
+     Buttons (SDL ids): A=0 B=1 X=2 Y=3 Select=4 Start=6 LB=9 RB=10;
+       D-pad 11..14 is passed through (stock sends Up/Down/Left/Right ->
+       KPUp2.. bindings). Guide=5, L3=7, R3=8 are swallowed while kopad is
+       active: stock maps them to RPgFwd / Menu / Menu, i.e. accidental page
+       turns or menus from a stick click.
+     Triggers: axis 4 = LT, axis 5 = RT. Stock has no mapping for them. One
+       press = one page: the stock auto-repeat (first repeat after 0.5 s,
+       then every 0.2 s while held) is filtered out, see _trigger_is_new_press.
+     L-stick = axes 0 (x) / 1 (y), R-stick = axes 2 (x) / 3 (y); negative =
+       left/up. The stock auto-repeat is kept on the sticks (handy for
+       navigation). Stock maps R-stick Y to RPgBack/RPgFwd, which with the
+       auto-repeat flips pages endlessly, so while kopad is active axes 2/3
+       are always consumed (axis 2 has no stock mapping).
+
+2. Older builds with sdl3_gamepad.patch + 1-lstick-keys.lua userpatch: no
+   Gamepad* broadcast, buttons/axes arrive as key names and hit the
+   key_events table in PadNav:init (kept for compatibility):
+     LT = LPgBack (F6), RT = LPgFwd (F7), LB = RPgBack (F9), RB = RPgFwd (F11)
+     X = F10, R-stick = F3/F4/F5/F8, L-stick = LStickUp/Down/Left/Right.
+     ASSUMPTION (unverifiable): the old patch emits no known key for
+     Select/Start. We bind Select = F12 and Start = F2 (see
+     SELECT_KEYS/START_KEYS; hunk for sdl3_gamepad.patch maps BACK ->
+     1073741893 (F12), START -> 1073741883 (F2)). If those keys never arrive
+     the bindings are simply inert; X + D-pad still reaches the menus.
 ]]
 
 local Event          = require("ui/event")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local UIManager      = require("ui/uimanager")
+local time           = require("ui/time")
 local logger         = require("logger")
 local Pluginaro      = require("pluginaro")
 local _              = require("gettext")
 
 local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 
+-- Stock KOReader >= 2026.07 gamepad ids (frontend/device/sdl/gamepad.lua).
+-- GamepadButtonDown carries {button = <id>}; GamepadAxisMotion {axis = <id>}.
+local BTN_A, BTN_B, BTN_X, BTN_Y = 0, 1, 2, 3
+local BTN_SELECT, BTN_GUIDE, BTN_START = 4, 5, 6
+local BTN_L3, BTN_R3, BTN_LB, BTN_RB = 7, 8, 9, 10
+local AXIS_LX, AXIS_LY, AXIS_RX, AXIS_RY = 0, 1, 2, 3
+local AXIS_LT, AXIS_RT = 4, 5
+
+-- button id -> on<Key> handler (return value true = consumed).
+local BUTTON_HANDLERS = {
+    [BTN_A]      = "onKPConfirm",
+    [BTN_B]      = "onKPBack",
+    [BTN_X]      = "onKPExtend",
+    [BTN_Y]      = "onKPMenu",
+    [BTN_SELECT] = "onKPSelect",
+    [BTN_START]  = "onKPStart",
+    [BTN_LB]     = "onKPPgBk",
+    [BTN_RB]     = "onKPPgFwd",
+}
+-- Buttons consumed even when their handler declines: the stock default key of
+-- each would be wrong here (Select -> RPgBack, Guide -> RPgFwd, Start/L3 ->
+-- Menu). R3 has no stock key; swallowed so a future default cannot leak in.
+local BUTTON_SWALLOW = {
+    [BTN_SELECT] = true, [BTN_GUIDE] = true, [BTN_START] = true,
+    [BTN_L3] = true, [BTN_R3] = true,
+}
+
+-- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
+-- device.lua fires the first repeat 0.5 s after the press (delay) and then
+-- every 0.2 s; it never reports the release of an axis to plugins.
+local TRIGGER_FIRST_REPEAT_MIN_S = 0.45 -- first repeat cannot come earlier than 0.5 s
+local TRIGGER_FIRST_REPEAT_MAX_S = 0.9  -- ...allow slack for a slow page render
+local TRIGGER_NEXT_REPEAT_MAX_S  = 0.6  -- later repeats: 0.2 s + slack
+
 local PadNav = InputContainer:extend{
     name        = "kopad_padnav",
     enabled_ref = nil,
 }
 
--- Select/Start key names: unverifiable without KOReader's SDL3.lua. These are
--- unused F-keys; the matching hunk must be added to sdl3_gamepad.patch
--- (BACK -> 1073741893 "F12", START -> 1073741883 "F2"). Unknown/absent keys
--- just never fire, so a wrong guess is harmless.
+-- LEGACY (builds with sdl3_gamepad.patch only). On KOReader >= 2026.07
+-- Select/Start arrive via onGamepadButtonDown and these keys never fire.
+-- Select/Start key names: unverifiable without the old KOReader SDL3.lua.
+-- These are unused F-keys; the matching hunk must be added to
+-- sdl3_gamepad.patch (BACK -> 1073741893 "F12", START -> 1073741883 "F2").
+-- Unknown/absent keys just never fire, so a wrong guess is harmless.
 local SELECT_KEYS = { "F12" }
 local START_KEYS  = { "F2" }
 
@@ -82,6 +145,11 @@ local SUPPRESS_KEYS = {
 }
 
 function PadNav:init()
+    -- key_events: LEGACY input path for builds with sdl3_gamepad.patch. On
+    -- KOReader >= 2026.07 the same handlers are driven by onGamepadButtonDown /
+    -- onGamepadAxisMotion (bottom of this file); the keys below are then only
+    -- hit by the stock default keys (D-pad Up/Down/Left/Right, and the
+    -- Press/Back/ContextMenu/RPgBack/RPgFwd fall-through when a handler passes).
     self.key_events = {
         -- L-stick: separate key names injected by 1-lstick-keys.lua userpatch
         -- Falls back to Up/Down/Left/Right if patch not applied (also covers D-pad until patch confirmed)
@@ -774,6 +842,97 @@ function PadNav:onKPMenu()
     return true
 end
 
+-- ---------------------------------------------------------------------------
+-- KOReader >= 2026.07: raw gamepad events (no patch). Return true = handled,
+-- stock default key press is suppressed; false = stock behaviour unchanged.
+-- Called from kopad:onGamepadButtonDown / onGamepadAxisMotion in main.lua.
+-- When _is_enabled() is false (kopad off, modal Menu/dialog on top, foreign
+-- overlay) we return false before touching anything; the stock default key
+-- then reaches the on<Key> bindings (e.g. visel routing in onKPBack/onKPLeft)
+-- or the menu exactly as it would without kopad.
+-- ---------------------------------------------------------------------------
+
+function PadNav:onGamepadButtonDown(ev)
+    if not self:_is_enabled() then return false end
+    local btn = type(ev) == "table" and ev.button or nil
+    if btn == nil then return false end
+    local method = BUTTON_HANDLERS[btn]
+    local handled = method and self[method](self) or false
+    -- D-pad (11..14) and the rest: false -> stock Up/Down/Left/Right key.
+    return handled or BUTTON_SWALLOW[btn] or false
+end
+
+-- True when this trigger event is a NEW press, false when it is stock
+-- auto-repeat of a trigger that is still held. The plugin never sees the
+-- release, so a press is recognised by timing against the previous event on
+-- the same axis: repeats arrive 0.5 s after the press, then every 0.2 s. We
+-- use our own monotonic clock instead of ax.time: the first event carries
+-- the SDL timestamp, repeats carry time.now() (different time bases).
+-- Known trade-off: a deliberate second tap within ~0.9 s of a press that was
+-- already held 0.5 s+ is indistinguishable from a repeat and is swallowed.
+function PadNav:_trigger_is_new_press(axis)
+    self._trigger_seen = self._trigger_seen or {}
+    local now = time.to_s(time.now())
+    local st = self._trigger_seen[axis]
+    if st then
+        local gap = now - st.t
+        local is_repeat
+        if st.n == 1 then
+            is_repeat = gap >= TRIGGER_FIRST_REPEAT_MIN_S and gap < TRIGGER_FIRST_REPEAT_MAX_S
+        else
+            is_repeat = gap < TRIGGER_NEXT_REPEAT_MAX_S
+        end
+        if is_repeat then
+            st.t = now; st.n = st.n + 1
+            return false
+        end
+    end
+    self._trigger_seen[axis] = { t = now, n = 1 }
+    return true
+end
+
+-- axis id -> { negative-direction handler, positive-direction handler }
+-- (SDL: x- = left, x+ = right, y- = up, y+ = down).
+local STICK_HANDLERS = {
+    [AXIS_LX] = { "onKPLeft",       "onKPRight" },
+    [AXIS_LY] = { "onKPUp",         "onKPDown" },
+    [AXIS_RX] = { "onKPRStickLeft", "onKPRStickRight" },
+    [AXIS_RY] = { "onKPRStickUp",   "onKPRStickDown" },
+}
+
+function PadNav:onGamepadAxisMotion(ax)
+    if not self:_is_enabled() then return false end
+    if type(ax) ~= "table" then return false end
+    local axis, value = ax.axis, ax.value
+    if axis == nil or value == nil then return false end
+
+    if axis == AXIS_LT or axis == AXIS_RT then
+        -- Triggers: 0..32767, only positive values are a press.
+        if value > 0 and self:_trigger_is_new_press(axis) then
+            if axis == AXIS_LT then self:onKPPgBk2() else self:onKPPgFwd2() end
+        end
+        return true
+    end
+
+    local pair = STICK_HANDLERS[axis]
+    if not pair then return false end
+    local method = pair[value < 0 and 1 or 2]
+
+    if axis == AXIS_RX or axis == AXIS_RY then
+        -- Always consumed while kopad is active: stock maps R-stick Y to
+        -- RPgBack/RPgFwd and auto-repeats it -> endless page turning. The
+        -- handlers return false without a selector (FileManager / paged
+        -- docs); we still swallow the event there.
+        self[method](self)
+        return true
+    end
+
+    -- L-stick. Without a selector (FileManager / paged docs) the L-stick
+    -- handlers would eat the event as a no-op or a page turn, so let the stock
+    -- Up/Down/Left/Right key through to the original list/page navigation.
+    if not self:_selector() then return false end
+    return self[method](self) or false
+end
 
 local CHEAT_READING = _("Reading mode")
     .. "\nRT / LT: next / previous page"

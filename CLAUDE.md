@@ -12,9 +12,17 @@ lookup. Name = KO(Reader) + (game)pad.
 There is **no build step, no test suite, no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source.
 
-## Runtime requirements (not satisfiable from this repo alone)
+## Runtime requirements
 
-The plugin cannot run without two things that live upstream in `sypianski/koreader-konfig`:
+**KOReader >= 2026.07 (stock, e.g. the Flatpak build): nothing else is needed.**
+It has built-in gamepad support (`frontend/device/sdl/gamepad.lua` + `device.lua`)
+and broadcasts `GamepadButtonDown` / `GamepadButtonUp` / `GamepadAxisMotion`
+events; `padnav.lua` handles them itself. The old `sdl3_gamepad.patch` and the
+`1-lstick-keys.lua` userpatch from `sypianski/koreader-konfig` are obsolete
+there (the userpatch hooks internals that no longer exist).
+
+Only **older builds** still need those two upstream pieces, and then `padnav.lua`
+runs on the legacy key-event path (the `key_events` table):
 
 1. **KOReader built with the SDL3 gamepad patch** (`sdl3_gamepad.patch`) — feeds
    gamepad buttons in as standard KOReader key names.
@@ -55,6 +63,11 @@ The main-menu toggle flips `self.enabled` and calls
 `nav:_suppress_reader_keys()` / `nav:restore_reader_keys()`. Sub-modules
 contribute menu entries via an optional `getMenuItems()` method that
 `addToMainMenu` collects reflectively.
+
+`self.subs.keyhints` = `keyhints.lua` (plain module, global state): `apply()` /
+`restore()` hide / put back KOReader's Q-W-E-R-T-Y shortcut letter labels on
+file browser items by `rawset`-ing `BookList.is_enable_shortcut`; main.lua calls
+it via `_sync_key_hints()` from `init` and the toggle (idempotent, pcall-guarded).
 
 ### `padnav.lua` — event router (`InputContainer`, `PadNav`)
 Owns all gamepad `key_events` bindings and the **key-suppression** mechanism.
@@ -127,13 +140,29 @@ shows they arrive as sync commits.
 
 ## Key events reference
 
-Physical button → KOReader key name → `padnav` binding. Names come from SDL3 +
-the userpatch. When adding/changing controls, edit the `key_events` table in
-`PadNav:init` and the matching `on<Key>` handler; the docstring blocks at the
-top of `main.lua` and `padnav.lua` are the human-facing control maps and should
-be kept in sync with behavior. Note the two docstrings currently describe
-slightly different layouts — **`padnav.lua`'s handlers are the source of
-truth**, not the `main.lua` header comment.
+Two input paths end in the same `on<Key>` handlers:
+
+- **KOReader >= 2026.07:** `device.lua` calls `UIManager:broadcastEvent` with
+  `GamepadButtonDown {button}` / `GamepadAxisMotion {axis,value,time}`; if a
+  handler returns `true` the stock default key press is suppressed.
+  `PadNav:onGamepadButtonDown` / `onGamepadAxisMotion` map SDL ids (A0 B1 X2 Y3
+  Select4 Guide5 Start6 L3=7 R3=8 LB9 RB10 D-pad11-14; axes LX0 LY1 RX2 RY3
+  LT4 RT5) onto the handlers. **`main.lua` must relay these two events to
+  `subs.nav`**: the broadcast reaches the window widgets and their children (the
+  kopad plugin widget) but not `ui.active_widgets`, where PadNav lives. Triggers
+  are de-bounced (stock auto-repeats held axes and never reports release; own
+  `time.now()` clock, not `ax.time`). Axes 2/3 (R-stick) are always consumed
+  while enabled, because stock maps R-stick Y to `RPgBack`/`RPgFwd`.
+- **Older patched builds:** physical button → KOReader key name → `padnav`
+  binding in the `key_events` table in `PadNav:init`. Names come from SDL3 + the
+  userpatch.
+
+When adding/changing controls, edit the matching `on<Key>` handler (and the
+`key_events` table / the id tables at the top of `padnav.lua`); the docstring
+blocks at the top of `main.lua` and `padnav.lua` are the human-facing control
+maps and should be kept in sync with behavior. Note the two docstrings
+currently describe slightly different layouts — **`padnav.lua`'s handlers are
+the source of truth**, not the `main.lua` header comment.
 
 ## Conventions
 

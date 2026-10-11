@@ -10,7 +10,9 @@ E-readers and reading-mode laptops often sit far from your hands. A gamepad is m
 
 ## Install
 
-Requires KOReader built with SDL3 gamepad support. See `sdl3_gamepad.patch` in the upstream konfig repo for the build patch.
+**KOReader 2026.07 or newer** (stock, e.g. the Flatpak release) works as is: it has built-in gamepad support and kopad takes over its `GamepadButtonDown` / `GamepadAxisMotion` events. No patch, no userpatch.
+
+Older KOReader builds need SDL3 gamepad support from the upstream konfig repo: `sdl3_gamepad.patch` (button/axis key events) plus the `1-lstick-keys.lua` userpatch (separate L-stick keys). Those builds are still supported through key events, but the patch and userpatch are obsolete on 2026.07+.
 
 Drop `kopad.koplugin/` into KOReader's `plugins/` directory:
 
@@ -28,7 +30,7 @@ The canonical, up-to-date key map lives in the header of `padnav.lua` (the
 actual gamepad event handler) — read that file if these tables and the code
 ever drift. Summary as of this writing:
 
-Written for a Steam Deck / DualSense (via Steam Input) using the SDL3 gamepad patch. LT/RT are the lower trigger buttons under the index fingers; LB/RB the bumpers above them. The same map is available on-device under *menu > kopad > Button cheat sheet*.
+Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07+. LT/RT are the lower trigger buttons under the index fingers; LB/RB the bumpers above them. The same map is available on-device under *menu > kopad > Button cheat sheet*.
 
 ### Reading mode
 
@@ -61,9 +63,16 @@ Written for a Steam Deck / DualSense (via Steam Input) using the SDL3 gamepad pa
 
 In the dictionary popup **LB** / **RB** cycle dictionaries and **Y** asks the AI to explain.
 
-### Select / Start key names
+### Input paths, Select / Start and the triggers
 
-The stock SDL3 patch does not emit a known key for Select and Start. kopad binds them to **F12** (Select) and **F2** (Start); add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad.
+On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and is mapped by id in `padnav.lua` (`onGamepadButtonDown` / `onGamepadAxisMotion`, relayed from `main.lua`). While kopad is enabled:
+
+- **Select** / **Start** open the top / footer menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out).
+- The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
+- **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. The D-pad is passed through to the original Up/Down/Left/Right keys.
+- With kopad disabled, or while a menu/dialog is on top, nothing is intercepted and KOReader behaves as stock.
+
+On **older patched builds** there are no such events; buttons arrive as key names (`LPgBack`/`LPgFwd` for LT/RT, F-keys for the R-stick and X). Select and Start are then bound to **F12** / **F2**: add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad.
 
 ### Visel overlay (opt-in via pluginaro)
 
@@ -75,9 +84,10 @@ The selector (word walk / struct / crosshair) only exists for crengine (rolling)
 
 ## How it works
 
-- **padnav.lua** — SDL3 gamepad event handler. Maps buttons + axes to KOReader events.
+- **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **selector.lua** — crosshair widget + word-snap logic. Pulls visible word positions from the bundled `paginmapo.lua` (Ido for "page-map") and finds the nearest by Euclidean distance.
-- **main.lua** — glues the two together as a `WidgetContainer`.
+- **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
+- **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
 
 ## Bundled `paginmapo.lua`
 
@@ -87,7 +97,7 @@ If you maintain a fork or copy and edit `paginmapo.lua` here, keep it identical 
 
 ## Compatibility
 
-Tested with a generic Bluetooth gamepad on KOReader 2026.03 desktop Linux with the SDL3 backend.
+Targets stock KOReader 2026.07+ (the `Gamepad*` event interface was taken from the 2026.07.1 Flatpak sources; the new handlers are unit-tested against mocks, not yet confirmed on the Steam Deck). Earlier tested with a generic Bluetooth gamepad on KOReader 2026.03 desktop Linux with the patched SDL3 backend, which keeps working through key events.
 
 ## License
 

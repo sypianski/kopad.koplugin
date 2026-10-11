@@ -31,7 +31,14 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     LB / RB                  Cycle dictionaries
     Y                        AI explain
 
-Gamepad buttons arrive from SDL3 as standard key names:
+Input paths:
+  KOReader >= 2026.07 (stock, no patch): the device broadcasts
+  GamepadButtonDown / GamepadAxisMotion events; kopad:onGamepadButtonDown /
+  :onGamepadAxisMotion below relay them to PadNav (see padnav.lua header for
+  the SDL button/axis ids). LT/RT/Select/Start work without any patch.
+
+  Older builds (sdl3_gamepad.patch + 1-lstick-keys.lua userpatch): buttons
+  arrive from SDL3 as standard key names:
   L-stick          →  LStickUp/Down/Left/Right (via userpatch)
   D-pad            →  Up, Down, Left, Right
   R-stick          →  F3, F4, F5, F8
@@ -73,6 +80,10 @@ function kopad:init()
 
     self:_load_subs()
 
+    -- FileManager instantiates plugins BEFORE it builds its FileChooser, so
+    -- applying here is enough for the file browser created right after.
+    self:_sync_key_hints()
+
     -- Integration A (pluginaro): kopad can steer visel's selection with the
     -- gamepad. The toggle lives in visel's menu (menu_location = "host");
     -- kopad's menu shows the auto-generated signpost annotation. Routing
@@ -102,7 +113,21 @@ function kopad:_load_subs()
         self.subs.nav = Nav:new{ ui = self.ui, enabled_ref = self }
     end
 
+    -- File browser letter labels (q w e r t y…): plain module with global state.
+    self.subs.keyhints = safe_require("keyhints")
+
     self:_ensure_selector()
+end
+
+-- Hide KOReader's keyboard-shortcut letter labels on file browser items while
+-- kopad is enabled; restore them when it is off (see keyhints.lua). Idempotent.
+function kopad:_sync_key_hints()
+    local kh = self.subs.keyhints
+    if not kh then return end
+    local ok, err = pcall(self.enabled and kh.apply or kh.restore)
+    if not ok then
+        logger.warn("kopad: key hints sync failed: " .. tostring(err))
+    end
 end
 
 function kopad:_ensure_selector()
@@ -145,6 +170,7 @@ function kopad:addToMainMenu(menu_items)
                 self.enabled = not self.enabled
                 self.settings:saveSetting("enabled", self.enabled)
                 self.settings:flush()
+                self:_sync_key_hints()
                 if self.enabled then
                     if self.subs.nav then
                         self.subs.nav:_suppress_reader_keys()
@@ -186,6 +212,21 @@ function kopad:addToMainMenu(menu_items)
         sorting_hint = "more_tools",
         sub_item_table = sub_items,
     }
+end
+
+-- KOReader >= 2026.07 broadcasts raw gamepad events (UIManager:broadcastEvent
+-- in frontend/device/sdl/device.lua). The broadcast reaches the window-level
+-- widgets and their children, i.e. this plugin widget, but NOT PadNav, which
+-- is only in ui.active_widgets — so relay to it. Returning true makes the
+-- device skip the stock default key press; false keeps stock behaviour.
+function kopad:onGamepadButtonDown(ev)
+    local nav = self.subs and self.subs.nav
+    return nav and nav:onGamepadButtonDown(ev) or false
+end
+
+function kopad:onGamepadAxisMotion(ax)
+    local nav = self.subs and self.subs.nav
+    return nav and nav:onGamepadAxisMotion(ax) or false
 end
 
 function kopad:onFlushSettings()

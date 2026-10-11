@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-09 17:49'
-updated_date: '2026-10-09 17:58'
+updated_date: '2026-10-11 06:06'
 labels: []
 dependencies: []
 ordinal: 1000
@@ -40,4 +40,6 @@ Z nagrania: „W kopadzie trzeba lepiej zmapować przyciski na Steam Decku i na 
 
 <!-- SECTION:NOTES:BEGIN -->
 AC1: onKPPgFwd2/Bk2 -> _turn_page(±1), GotoViewRel +1=next (zweryfikowane diffem; keyremap.lua potwierdza znak). AC3: 2 pozycje ściągawki w menu + About, teksty zgodne z handlerami (przegląd diffu). AC4: luac -p padnav.lua main.lua OK, docstringi i README przepisane. AC2: kod gotowy (Select=F12, Start=F2), ale NIE działa bez zmiany upstream w sdl3_gamepad.patch (BACK->1073741893 F12, START->1073741883 F2; hunk w scratchpadzie select_start.hunk) albo remapu w Steam Input. Nie zweryfikowane na urządzeniu. Zmiana poza opisem: znaki GotoViewRel dla LB/RB odwrócone (RB=next, LB=prev). Do sprawdzenia: rozjechana kopia w modi/koreader/koplugins/kopad.koplugin, L4/R4 nadal aliasy LB/RB.
+
+Test na Decku 2026-10-11: LT/RT nie działają (AC1 nie spełnione na urządzeniu), przyciski powtarzają się bez końca. Przyczyna i naprawa: TASK-3.
 <!-- SECTION:NOTES:END -->
