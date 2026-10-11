@@ -153,9 +153,18 @@ Two input paths end in the same `on<Key>` handlers:
   are de-bounced (stock auto-repeats held axes and never reports release; own
   `time.now()` clock, not `ax.time`). Axes 2/3 (R-stick) are always consumed
   while enabled, because stock maps R-stick Y to `RPgBack`/`RPgFwd`.
+  **Top menu:** with a `TouchMenu` on top of the window stack (reader *and*
+  FileManager) `onGamepadButtonDown`/`onGamepadAxisMotion` handle LB/RB and LT/RT
+  *before* the `_is_enabled()` guard (`PadNav:_top_menu`, `_menu_button`,
+  `_menu_trigger`, `find_touch_menu`): LB/RB = previous/next category (wrapping,
+  action tabs with `remember == false`/callback skipped, via `bar:switchToTab`;
+  consumed, so the stock `RPgBack`/`RPgFwd` menu page turn is suppressed), LT/RT =
+  `TouchMenu:onPrevPage`/`onNextPage` with the auto-repeat filter. Outside a
+  TouchMenu everything is as before.
 - **Older patched builds:** physical button → KOReader key name → `padnav`
   binding in the `key_events` table in `PadNav:init`. Names come from SDL3 + the
-  userpatch.
+  userpatch. L4/R4 back paddles (`ScrollLock`/`Pause`) are LB/RB aliases on these
+  builds only; the `Gamepad*` path (>= 2026.07) does not handle them.
 
 When adding/changing controls, edit the matching `on<Key>` handler (and the
 `key_events` table / the id tables at the top of `padnav.lua`); the docstring

@@ -47,6 +47,16 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **Y** | highlight mode (crosshair if the page has none) |
 | **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 
+### Top menu open (reader and FileManager)
+
+| Button | Action |
+|---|---|
+| **RB** / **LB** | next / previous category (tab with an icon), wrapping at the ends |
+| **RT** / **LT** | next / previous page of the menu, one page per press |
+| **D-pad** / **A** | as before (stock navigation / press) |
+
+Tabs that are actions rather than categories (the reader's "file browser" tab, which closes the book) are skipped. The bumpers are consumed in the menu, so the stock page turn on them no longer happens there. Outside a top menu (other dialogs, plain lists) the bumpers and triggers behave as in reading mode. This works on the `Gamepad*` path (KOReader 2026.07+) only.
+
 ### Selection mode (sentence / word walk / crosshair)
 
 | Button | Action |
@@ -67,12 +77,12 @@ In the dictionary popup **LB** / **RB** cycle dictionaries and **Y** asks the AI
 
 On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and is mapped by id in `padnav.lua` (`onGamepadButtonDown` / `onGamepadAxisMotion`, relayed from `main.lua`). While kopad is enabled:
 
-- **Select** / **Start** open the top / footer menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out).
+- **Select** / **Start** open the top / footer menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
 - **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. The D-pad is passed through to the original Up/Down/Left/Right keys.
 - With kopad disabled, or while a menu/dialog is on top, nothing is intercepted and KOReader behaves as stock.
 
-On **older patched builds** there are no such events; buttons arrive as key names (`LPgBack`/`LPgFwd` for LT/RT, F-keys for the R-stick and X). Select and Start are then bound to **F12** / **F2**: add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad.
+On **older patched builds** there are no such events; buttons arrive as key names (`LPgBack`/`LPgFwd` for LT/RT, F-keys for the R-stick and X). Select and Start are then bound to **F12** / **F2**: add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad. The back paddles **L4** / **R4** (`ScrollLock` / `Pause`) are aliases of **LB** / **RB** on these patched builds only; on KOReader 2026.07+ they are not handled (SDL paddle ids have no stock mapping and Steam Input usually does not expose them).
 
 ### Visel overlay (opt-in via pluginaro)
 

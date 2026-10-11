@@ -16,6 +16,10 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Y                        Highlight mode
     X + D-pad                Combo: ↑menu ↓footer ←history →files
 
+  Top menu open (TouchMenu, reader and FileManager; KOReader >= 2026.07):
+    RB / LB                  Next / previous category (tab, wraps)
+    RT / LT                  Next / previous menu page (one press = one page)
+
   Selection (struct/walk/cross):
     L-stick ←/→              Sentence move    ↑/↓  Paragraph jump
     D-pad / R-stick          Word navigation (R-stick ↑/↓ cycles highlights)
@@ -47,6 +51,8 @@ Input paths:
   X (West)         →  F10
   Y (North)        →  ContextMenu
   LB / RB          →  RPgBack (F9) / RPgFwd (F11)
+  L4 / R4 (paddles)→  ScrollLock / Pause = aliases of LB / RB (patched builds
+                      only; not handled on KOReader >= 2026.07)
   LT / RT          →  LPgBack (F6) / LPgFwd (F7)
   Select / Start   →  F12 / F2 (ASSUMED; needs a hunk in sdl3_gamepad.patch,
                       see padnav.lua header — inert if the keys never arrive)

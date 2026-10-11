@@ -6,7 +6,11 @@ header of main.lua, README.md and CHEAT_READING/CHEAT_SELECTION in sync with the
 Reading:
   RT / LT (triggers)     Next / previous page (always, also with overlay open)
   RB / LB                Next / previous page (X+RB = bookmarks, X+LB = TOC)
-  L4 / R4 (back paddles) Same as LB / RB
+  L4 / R4 (back paddles) Same as LB / RB -- ONLY on old builds with
+                         sdl3_gamepad.patch (key_events ScrollLock/Pause).
+                         Not handled on KOReader >= 2026.07: SDL paddle ids
+                         16+ have no stock mapping (Steam Input usually does
+                         not expose them), so nothing arrives.
   Select                 Top menu          Start   Footer (bottom) menu
   D-pad                  Open word walk
   L-stick ↑/←            Page turn (↑/← = next page, legacy)
@@ -15,6 +19,19 @@ Reading:
   A                      Open sentence selector
   Y                      Open highlight mode (crosshair if none)
   X                      Modifier: X + D-pad = ↑menu ↓footer ←history →files
+
+Top menu open (TouchMenu on top of the window stack, reader AND FileManager;
+Gamepad* path = KOReader >= 2026.07 only):
+  RB / LB                Next / previous CATEGORY (tab with icon), wrapping at
+                         the ends. Consumed here, so the stock RPgFwd/RPgBack
+                         key (= menu page turn) is NOT sent. Tabs that are
+                         actions, not categories (remember == false or a tab
+                         callback, e.g. the reader's "file browser" tab that
+                         closes the book) are skipped.
+  RT / LT                Next / previous PAGE of the menu (TouchMenu:onNextPage
+                         / onPrevPage), one press = one page
+  D-pad / A              Unchanged (stock navigation / Press)
+  Outside a TouchMenu (other dialogs, plain Menu) LB/RB/LT/RT behave as before.
 
 Selection (struct/walk/cross overlay):
   L-stick ←/→            Sentence move    ↑/↓  Paragraph jump
@@ -60,8 +77,13 @@ Input paths (two, both end in the same on<Key> handlers):
        active: stock maps them to RPgFwd / Menu / Menu, i.e. accidental page
        turns or menus from a stick click.
      Triggers: axis 4 = LT, axis 5 = RT. Stock has no mapping for them. One
-       press = one page: the stock auto-repeat (first repeat after 0.5 s,
-       then every 0.2 s while held) is filtered out, see _trigger_is_new_press.
+       press = one page (in the top menu: one menu page): the stock
+       auto-repeat (first repeat after 0.5 s, then every 0.2 s while held) is
+       filtered out, see _trigger_is_new_press.
+     Top menu: the LB/RB (button) and LT/RT (axis) branches run BEFORE the
+       _is_enabled() guard (a TouchMenu on top is a modal, which silences the
+       rest of PadNav); they need kopad enabled, no foreign overlay and a
+       TouchMenu on top of the window stack (_top_menu).
      L-stick = axes 0 (x) / 1 (y), R-stick = axes 2 (x) / 3 (y); negative =
        left/up. The stock auto-repeat is kept on the sticks (handy for
        navigation). Stock maps R-stick Y to RPgBack/RPgFwd, which with the
@@ -179,8 +201,8 @@ function PadNav:init()
         -- see header docstring and SELECT_KEYS/START_KEYS)
         KPSelect  = { SELECT_KEYS },
         KPStart   = { START_KEYS },
-        KPPgBk3   = { { "ScrollLock" } }, -- L4 back paddle
-        KPPgFwd3  = { { "Pause" } },      -- R4 back paddle
+        KPPgBk3   = { { "ScrollLock" } }, -- L4 back paddle (LEGACY patched builds only)
+        KPPgFwd3  = { { "Pause" } },      -- R4 back paddle (LEGACY patched builds only)
         -- face buttons
         KPConfirm = { { "Press" } },      -- A
         KPBack    = { { "Back" } },       -- B
@@ -853,6 +875,8 @@ end
 -- ---------------------------------------------------------------------------
 
 function PadNav:onGamepadButtonDown(ev)
+    -- Top menu first (before the modal guard): LB/RB switch categories there.
+    if type(ev) == "table" and self:_menu_button(ev.button) then return true end
     if not self:_is_enabled() then return false end
     local btn = type(ev) == "table" and ev.button or nil
     if btn == nil then return false end
@@ -900,7 +924,128 @@ local STICK_HANDLERS = {
     [AXIS_RY] = { "onKPRStickUp",   "onKPRStickDown" },
 }
 
+-- Top menu (TouchMenu), reader and FileManager alike. The window on top of
+-- the UIManager stack is a container (ReaderMenu / FileManagerMenu:
+-- CenterContainer with the TouchMenu as child [1]); we do not assume
+-- self.ui.menu (FileManager's `ui` differs) and duck-type instead: a table
+-- with a `tab_item_table` list and a `switchMenuTab` function. Toast widgets
+-- (Notification) on top of the menu are skipped; any other widget on top
+-- (dialog, InfoMessage, keyboard) means "not the top menu" -> nil.
+local MENU_SEARCH_DEPTH = 3
+
+local function is_touch_menu(w)
+    return type(w) == "table"
+        and type(w.tab_item_table) == "table"
+        and type(w.switchMenuTab) == "function"
+end
+
+local function find_touch_menu_in(w, depth, seen)
+    if type(w) ~= "table" or seen[w] then return nil end
+    seen[w] = true
+    if is_touch_menu(w) then return w end
+    if depth <= 0 then return nil end
+    for i = 1, #w do
+        local m = find_touch_menu_in(w[i], depth - 1, seen)
+        if m then return m end
+    end
+    return nil
+end
+
+local function find_touch_menu()
+    local stack = UIManager._window_stack
+    if type(stack) ~= "table" then return nil end
+    for i = #stack, 1, -1 do
+        local w = stack[i] and stack[i].widget
+        if type(w) == "table" and not w.toast then
+            return find_touch_menu_in(w, MENU_SEARCH_DEPTH, {})
+        end
+    end
+    return nil
+end
+
+-- Switch the TouchMenu `dir` (+1 / -1) categories, wrapping at the ends.
+-- Same path as a tap on a tab icon: TouchMenuBar:switchToTab(k) runs the
+-- icon's callback (highlight: bar_sep / icon_seps) and ends in
+-- TouchMenu:switchMenuTab(k) (cur_tab, item_table, stack reset, updateItems
+-- -> moveFocusTo(cur_tab, ...) + repaint). switchMenuTab alone would leave the
+-- old icon highlighted. Falls back to switchMenuTab when there is no bar.
+-- Action tabs (remember == false / tab callback) are skipped, see header.
+-- Returns true when a switch was made.
+local function menu_tab_step(menu, dir)
+    local tabs = menu.tab_item_table
+    local n = #tabs
+    if n < 2 then return false end
+    local cur = tonumber(menu.cur_tab) or 0
+    if cur < 1 or cur > n then cur = dir > 0 and 0 or n + 1 end
+    local k = cur
+    for _ = 1, n do
+        k = k + dir
+        if k > n then k = 1 elseif k < 1 then k = n end
+        if k == cur then return false end -- only one category to go to
+        local t = tabs[k]
+        if type(t) == "table" and t.remember ~= false and not t.callback then
+            local bar = menu.bar
+            if type(bar) == "table" and type(bar.switchToTab) == "function" then
+                bar:switchToTab(k)
+            else
+                menu:switchMenuTab(k)
+            end
+            return true
+        end
+    end
+    return false
+end
+
+-- The top menu (TouchMenu) when kopad should drive it, else nil. Used by the
+-- menu branches that run BEFORE the _is_enabled() guard (a TouchMenu on top
+-- counts as modal there): kopad must be switched on, and no FOREIGN family
+-- overlay may own the screen (kopad's own claim does not count).
+function PadNav:_top_menu()
+    if not (self.enabled_ref and self.enabled_ref.enabled) then return nil end
+    if Pluginaro.overlay_active(self.ui, "kopad") then return nil end
+    local ok, menu = pcall(find_touch_menu)
+    return ok and menu or nil
+end
+
+-- LB / RB with the top menu up: previous / next category. Buttons do not
+-- auto-repeat (GamepadButtonDown fires once), so no filter is needed. Returns
+-- true = consumed (the stock RPgBack/RPgFwd key, i.e. a menu page turn, is not
+-- sent); false = no top menu / not our business, the caller continues as before.
+function PadNav:_menu_button(btn)
+    if btn ~= BTN_LB and btn ~= BTN_RB then return false end
+    local menu = self:_top_menu()
+    if not menu then return false end
+    local ok, err = pcall(menu_tab_step, menu, btn == BTN_RB and 1 or -1)
+    if not ok then
+        logger.warn("kopad: menu tab switch failed: " .. tostring(err))
+    end
+    return true
+end
+
+-- LT / RT with the top menu up: previous / next page of the menu. One press =
+-- one page (_trigger_is_new_press); auto-repeats are consumed without action.
+-- Returns true when the event belongs to the menu, false = caller continues.
+function PadNav:_menu_trigger(axis, value)
+    local menu = self:_top_menu()
+    if not menu then return false end
+    if value > 0 and self:_trigger_is_new_press(axis) then
+        local method = axis == AXIS_RT and "onNextPage" or "onPrevPage"
+        if type(menu[method]) == "function" then
+            local ok, err = pcall(menu[method], menu)
+            if not ok then
+                logger.warn("kopad: menu page turn failed: " .. tostring(err))
+            end
+        end
+    end
+    return true
+end
+
 function PadNav:onGamepadAxisMotion(ax)
+    if type(ax) == "table" and (ax.axis == AXIS_LT or ax.axis == AXIS_RT)
+            and type(ax.value) == "number"
+            and self:_menu_trigger(ax.axis, ax.value) then
+        return true
+    end
     if not self:_is_enabled() then return false end
     if type(ax) ~= "table" then return false end
     local axis, value = ax.axis, ax.value
@@ -936,12 +1081,15 @@ end
 
 local CHEAT_READING = _("Reading mode")
     .. "\nRT / LT: next / previous page"
-    .. "\nRB / LB: next / previous page (also L4/R4)"
+    .. "\nRB / LB: next / previous page"
     .. "\nSelect: top menu    Start: footer menu"
     .. "\nA: sentence selector    Y: highlights"
     .. "\nD-pad: word walk    R-stick: crosshair"
     .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nX + LB: TOC    X + RB: bookmarks"
+    .. "\n\n" .. _("Top menu open")
+    .. "\nRB / LB: next / previous category"
+    .. "\nRT / LT: next / previous page"
 
 local CHEAT_SELECTION = _("Selection mode")
     .. "\nL-stick \xE2\x86\x90/\xE2\x86\x92: sentence    \xE2\x86\x91/\xE2\x86\x93: paragraph"
