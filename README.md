@@ -92,7 +92,16 @@ With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** m
 
 Button names in this README are Xbox-style **roles** (A = bottom face button, etc.). On KOReader 2026.07+ you can tell kopad which physical button plays which role, per known pad layout:
 
-- **menu → kopad → Gamepad layout (this device)** picks the layout of the pad used on *this* device: *Xbox / Steam Deck / generic* (default), *PlayStation* (same positions as Xbox, only the symbols differ) or *Nintendo* (printed A is on the right, so by default A↔B and X↔Y are swapped and "press A" means the A-labelled key). The choice is stored in `settings/kopad_device.lua`, which [koligilo](https://sypian.ski/koligilo) never syncs, so a Steam Deck and a reader can use different pads.
+- **menu → kopad → Gamepad layout (this device)** picks the layout of the pad used on *this* device. The choice is stored in `settings/kopad_device.lua`, which [koligilo](https://sypian.ski/koligilo) never syncs, so a Steam Deck and a reader can use different pads. Layouts (a closed list; `xbox` is the default):
+
+  | Menu entry | Layout id | Default mapping |
+  |---|---|---|
+  | *Xbox / generic* | `xbox` | identity: A/B/X/Y by position (default) |
+  | *PlayStation (DualShock / DualSense)* | `playstation` | identity: same positions as Xbox, only the symbols differ |
+  | *Nintendo (A/B and X/Y swapped)* | `nintendo` | A↔B and X↔Y swapped, so "press A" means the A-labelled key (printed A is on the right) |
+  | *Valve (Steam Deck / Steam Controller)* | `valve` | identity: same positions as Xbox (A/B/X/Y); only the printed labels differ — *View* is Select, *Menu* is Start, L1/R1 are the bumpers (LB/RB), L2/R2 the triggers (LT/RT) |
+
+  Known limitation: the Steam Deck back paddles (L4/L5/R4/R5, SDL button ids 16+) are not remappable. KOReader 2026.07+ does not pass them on (no stock mapping, and Steam Input usually does not expose them), so kopad never sees them and they have no entry in the layout vocabulary.
 - Per-layout overrides live in `settings/kopad.lua` under `padmap` (shared; koligilo syncs and edits it):
 
 ```lua

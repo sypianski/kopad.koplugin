@@ -92,7 +92,7 @@ bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
 
 ### `padmap.lua` — button remapping (pure, PC-011)
 No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
-`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo>={<physical>=<role>}}}`,
+`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo|valve>={<physical>=<role>}}}`,
 overrides on top of the layout's built-in default) plus the device's layout into
 a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
 the logical role id. Malformed data → `warn` + skip, never raises; no data =
@@ -101,7 +101,17 @@ identity. `main.lua:_apply_padmap()` builds it (init, `onReaderReady`,
 / `onGamepadAxisMotion` resolve first, then `_button_down` / `_trigger_event` /
 `_trigger_as_button` run on roles. Legacy `key_events` path is not remapped.
 The vocabulary (physical names, roles, layouts) is a contract with koligilo's
-panel editor (TASK-25 there) — change both sides together.
+panel editor (TASK-25 there) — change both sides together. Layout ids are a
+closed list kept in `M.LAYOUTS` / `M.LAYOUT_ORDER` (`xbox`, `playstation`,
+`nintendo`, `valve`; `valve` = Steam Deck / Steam Controller was added in
+PC-013 / koligilo TASK-26, appended last) plus the menu labels in
+`main.lua:_layout_menu()`. `xbox`, `playstation` and `valve` have identity
+defaults; `nintendo` swaps A/B and X/Y. Layout data for an id the
+installed kopad does not know (e.g. `valve` on an older kopad) is ignored with a
+warning, so deployment order across devices does not matter.
+The Deck back paddles (L4/L5/R4/R5, SDL ids 16+) are deliberately NOT in the
+physical vocabulary: KOReader >= 2026.07 does not deliver them (see the header
+of `padnav.lua`).
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.

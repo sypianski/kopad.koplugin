@@ -168,4 +168,68 @@ do
     assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == false)
 end
 
+-- 8. Valve layout (Steam Deck / Steam Controller; PC-013): known layout, last in
+-- LAYOUT_ORDER, built-in default = identity (same positions as xbox).
+do
+    assert(P.LAYOUTS.valve and next(P.LAYOUTS.valve.default) == nil, "valve default is empty")
+    local want = { "xbox", "playstation", "nintendo", "valve" }
+    assert(#P.LAYOUT_ORDER == #want, "LAYOUT_ORDER length " .. #P.LAYOUT_ORDER)
+    for i, name in ipairs(want) do assert(P.LAYOUT_ORDER[i] == name, "LAYOUT_ORDER[" .. i .. "]") end
+    for _, name in ipairs(P.LAYOUT_ORDER) do assert(P.LAYOUTS[name], name .. " in LAYOUTS") end
+
+    -- device setting padmap_layout = "valve" is accepted without a warning,
+    -- with and without shared data
+    local w, warn = warns()
+    local v = P.build(nil, "valve", warn)
+    assert(v.layout == "valve" and #w == 0, "valve accepted silently")
+    local v2 = P.build({ version = 1, layouts = { valve = {} } }, "valve", warn)
+    assert(v2.layout == "valve" and #w == 0, "valve data accepted silently")
+
+    -- identity: identical to the xbox resolution on every control
+    local x = P.build(nil, "xbox")
+    for _, id in ipairs({ 0, 1, 2, 3, 4, 6, 9, 10, 5, 7, 11, 99 }) do
+        eq(r(v, "button", id), r(x, "button", id), "valve == xbox btn " .. id)
+        eq(r(v, "button", id), { "button", id }, "valve identity btn " .. id)
+    end
+    for _, id in ipairs({ 0, 1, 2, 3, 4, 5 }) do
+        eq(r(v, "axis", id), r(x, "axis", id), "valve == xbox axis " .. id)
+    end
+    eq(r(v, "axis", 4), { "axis", 4 }, "valve LT/L2")
+    eq(r(v, "axis", 5), { "axis", 5 }, "valve RT/R2")
+
+    -- overrides apply only to the active valve layout, and valve data does not
+    -- leak into the other layouts
+    local pm = { version = 1, layouts = {
+        valve = { south = "b", east = "a", ltrigger = "rt" },
+        xbox = { west = "y" },
+    } }
+    local pv = P.build(pm, "valve")
+    eq(r(pv, "button", 0), { "button", 1 }, "valve south -> b")
+    eq(r(pv, "button", 1), { "button", 0 }, "valve east -> a")
+    eq(r(pv, "axis", 4), { "axis", 5 }, "valve ltrigger -> rt")
+    eq(r(pv, "button", 2), { "button", 2 }, "xbox override not applied to valve")
+    for _, name in ipairs({ "xbox", "playstation", "nintendo" }) do
+        local o = P.build(pm, name)
+        local south = name == "nintendo" and { "button", 1 } or { "button", 0 }
+        eq(r(o, "button", 0), south, name .. " not affected by valve data")
+        eq(r(o, "axis", 4), { "axis", 4 }, name .. " LT not affected by valve data")
+    end
+
+    -- the back paddles (SDL ids 16+) are not in the vocabulary and pass through
+    for _, id in ipairs({ 16, 17, 18, 19 }) do
+        eq(r(v, "button", id), { "button", id }, "paddle " .. id .. " passthrough")
+    end
+    for _, name in ipairs({ "l4", "l5", "r4", "r5", "paddle1" }) do
+        assert(P.PHYSICAL[name] == nil, name .. " must not be a physical control")
+    end
+
+    -- an unknown layout still warns and falls back to xbox (valve did not
+    -- relax validation)
+    local w2, warn2 = warns()
+    local u = P.build({ version = 1, layouts = { steamdeck = { south = "b" } } }, "steamdeck", warn2)
+    assert(u.layout == "xbox" and #w2 == 2, "unknown layout: warning + xbox, got " .. #w2)
+    local w3, warn3 = warns()
+    assert(P.build(nil, "Valve", warn3).layout == "xbox" and #w3 == 1, "layout ids are case-sensitive")
+end
+
 print("padmap_test: all tests passed")

@@ -223,9 +223,10 @@ function kopad:_layout_menu()
     if not P then return nil end
     Padmap = P
     local labels = {
-        xbox        = _("Xbox / Steam Deck / generic"),
+        xbox        = _("Xbox / generic"),
         playstation = _("PlayStation (DualShock / DualSense)"),
         nintendo    = _("Nintendo (A/B and X/Y swapped)"),
+        valve       = _("Valve (Steam Deck / Steam Controller)"),
     }
     local function current()
         local l = self.device_settings and self.device_settings:readSetting("padmap_layout")
