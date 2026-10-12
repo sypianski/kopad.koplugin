@@ -111,10 +111,15 @@ Button names in this README are Xbox-style **roles** (A = bottom face button, et
         ["nintendo"] = { ["south"] = "a", ["east"] = "b" },   -- keep A/B by position
         ["xbox"]     = { ["ltrigger"] = "rt", ["rtrigger"] = "lt" },
     },
+    ["actions"] = { ["rb"] = "top_menu", ["select"] = "next_page" },   -- optional, see below
 },
 ```
 
 Keys are physical controls by position — `south east west north back start lshoulder rshoulder ltrigger rtrigger` — and values are roles — `a b x y select start lb rb lt rt`. A button may take a trigger role and vice versa. Controls not listed keep the layout's default. Anything malformed (other `version`, unknown names, wrong types) is skipped with a log warning; with no data kopad behaves exactly as without remapping. The D-pad, sticks, Guide/L3/R3 and the older patched-build key path are not remappable, and when kopad passes an event through to KOReader (kopad off, a dialog on top), KOReader sees the physical button. The pure logic is `padmap.lua`, tested by `lua tests/padmap_test.lua`.
+
+**Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list): `next_page prev_page top_menu footer_menu toc bookmarks history file_browser sentence_select highlights word_walk crosshair x_modifier none`. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `footer_menu`; B has no kopad action (KOReader's own Back runs). Roles not listed keep their default.
+
+An override applies only in the idle reading context: a document is open and no selection overlay, dictionary popup, top menu or X combo is active. Everywhere else the role keeps what it does today (RB still extends a selection and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
 
 ### Scope
 

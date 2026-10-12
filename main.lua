@@ -46,6 +46,9 @@ Input paths:
   per-layout overrides; the layout of THIS device's pad (menu > kopad >
   "Gamepad layout") lives in settings/kopad_device.lua, which koligilo does
   not sync. No data = identity = the map above.
+  Its optional `actions` (PC-014) gives a ROLE another action while plainly
+  reading (e.g. RB = top menu); selection, dictionary and menus keep the map
+  above. See padnav.lua (_override_action) and padmap.lua (ACTION_ORDER).
 
   Older builds (sdl3_gamepad.patch + 1-lstick-keys.lua userpatch): buttons
   arrive from SDL3 as standard key names:

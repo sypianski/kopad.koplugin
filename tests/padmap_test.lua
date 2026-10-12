@@ -232,4 +232,212 @@ do
     assert(P.build(nil, "Valve", warn3).layout == "xbox" and #w3 == 1, "layout ids are case-sensitive")
 end
 
+-- 9. Role-level actions (PC-014): `actions` = role -> reading action, shared by
+-- every layout, additive within version 1.
+do
+    -- vocabulary is consistent
+    local seen = {}
+    for _, id in ipairs(P.ACTION_ORDER) do
+        assert(P.ACTIONS[id], id .. " in ACTIONS"); assert(not seen[id], id .. " duplicated"); seen[id] = true
+    end
+    local n = 0
+    for _ in pairs(P.ACTIONS) do n = n + 1 end
+    assert(n == #P.ACTION_ORDER, "ACTIONS and ACTION_ORDER agree")
+    for role, act in pairs(P.DEFAULT_ACTIONS) do
+        assert(P.ROLES[role], "default for known role " .. role)
+        assert(P.ACTIONS[act], "default action " .. act .. " is in the vocabulary")
+    end
+    assert(P.DEFAULT_ACTIONS.b == nil, "B has no action id: KOReader's own Back runs")
+
+    -- logical (kind, id) -> role name, both directions agree with ROLES
+    for name, ro in pairs(P.ROLES) do assert(P.role_of(ro.kind, ro.id) == name, "role_of " .. name) end
+    assert(P.role_of("button", 5) == nil and P.role_of("button", 11) == nil, "Guide/D-pad have no role")
+    assert(P.role_of("axis", 0) == nil and P.role_of("nothing", 0) == nil)
+    assert(P.role_of("button", 4) == "select" and P.role_of("axis", 4) == "lt", "button 4 != axis 4")
+
+    -- no data / no key: empty
+    assert(next(P.build(nil, "xbox").actions) == nil)
+    assert(next(P.build({ version = 1 }, "xbox").actions) == nil)
+    assert(next(P.build({ version = 1, actions = {} }, "xbox").actions) == nil)
+
+    -- values equal to the built-in default are dropped, the rest kept
+    local w, warn = warns()
+    local res = P.build({ version = 1, actions = {
+        rb = "top_menu", select = "next_page", a = "sentence_select", b = "none", lt = "prev_page",
+    } }, "xbox", warn)
+    assert(res.actions.rb == "top_menu" and res.actions.select == "next_page" and res.actions.b == "none")
+    assert(res.actions.a == nil and res.actions.lt == nil, "defaults dropped")
+    assert(#w == 0, "valid actions give no warnings")
+
+    -- shared by every layout, independent of the layout's controls
+    for _, name in ipairs(P.LAYOUT_ORDER) do
+        local o = P.build({ version = 1, layouts = { [name] = { south = "b" } },
+                            actions = { rb = "toc" } }, name)
+        assert(o.actions.rb == "toc", name .. " has the shared actions")
+        eq(r(o, "button", 0), { "button", 1 }, name .. " layouts still apply next to actions")
+    end
+
+    -- malformed: skipped with a warning, never raises; the two stages are independent
+    local bad = {
+        { version = 1, actions = "x" },
+        { version = 1, actions = { rb = "teleport" } },
+        { version = 1, actions = { rb = 7 } },
+        { version = 1, actions = { rb = { "top_menu" } } },
+        { version = 1, actions = { dpad = "next_page" } },
+        { version = 1, actions = { [1] = "next_page" } },
+    }
+    for i, pm in ipairs(bad) do
+        local wi, warni = warns()
+        local ok, o = pcall(P.build, pm, "xbox", warni)
+        assert(ok, "build raised on actions case " .. i)
+        assert(#wi >= 1, "expected a warning on actions case " .. i)
+        assert(next(o.actions) == nil, "nothing applied on actions case " .. i)
+    end
+    -- a valid entry next to an invalid one still applies
+    local w2, warn2 = warns()
+    local mix = P.build({ version = 1, actions = { rb = "top_menu", lb = "teleport" } }, "xbox", warn2)
+    assert(mix.actions.rb == "top_menu" and mix.actions.lb == nil and #w2 == 1)
+    -- broken layouts do not discard valid actions, and vice versa
+    local w3, warn3 = warns()
+    local a = P.build({ version = 1, layouts = "x", actions = { rb = "toc" } }, "xbox", warn3)
+    assert(a.actions.rb == "toc" and #w3 == 1)
+    local w4, warn4 = warns()
+    local l = P.build({ version = 1, layouts = { xbox = { south = "b" } }, actions = "x" }, "xbox", warn4)
+    eq(r(l, "button", 0), { "button", 1 }, "layouts apply next to broken actions")
+    assert(#w4 == 1)
+    -- wrong version: nothing from the table applies, actions included
+    local w5, warn5 = warns()
+    local v2 = P.build({ version = 2, actions = { rb = "toc" } }, "xbox", warn5)
+    assert(next(v2.actions) == nil and #w5 == 1)
+    assert(next(P.build(42, "xbox", warn5).actions) == nil)
+end
+
+-- 10. Action overrides in padnav.lua (idle reading context only), KOReader stubbed.
+do
+    local Event = require("ui/event")
+    Event.new = function(_, name, ...) return { name = name, args = { ... } } end
+    local PadNav = require("padnav")
+
+    -- ctx: dict (open popup), overlay (selection overlay), doc (false = FileManager)
+    local function nav(padmap, ctx)
+        ctx = ctx or {}
+        local log = { events = {}, calls = {}, footer = 0, selector = {} }
+        local selector = ctx.selector
+        if ctx.overlay then selector = selector or {}; selector.overlay = {} end
+        if selector then
+            selector._open = function() log.selector[#log.selector + 1] = "_open" end
+            selector._open_walk = function(_, from_end) log.selector[#log.selector + 1] = "_open_walk:" .. tostring(from_end) end
+        end
+        local o = setmetatable({
+            enabled_ref = { enabled = true },
+            ui = {
+                document = ctx.doc ~= false and {} or nil,
+                handleEvent = function(_, ev) log.events[#log.events + 1] = ev.name .. (ev.args[1] and (":" .. tostring(ev.args[1])) or "") end,
+                view = { footer = { onToggleFooterMode = function() log.footer = log.footer + 1 end } },
+            },
+        }, { __index = PadNav })
+        o._is_enabled = function() return true end
+        o._top_menu = function() return nil end
+        o._find_dict_widget = function() return ctx.dict end
+        o._selector = function() return selector end
+        o._open_sentence_select = function(_, i) log.calls[#log.calls + 1] = "sentence_select:" .. tostring(i) end
+        o._open_highlights = function() log.calls[#log.calls + 1] = "highlights" end
+        for _, m in ipairs({ "onKPConfirm", "onKPBack", "onKPExtend", "onKPMenu",
+                             "onKPSelect", "onKPStart", "onKPPgBk", "onKPPgFwd",
+                             "onKPPgBk2", "onKPPgFwd2" }) do
+            o[m] = function() log.calls[#log.calls + 1] = m; return true end
+        end
+        o:set_padmap(padmap and P.build(padmap, "xbox") or nil)
+        return o, log
+    end
+    local function acts(t) return { version = 1, actions = t } end
+
+    -- no `actions`: nothing changes (built-in handlers)
+    local n, log = nav(nil)
+    n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd" and #log.events == 0)
+    n, log = nav({ version = 1 })
+    assert(n._actions == nil, "no overrides -> no table")
+    n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd")
+
+    -- RB -> top menu in plain reading: Event ShowMenu, built-in RB handler not called
+    n, log = nav(acts({ rb = "top_menu" }))
+    assert(n:onGamepadButtonDown({ button = 10 }) == true)
+    assert(log.events[1] == "ShowMenu" and #log.calls == 0, "RB opened the top menu")
+    -- the other bumper keeps its built-in
+    n:onGamepadButtonDown({ button = 9 }); assert(log.calls[1] == "onKPPgBk")
+
+    -- every simple event action
+    for action, want in pairs({
+        next_page = "GotoViewRel:1", prev_page = "GotoViewRel:-1", top_menu = "ShowMenu",
+        toc = "ShowToc", bookmarks = "ShowBookmark", history = "ShowHist", file_browser = "Home",
+    }) do
+        n, log = nav(acts({ y = action }))
+        assert(n:onGamepadButtonDown({ button = 3 }) == true and log.events[1] == want,
+            action .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+    end
+    n, log = nav(acts({ select = "footer_menu", start = "top_menu" }))
+    n:onGamepadButtonDown({ button = 4 }); assert(log.footer == 1 and #log.events == 0)
+    n:onGamepadButtonDown({ button = 6 }); assert(log.events[1] == "ShowMenu")
+
+    -- selector openers
+    local sel = {}
+    n, log = nav(acts({ b = "sentence_select", x = "highlights", lb = "word_walk", rb = "crosshair" }), { selector = sel })
+    n:onGamepadButtonDown({ button = 1 }); assert(log.calls[1] == "sentence_select:1")
+    n:onGamepadButtonDown({ button = 2 }); assert(log.calls[2] == "highlights")
+    n:onGamepadButtonDown({ button = 9 }); assert(log.selector[1] == "_open_walk:false")
+    n:onGamepadButtonDown({ button = 10 }); assert(log.selector[2] == "_open")
+    -- ...without a selector (PDF): the press is swallowed, nothing runs, no error
+    n, log = nav(acts({ rb = "crosshair", b = "highlights" }))
+    assert(n:onGamepadButtonDown({ button = 10 }) == true and #log.calls == 0 and #log.events == 0)
+
+    -- none: swallowed (also for B, whose built-in passes through)
+    n, log = nav(acts({ b = "none", a = "none" }))
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.calls == 0)
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.calls == 0)
+
+    -- outside idle reading the BUILT-IN runs: selection overlay, dictionary, FileManager
+    for name, ctx in pairs({ overlay = { overlay = true, selector = {} }, dict = { dict = {} }, filemanager = { doc = false } }) do
+        n, log = nav(acts({ rb = "top_menu", a = "none" }), ctx)
+        assert(n:onGamepadButtonDown({ button = 10 }) == true and log.calls[1] == "onKPPgFwd" and #log.events == 0,
+            name .. ": RB keeps its built-in")
+        n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "onKPConfirm", name .. ": A keeps its built-in")
+    end
+
+    -- kopad off / modal: untouched pass-through (override never reached)
+    n, log = nav(acts({ rb = "top_menu" }))
+    n._is_enabled = function() return false end
+    assert(n:onGamepadButtonDown({ button = 10 }) == false and #log.events == 0)
+
+    -- X-combos stay on the built-in handlers: with the modifier on, RB is X+RB
+    n, log = nav(acts({ rb = "top_menu" }))
+    n._x_mode = true
+    n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd" and #log.events == 0)
+
+    -- the modifier can move to another role: toggles on, and off again
+    n, log = nav(acts({ a = "x_modifier", x = "next_page" }))
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and n._x_mode == true)
+    n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd", "A+RB is the combo")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and n._x_mode == false, "A toggles it off")
+    -- ...and X itself (override next_page) still cancels a pending modifier
+    n._x_mode = true
+    n:onGamepadButtonDown({ button = 2 }); assert(log.calls[2] == "onKPExtend", "X cancels via built-in")
+
+    -- triggers: LT/RT overrides only on a NEW press, auto-repeat does not re-run them
+    n, log = nav(acts({ rt = "top_menu", lt = "toc" }))
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.events[1] == "ShowMenu")
+    assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true and log.events[2] == "ShowToc")
+    assert(#log.calls == 0, "built-in trigger handlers not called")
+    n, log = nav(acts({ rt = "top_menu" }), { overlay = true, selector = {} })
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(log.calls[1] == "onKPPgFwd2" and #log.events == 0, "trigger keeps built-in over an overlay")
+
+    -- layout remap + action: physical RB acts as role RT, and RT's action applies
+    n, log = nav({ version = 1, layouts = { xbox = { rshoulder = "rt" } }, actions = { rt = "top_menu" } })
+    assert(n:onGamepadButtonDown({ button = 10 }) == true and log.events[1] == "ShowMenu")
+    -- physical A acts as role A; role actions follow the ROLE, not the physical control
+    n, log = nav({ version = 1, layouts = { xbox = { south = "b", east = "a" } }, actions = { b = "toc", a = "next_page" } })
+    n:onGamepadButtonDown({ button = 0 }); assert(log.events[1] == "ShowToc", "south -> role b -> toc")
+    n:onGamepadButtonDown({ button = 1 }); assert(log.events[2] == "GotoViewRel:1", "east -> role a -> next page")
+end
+
 print("padmap_test: all tests passed")

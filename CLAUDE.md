@@ -92,15 +92,25 @@ bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
 
 ### `padmap.lua` — button remapping (pure, PC-011)
 No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
-`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo|valve>={<physical>=<role>}}}`,
+`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo|valve>={<physical>=<role>}}, actions={<role>=<action>}}`,
 overrides on top of the layout's built-in default) plus the device's layout into
 a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
-the logical role id. Malformed data → `warn` + skip, never raises; no data =
+the logical role id. **Role-level actions (PC-014):** `res.actions` (`build_actions`)
+is a second stage AFTER the layout — role → reading action from the closed list
+`M.ACTION_ORDER` (`next_page`, `top_menu`, `toc`, `sentence_select`, `x_modifier`,
+`none`, …), keyed by role so it is shared by every layout; values equal to
+`M.DEFAULT_ACTIONS` are dropped so the built-in handler (and its pass-through in
+paged documents) is untouched. `padnav.lua` applies it in `_button_down` /
+`_trigger_event` via `_override_action(role)` — only in the idle reading context
+(document open, no selection overlay, dictionary popup, top menu or X-combo;
+never in the FileManager) — and runs it from `ACTION_RUNNERS`. Elsewhere the
+role's `on<Key>` handler runs unchanged. Actions are part of the vocabulary
+contract with koligilo (`padmap.go`/`web/padmap.js`, TASK-27 there). Malformed data → `warn` + skip, never raises; no data =
 identity. `main.lua:_apply_padmap()` builds it (init, `onReaderReady`,
 `onResume`, layout menu) and calls `nav:set_padmap()`; `PadNav:onGamepadButtonDown`
 / `onGamepadAxisMotion` resolve first, then `_button_down` / `_trigger_event` /
 `_trigger_as_button` run on roles. Legacy `key_events` path is not remapped.
-The vocabulary (physical names, roles, layouts) is a contract with koligilo's
+The vocabulary (physical names, roles, layouts, actions) is a contract with koligilo's
 panel editor (TASK-25 there) — change both sides together. Layout ids are a
 closed list kept in `M.LAYOUTS` / `M.LAYOUT_ORDER` (`xbox`, `playstation`,
 `nintendo`, `valve`; `valve` = Steam Deck / Steam Controller was added in

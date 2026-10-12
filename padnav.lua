@@ -99,6 +99,17 @@ Input paths (two, both end in the same on<Key> handlers):
      legacy key_events path are never remapped. No table = identity. When an
      event is passed through (false), KOReader sees the physical control.
 
+   Action overrides (padmap.lua `actions`, PC-014): after the role is known,
+     _button_down / _trigger_event ask _override_action(role) whether the
+     user gave that role another reading action (e.g. RB = top menu). It
+     applies only in the idle reading context -- a document is open and no
+     selection overlay, dictionary popup or X-combo is active (the top menu
+     and modal dialogs are handled before, by their own branches). Anywhere
+     else the role's built-in handler above runs unchanged, so the table of
+     controls in this header stays true for selection, dictionary and menus.
+     The override does not replace X + <button> combos (they stay on the
+     built-in handlers). Actions are implemented in ACTION_RUNNERS.
+
 2. Older builds with sdl3_gamepad.patch + 1-lstick-keys.lua userpatch: no
    Gamepad* broadcast, buttons/axes arrive as key names and hit the
    key_events table in PadNav:init (kept for compatibility):
@@ -883,8 +894,16 @@ function PadNav:onKPMenu()
 
     -- No selector (paged doc / FileManager): pass through, don't eat the key.
     if not selector then return false end
+    self:_open_highlights(selector)
+    return true
+end
+
+-- Highlight mode: open the selector (crosshair); when the page already has
+-- highlights, start on the first one instead. Y in reading, and the
+-- `highlights` action (ACTION_RUNNERS).
+function PadNav:_open_highlights(selector)
     selector:_open()
-    if not selector.overlay then return true end
+    if not selector.overlay then return end
     if #selector.overlay.hl_items > 0 then
         selector.overlay.mode = "struct"
         selector.overlay.sel_sent = 1
@@ -893,7 +912,6 @@ function PadNav:onKPMenu()
         selector.overlay.hl_cur = 1
         selector.overlay:_refresh()
     end
-    return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -911,6 +929,78 @@ end
 -- (`padmap_layout`, local) and passes it here; nil = identity.
 function PadNav:set_padmap(resolved)
     self._padmap = resolved
+    self._actions = type(resolved) == "table" and type(resolved.actions) == "table"
+        and next(resolved.actions) ~= nil and resolved.actions or nil
+end
+
+-- Role-level actions (PC-014). What each action id does while reading; ids are
+-- the closed vocabulary of padmap.lua (ACTION_ORDER). Each runner gets the
+-- PadNav and is only called from the idle reading context (see
+-- _override_action), where no overlay is open and `_x_mode` is off -- except
+-- x_modifier, which is also how a role that holds the modifier switches it off.
+local function toggle_footer(self)
+    local footer = self.ui.view and self.ui.view.footer
+    if footer then footer:onToggleFooterMode() end
+end
+local unpack = table.unpack or unpack -- LuaJIT (KOReader) has the global, Lua 5.4 (tests) the table field
+local function ui_event(name, ...)
+    local args = { ... }
+    return function(self) self.ui:handleEvent(Event:new(name, unpack(args))) end
+end
+-- Openers that need the selector (rolling documents only); without one the
+-- press is swallowed, see _run_action.
+local function with_selector(fn)
+    return function(self)
+        local selector = self:_selector()
+        if not selector then return false end
+        fn(self, selector)
+    end
+end
+local ACTION_RUNNERS = {
+    next_page       = ui_event("GotoViewRel", 1),
+    prev_page       = ui_event("GotoViewRel", -1),
+    top_menu        = ui_event("ShowMenu"),
+    footer_menu     = toggle_footer,
+    toc             = ui_event("ShowToc"),
+    bookmarks       = ui_event("ShowBookmark"),
+    history         = ui_event("ShowHist"),
+    file_browser    = ui_event("Home"),
+    sentence_select = with_selector(function(self) self:_open_sentence_select(1) end),
+    highlights      = with_selector(function(self, selector) self:_open_highlights(selector) end),
+    word_walk       = with_selector(function(self, selector) selector:_open_walk(false) end),
+    crosshair       = with_selector(function(self, selector) selector:_open() end),
+    x_modifier      = function(self) self._x_mode = not self._x_mode end,
+    none            = function() end,
+}
+
+-- The action id `role` should perform NOW instead of its built-in handler, or
+-- nil (built-in runs). Idle reading context only: a document is open (the
+-- FileManager keeps the stock list navigation), no X-combo pending (combos
+-- stay on the built-in handlers; only the modifier may be pressed again), no
+-- dictionary popup and no selection overlay.
+function PadNav:_override_action(role)
+    local act = role and self._actions and self._actions[role]
+    if not act then return nil end
+    if not (self.ui and self.ui.document) then return nil end
+    if self._x_mode and act ~= "x_modifier" then return nil end
+    if self:_find_dict_widget() then return nil end
+    local selector = self:_selector()
+    if selector and selector.overlay then return nil end
+    return act
+end
+
+-- Run an override. Always consumes the press (true): the user chose this
+-- action for the button, so falling back to the stock key would be a surprise.
+-- Selector openers silently do nothing where no selector exists (PDF/DjVu).
+function PadNav:_run_action(action, role)
+    local run = ACTION_RUNNERS[action]
+    local ok, res = pcall(run, self)
+    if not ok then
+        logger.warn("kopad: action " .. tostring(action) .. " for " .. tostring(role) .. " failed: " .. tostring(res))
+    end
+    Trace.log("padnav role=%s: override action=%s ok=%s%s", tostring(role), tostring(action), tostring(ok),
+        res == false and " (needs selector, no-op)" or "")
+    return true
 end
 
 -- Physical control (kind "button"/"axis", SDL id) -> logical role kind, id.
@@ -958,6 +1048,13 @@ function PadNav:_button_down(ev)
     if btn == nil then
         if tr then Trace.log("padnav btn=nil: no button in event -> result=false") end
         return false
+    end
+    -- Role-level action override (PC-014); idle reading context only.
+    local role = Padmap and Padmap.role_of("button", btn)
+    local override = role and self:_override_action(role)
+    if override then
+        if tr then Trace.log("padnav btn=%s: role=%s override=%s", tostring(btn), role, override) end
+        return self:_run_action(override, role)
     end
     local method = BUTTON_HANDLERS[btn]
     local handled = method and self[method](self) or false
@@ -1158,13 +1255,23 @@ function PadNav:_trigger_event(axis, value, from_button)
     end
     -- Triggers: 0..32767, only positive values are a press.
     local new_press = value > 0 and (from_button or self:_trigger_is_new_press(axis))
+    local handler = "none"
     if new_press then
-        if axis == AXIS_LT then self:onKPPgBk2() else self:onKPPgFwd2() end
+        -- Role-level action override (PC-014); idle reading context only.
+        local role = axis == AXIS_LT and "lt" or "rt"
+        local override = self:_override_action(role)
+        if override then
+            handler = "override:" .. override
+            self:_run_action(override, role)
+        elseif axis == AXIS_LT then
+            handler = "onKPPgBk2"; self:onKPPgBk2()
+        else
+            handler = "onKPPgFwd2"; self:onKPPgFwd2()
+        end
     end
     if tr then
         Trace.log("padnav axis=%s value=%s: trigger new_press=%s handler=%s swallowed -> result=true",
-            tostring(axis), tostring(value), tostring(new_press),
-            new_press and (axis == AXIS_LT and "onKPPgBk2" or "onKPPgFwd2") or "none")
+            tostring(axis), tostring(value), tostring(new_press), handler)
     end
     return true
 end
@@ -1291,12 +1398,50 @@ function PadNav:_show_text(text)
     UIManager:show(InfoMessage:new{ text = text })
 end
 
+-- Role names as the docs write them, and the English action labels (the panel
+-- in koligilo shows Polish ones); order = padmap.lua ROLES order.
+local ROLE_LABELS = {
+    "a", "b", "x", "y", "select", "start", "lb", "rb", "lt", "rt",
+}
+local ACTION_LABELS = {
+    next_page       = _("next page"),
+    prev_page       = _("previous page"),
+    top_menu        = _("top menu"),
+    footer_menu     = _("footer menu"),
+    toc             = _("table of contents"),
+    bookmarks       = _("bookmarks"),
+    history         = _("history"),
+    file_browser    = _("file browser"),
+    sentence_select = _("sentence selector"),
+    highlights      = _("highlights"),
+    word_walk       = _("word walk"),
+    crosshair       = _("crosshair"),
+    x_modifier      = _("X modifier"),
+    none            = _("nothing"),
+}
+
+-- The reading cheat sheet plus, when koligilo gave some roles other reading
+-- actions (PC-014), one extra line per such role: the static text above
+-- describes the defaults.
+function PadNav:_cheat_reading()
+    if not self._actions then return CHEAT_READING end
+    local lines = {}
+    for _i, role in ipairs(ROLE_LABELS) do
+        local act = self._actions[role]
+        if act then
+            lines[#lines + 1] = "\n" .. role:upper() .. ": " .. (ACTION_LABELS[act] or act)
+        end
+    end
+    if #lines == 0 then return CHEAT_READING end
+    return CHEAT_READING .. "\n\n" .. _("Changed in koligilo (reading only)") .. table.concat(lines)
+end
+
 function PadNav:getMenuItems()
     return {
         {
             text = _("Button cheat sheet: reading"),
             keep_menu_open = true,
-            callback = function() self:_show_text(CHEAT_READING) end,
+            callback = function() self:_show_text(self:_cheat_reading()) end,
         },
         {
             text = _("Button cheat sheet: selection"),
@@ -1308,7 +1453,7 @@ function PadNav:getMenuItems()
             keep_menu_open = true,
             callback = function()
                 self:_show_text(_("kopad: gamepad control for KOReader.\n\n")
-                    .. CHEAT_READING .. "\n\n" .. CHEAT_SELECTION)
+                    .. self:_cheat_reading() .. "\n\n" .. CHEAT_SELECTION)
             end,
         },
     }
