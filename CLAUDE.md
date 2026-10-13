@@ -97,8 +97,9 @@ overrides on top of the layout's built-in default) plus the device's layout into
 a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
 the logical role id. **Role-level actions (PC-014):** `res.actions` (`build_actions`)
 is a second stage AFTER the layout — role → reading action from the closed list
-`M.ACTION_ORDER` (`next_page`, `top_menu`, `toc`, `sentence_select`, `x_modifier`,
-`none`, …), keyed by role so it is shared by every layout; values equal to
+`M.ACTION_ORDER` (48 ids: `next_page`, `next_chapter`, `top_menu`, `toc`,
+`sentence_select`, `night_mode`, `x_modifier`, `none`, …; each needs a runner in
+`ACTION_RUNNERS` and a label in `ACTION_LABELS`, checked by the test), keyed by role so it is shared by every layout; values equal to
 `M.DEFAULT_ACTIONS` are dropped so the built-in handler (and its pass-through in
 paged documents) is untouched. `padnav.lua` applies it in `_button_down` /
 `_trigger_event` via `_override_action(role)` — only in the idle reading context

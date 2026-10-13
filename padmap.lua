@@ -117,23 +117,60 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 
 -- Role-level actions (PC-014): what a role does while plainly reading. Closed
 -- vocabulary shared with koligilo (padmap.go / web/padmap.js); padnav.lua
--- implements each id in PadNav:_run_action. Order = order in the panel.
+-- implements each id in ACTION_RUNNERS. Order = order in the panel, grouped
+-- the way the panel groups them.
+--  Pages
 --   next_page / prev_page   GotoViewRel +1 / -1
+--   pages_forward_10 / pages_back_10
+--                           GotoViewRel +10 / -10
+--   next_chapter / prev_chapter / first_page / last_page
+--   back_location / forward_location
+--                           the location history (after a link, a jump, ...)
+--   goto_page / skim        the "go to page" dialog / the skim widget
+--  Menus
 --   top_menu / footer_menu  the reader's top menu (where its settings live) /
 --                           the footer (bottom) menu toggle
---   toc / bookmarks / history / file_browser
---                           the same targets X + LB / X + RB / X + D-pad
---                           left / X + D-pad right reach
+--   config_menu             the bottom configuration panel (font, margins...)
+--  Book
+--   toc / bookmarks         the same targets X + LB / X + RB reach
+--   toggle_bookmark         bookmark this page / remove the bookmark
+--   next_bookmark / prev_bookmark
+--   book_map / page_browser / fulltext_search / book_status / book_info
+--   reading_progress        reading statistics (needs the statistics plugin)
+--  Library
+--   history / file_browser  the same targets X + D-pad left / right reach
+--   last_book               reopen the previously read book
+--   favorites / collections
+--  Selection and dictionary
 --   sentence_select         open the sentence selector (A today)
 --   highlights              open highlight mode, crosshair if none (Y today)
 --   word_walk / crosshair   open the word walk / the crosshair
+--   dict_lookup             the "look up a word" input dialog
+--  Display
+--   font_bigger / font_smaller
+--                           one step (reflowable documents only)
+--   night_mode / rotate / full_refresh
+--   frontlight_toggle / frontlight_up / frontlight_down
+--                           no-ops on devices without a frontlight
+--  Other
+--   screenshot / cheat_sheet (kopad's reading cheat sheet)
 --   x_modifier              toggle the X modifier (X today)
 --   none                    swallow the press; do nothing
+-- Actions KOReader has no handler for on this device/document (frontlight on
+-- a desktop, font size in a PDF, statistics without the plugin) do nothing.
 M.ACTION_ORDER = {
-    "next_page", "prev_page", "top_menu", "footer_menu",
-    "toc", "bookmarks", "history", "file_browser",
-    "sentence_select", "highlights", "word_walk", "crosshair",
-    "x_modifier", "none",
+    "next_page", "prev_page", "pages_forward_10", "pages_back_10",
+    "next_chapter", "prev_chapter", "first_page", "last_page",
+    "back_location", "forward_location", "goto_page", "skim",
+    "top_menu", "footer_menu", "config_menu",
+    "toc", "bookmarks", "toggle_bookmark", "next_bookmark", "prev_bookmark",
+    "book_map", "page_browser", "fulltext_search", "book_status", "book_info",
+    "reading_progress",
+    "history", "file_browser", "last_book", "favorites", "collections",
+    "sentence_select", "highlights", "word_walk", "crosshair", "dict_lookup",
+    "font_bigger", "font_smaller", "night_mode", "rotate", "full_refresh",
+    "frontlight_toggle", "frontlight_up", "frontlight_down",
+    "screenshot", "cheat_sheet", "x_modifier", "none",
 }
 M.ACTIONS = {}
 for _, id in ipairs(M.ACTION_ORDER) do M.ACTIONS[id] = true end

@@ -366,15 +366,56 @@ do
     -- the other bumper keeps its built-in
     n:onGamepadButtonDown({ button = 9 }); assert(log.calls[1] == "onKPPgBk")
 
-    -- every simple event action
-    for action, want in pairs({
-        next_page = "GotoViewRel:1", prev_page = "GotoViewRel:-1", top_menu = "ShowMenu",
-        toc = "ShowToc", bookmarks = "ShowBookmark", history = "ShowHist", file_browser = "Home",
-    }) do
-        n, log = nav(acts({ y = action }))
-        assert(n:onGamepadButtonDown({ button = 3 }) == true and log.events[1] == want,
-            action .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+    -- every id of the vocabulary has a runner and a cheat-sheet label, and nothing else does
+    for _, id in ipairs(P.ACTION_ORDER) do
+        assert(type(PadNav._ACTION_RUNNERS[id]) == "function", id .. " has a runner")
+        assert(type(PadNav._ACTION_LABELS[id]) == "string", id .. " has a label")
     end
+    for id in pairs(PadNav._ACTION_RUNNERS) do assert(P.ACTIONS[id], "runner " .. id .. " is in the vocabulary") end
+    for id in pairs(PadNav._ACTION_LABELS) do assert(P.ACTIONS[id], "label " .. id .. " is in the vocabulary") end
+
+    -- every simple event action
+    local EVENTS = {
+        next_page = "GotoViewRel:1", prev_page = "GotoViewRel:-1",
+        pages_forward_10 = "GotoViewRel:10", pages_back_10 = "GotoViewRel:-10",
+        next_chapter = "GotoNextChapter", prev_chapter = "GotoPrevChapter",
+        first_page = "GoToBeginning", last_page = "GoToEnd",
+        back_location = "GoBackLink:true", forward_location = "GoForwardLink",
+        goto_page = "ShowGotoDialog", skim = "ShowSkimtoDialog",
+        top_menu = "ShowMenu", config_menu = "ShowConfigMenu",
+        toc = "ShowToc", bookmarks = "ShowBookmark", toggle_bookmark = "ToggleBookmark",
+        next_bookmark = "GotoNextBookmarkFromPage", prev_bookmark = "GotoPreviousBookmarkFromPage",
+        book_map = "ShowBookMap", page_browser = "ShowPageBrowser",
+        fulltext_search = "ShowFulltextSearchInput", book_status = "ShowBookStatus",
+        book_info = "ShowBookInfo", reading_progress = "ShowReaderProgress",
+        history = "ShowHist", file_browser = "Home", last_book = "OpenLastDoc",
+        favorites = "ShowColl", collections = "ShowCollList",
+        dict_lookup = "ShowDictionaryLookup",
+        font_bigger = "IncreaseFontSize:1", font_smaller = "DecreaseFontSize:1",
+        night_mode = "ToggleNightMode", rotate = "IterateRotation", full_refresh = "FullRefresh",
+        frontlight_toggle = "ToggleFrontlight",
+        frontlight_up = "IncreaseFlIntensity:1", frontlight_down = "DecreaseFlIntensity:1",
+        screenshot = "Screenshot",
+    }
+    for action, want in pairs(EVENTS) do
+        n, log = nav(acts({ b = action }))
+        assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 1 and log.events[1] == want,
+            action .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+        assert(#log.calls == 0, action .. " does not run a built-in handler")
+    end
+    -- the rest of the vocabulary is exactly the non-event actions tested below
+    local other = { footer_menu = true, sentence_select = true, highlights = true, word_walk = true,
+                    crosshair = true, cheat_sheet = true, x_modifier = true, none = true }
+    for _, id in ipairs(P.ACTION_ORDER) do
+        assert((EVENTS[id] ~= nil) ~= (other[id] ~= nil), id .. " is covered by exactly one test group")
+    end
+    -- cheat_sheet: shows the reading cheat sheet (with the "changed" lines), sends no event
+    n, log = nav(acts({ b = "cheat_sheet", rb = "next_chapter" }))
+    local shown
+    n._show_text = function(_, text) shown = text end
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 0)
+    assert(type(shown) == "string" and shown:find("RB: next chapter", 1, true) and shown:find("B: button cheat sheet", 1, true),
+        "cheat sheet lists the changed roles")
     n, log = nav(acts({ select = "footer_menu", start = "top_menu" }))
     n:onGamepadButtonDown({ button = 4 }); assert(log.footer == 1 and #log.events == 0)
     n:onGamepadButtonDown({ button = 6 }); assert(log.events[1] == "ShowMenu")

@@ -957,20 +957,61 @@ local function with_selector(fn)
     end
 end
 local ACTION_RUNNERS = {
-    next_page       = ui_event("GotoViewRel", 1),
-    prev_page       = ui_event("GotoViewRel", -1),
-    top_menu        = ui_event("ShowMenu"),
-    footer_menu     = toggle_footer,
-    toc             = ui_event("ShowToc"),
-    bookmarks       = ui_event("ShowBookmark"),
-    history         = ui_event("ShowHist"),
-    file_browser    = ui_event("Home"),
-    sentence_select = with_selector(function(self) self:_open_sentence_select(1) end),
-    highlights      = with_selector(function(self, selector) self:_open_highlights(selector) end),
-    word_walk       = with_selector(function(self, selector) selector:_open_walk(false) end),
-    crosshair       = with_selector(function(self, selector) selector:_open() end),
-    x_modifier      = function(self) self._x_mode = not self._x_mode end,
-    none            = function() end,
+    -- pages
+    next_page         = ui_event("GotoViewRel", 1),
+    prev_page         = ui_event("GotoViewRel", -1),
+    pages_forward_10  = ui_event("GotoViewRel", 10),
+    pages_back_10     = ui_event("GotoViewRel", -10),
+    next_chapter      = ui_event("GotoNextChapter"),
+    prev_chapter      = ui_event("GotoPrevChapter"),
+    first_page        = ui_event("GoToBeginning"),
+    last_page         = ui_event("GoToEnd"),
+    back_location     = ui_event("GoBackLink", true),
+    forward_location  = ui_event("GoForwardLink"),
+    goto_page         = ui_event("ShowGotoDialog"),
+    skim              = ui_event("ShowSkimtoDialog"),
+    -- menus
+    top_menu          = ui_event("ShowMenu"),
+    footer_menu       = toggle_footer,
+    config_menu       = ui_event("ShowConfigMenu"),
+    -- book
+    toc               = ui_event("ShowToc"),
+    bookmarks         = ui_event("ShowBookmark"),
+    toggle_bookmark   = ui_event("ToggleBookmark"),
+    next_bookmark     = ui_event("GotoNextBookmarkFromPage"),
+    prev_bookmark     = ui_event("GotoPreviousBookmarkFromPage"),
+    book_map          = ui_event("ShowBookMap"),
+    page_browser      = ui_event("ShowPageBrowser"),
+    fulltext_search   = ui_event("ShowFulltextSearchInput"),
+    book_status       = ui_event("ShowBookStatus"),
+    book_info         = ui_event("ShowBookInfo"),
+    reading_progress  = ui_event("ShowReaderProgress"),
+    -- library
+    history           = ui_event("ShowHist"),
+    file_browser      = ui_event("Home"),
+    last_book         = ui_event("OpenLastDoc"),
+    favorites         = ui_event("ShowColl"),
+    collections       = ui_event("ShowCollList"),
+    -- selection and dictionary
+    sentence_select   = with_selector(function(self) self:_open_sentence_select(1) end),
+    highlights        = with_selector(function(self, selector) self:_open_highlights(selector) end),
+    word_walk         = with_selector(function(self, selector) selector:_open_walk(false) end),
+    crosshair         = with_selector(function(self, selector) selector:_open() end),
+    dict_lookup       = ui_event("ShowDictionaryLookup"),
+    -- display
+    font_bigger       = ui_event("IncreaseFontSize", 1),
+    font_smaller      = ui_event("DecreaseFontSize", 1),
+    night_mode        = ui_event("ToggleNightMode"),
+    rotate            = ui_event("IterateRotation"),
+    full_refresh      = ui_event("FullRefresh"),
+    frontlight_toggle = ui_event("ToggleFrontlight"),
+    frontlight_up     = ui_event("IncreaseFlIntensity", 1),
+    frontlight_down   = ui_event("DecreaseFlIntensity", 1),
+    -- other
+    screenshot        = ui_event("Screenshot"),
+    cheat_sheet       = function(self) self:_show_text(self:_cheat_reading()) end,
+    x_modifier        = function(self) self._x_mode = not self._x_mode end,
+    none              = function() end,
 }
 
 -- The action id `role` should perform NOW instead of its built-in handler, or
@@ -1404,20 +1445,54 @@ local ROLE_LABELS = {
     "a", "b", "x", "y", "select", "start", "lb", "rb", "lt", "rt",
 }
 local ACTION_LABELS = {
-    next_page       = _("next page"),
-    prev_page       = _("previous page"),
-    top_menu        = _("top menu"),
-    footer_menu     = _("footer menu"),
-    toc             = _("table of contents"),
-    bookmarks       = _("bookmarks"),
-    history         = _("history"),
-    file_browser    = _("file browser"),
-    sentence_select = _("sentence selector"),
-    highlights      = _("highlights"),
-    word_walk       = _("word walk"),
-    crosshair       = _("crosshair"),
-    x_modifier      = _("X modifier"),
-    none            = _("nothing"),
+    next_page         = _("next page"),
+    prev_page         = _("previous page"),
+    pages_forward_10  = _("10 pages forward"),
+    pages_back_10     = _("10 pages back"),
+    next_chapter      = _("next chapter"),
+    prev_chapter      = _("previous chapter"),
+    first_page        = _("first page"),
+    last_page         = _("last page"),
+    back_location     = _("back to previous location"),
+    forward_location  = _("forward to next location"),
+    goto_page         = _("go to page"),
+    skim              = _("skim document"),
+    top_menu          = _("top menu"),
+    footer_menu       = _("footer menu"),
+    config_menu       = _("bottom configuration menu"),
+    toc               = _("table of contents"),
+    bookmarks         = _("bookmarks"),
+    toggle_bookmark   = _("toggle bookmark"),
+    next_bookmark     = _("next bookmark"),
+    prev_bookmark     = _("previous bookmark"),
+    book_map          = _("book map"),
+    page_browser      = _("page browser"),
+    fulltext_search   = _("fulltext search"),
+    book_status       = _("book status"),
+    book_info         = _("book information"),
+    reading_progress  = _("reading progress"),
+    history           = _("history"),
+    file_browser      = _("file browser"),
+    last_book         = _("previous book"),
+    favorites         = _("favorites"),
+    collections       = _("collections"),
+    sentence_select   = _("sentence selector"),
+    highlights        = _("highlights"),
+    word_walk         = _("word walk"),
+    crosshair         = _("crosshair"),
+    dict_lookup       = _("dictionary lookup"),
+    font_bigger       = _("bigger font"),
+    font_smaller      = _("smaller font"),
+    night_mode        = _("night mode"),
+    rotate            = _("rotate screen"),
+    full_refresh      = _("full screen refresh"),
+    frontlight_toggle = _("frontlight on/off"),
+    frontlight_up     = _("frontlight brighter"),
+    frontlight_down   = _("frontlight dimmer"),
+    screenshot        = _("screenshot"),
+    cheat_sheet       = _("button cheat sheet"),
+    x_modifier        = _("X modifier"),
+    none              = _("nothing"),
 }
 
 -- The reading cheat sheet plus, when koligilo gave some roles other reading
@@ -1435,6 +1510,11 @@ function PadNav:_cheat_reading()
     if #lines == 0 then return CHEAT_READING end
     return CHEAT_READING .. "\n\n" .. _("Changed in koligilo (reading only)") .. table.concat(lines)
 end
+
+-- For tests/padmap_test.lua: every id of padmap.lua's ACTION_ORDER must have
+-- a runner and a label.
+PadNav._ACTION_RUNNERS = ACTION_RUNNERS
+PadNav._ACTION_LABELS = ACTION_LABELS
 
 function PadNav:getMenuItems()
     return {
