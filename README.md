@@ -1,20 +1,32 @@
-# kopad.koplugin
+<div align="center">
+  <h1>kopad</h1>
+  <p>A gamepad as a reading remote.</p>
+  <p>by <a href="https://sypian.ski/">Jakub Sypiański</a> · License: AGPL-3.0</p>
+  <p>Updated 13 October 2026</p>
+
+  [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+  ![Platform](https://img.shields.io/badge/platform-KOReader%202026.07%2B-brightgreen)
+</div>
+
+> **Part of the KOReader family.** Related apps:
+> [Rosetta](https://github.com/sypianski/rosetta.koplugin), a translation under the book text;
+> [Hairline](https://github.com/sypianski/hairline.koplugin), a thin progress bar at the bottom edge;
+> [KoTheme](https://github.com/sypianski/kotheme.koplugin), rounded corners and thinner borders;
+> and others.
 
 A [KOReader](https://github.com/koreader/koreader) plugin that turns a connected **gamepad** into a reading controller — page-turning, menu navigation, and a crosshair cursor that snaps to nearest words for highlight / dictionary / AI lookup.
 
 > *Kopad* — KO(Reader) + (game)pad.
 
-## Why
-
-E-readers and reading-mode laptops often sit far from your hands. A gamepad is more relaxed than a keyboard, easier to use one-handed in a recliner or in bed, and KOReader has no built-in support for one. *Kopad* maps the standard SDL3 gamepad layout to reading actions and adds a structured word/sentence selector you can drive entirely with the right stick + face buttons.
+E-readers and reading-mode laptops often sit far from your hands. A gamepad is more relaxed than a keyboard, easier to use one-handed in a recliner or in bed. *Kopad* maps the standard SDL3 gamepad layout to reading actions and adds a structured word/sentence selector you can drive entirely with the right stick + face buttons.
 
 ## Install
 
 **KOReader 2026.07 or newer** (stock, e.g. the Flatpak release) works as is: it has built-in gamepad support and kopad takes over its `GamepadButtonDown` / `GamepadAxisMotion` events. No patch, no userpatch.
 
-Older KOReader builds need SDL3 gamepad support from the upstream konfig repo: `sdl3_gamepad.patch` (button/axis key events) plus the `1-lstick-keys.lua` userpatch (separate L-stick keys). Those builds are still supported through key events, but the patch and userpatch are obsolete on 2026.07+.
+Older KOReader builds need SDL3 gamepad support from a separate patch: `sdl3_gamepad.patch` (button/axis key events) plus the `1-lstick-keys.lua` userpatch (separate L-stick keys). Those builds are still supported through key events, but the patch and userpatch are obsolete on 2026.07+. The patch files are not part of this repository.
 
-Drop `kopad.koplugin/` into KOReader's `plugins/` directory:
+Copy the files of this repository into a folder named `kopad.koplugin/` (the name must end in `.koplugin`) inside KOReader's `plugins/` directory:
 
 | Platform | Path |
 |---|---|
@@ -22,9 +34,11 @@ Drop `kopad.koplugin/` into KOReader's `plugins/` directory:
 | Linux (Flatpak) | `~/.var/app/rocks.koreader.KOReader/config/koreader/plugins/` |
 | Other | `koreader/plugins/` on the device |
 
-Restart KOReader and plug in a gamepad.
+Restart KOReader, plug in a gamepad and enable the plugin under *menu > more tools > kopad > Enable kopad*.
 
-## Controls
+## What it does
+
+On KOReader 2026.07+ the plugin takes over the gamepad events and maps them to reading actions. The controls are described below.
 
 The canonical, up-to-date key map lives in the header of `padnav.lua` (the
 actual gamepad event handler) — read that file if these tables and the code
@@ -92,7 +106,7 @@ With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** m
 
 Button names in this README are Xbox-style **roles** (A = bottom face button, etc.). On KOReader 2026.07+ you can tell kopad which physical button plays which role, per known pad layout:
 
-- **menu → kopad → Gamepad layout (this device)** picks the layout of the pad used on *this* device. The choice is stored in `settings/kopad_device.lua`, which [koligilo](https://sypian.ski/koligilo) never syncs, so a Steam Deck and a reader can use different pads. Layouts (a closed list; `xbox` is the default):
+- **menu → kopad → Gamepad layout (this device)** picks the layout of the pad used on *this* device. The choice is stored in `settings/kopad_device.lua`, which koligilo never syncs, so a Steam Deck and a reader can use different pads. Layouts (a closed list; `xbox` is the default):
 
   | Menu entry | Layout id | Default mapping |
   |---|---|---|
@@ -125,7 +139,9 @@ An override applies only in the idle reading context: a document is open and no 
 
 The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) and in the FileManager no reader keys are suppressed and selector-dependent handlers pass through — only page turns and X-combos remain active there.
 
-## How it works
+## Technical notes
+
+### How it works
 
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
@@ -134,7 +150,7 @@ The selector (word walk / struct / crosshair) only exists for crengine (rolling)
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
 
-## Diagnostics
+### Diagnostics
 
 If kopad seems to do nothing on a device (and KOReader gives you no log), switch on the on-device trace by creating an empty flag file in KOReader's settings directory:
 
@@ -145,16 +161,49 @@ touch ~/.var/app/rocks.koreader.KOReader/config/koreader/settings/kopad-trace   
 
 From then on (no restart needed, the flag is re-checked every ~2 s) `kopad-trace.log` next to it collects timestamped lines: the mtimes of `main.lua` / `padnav.lua` / `keyhints.lua` (which code actually loaded), the result of loading each sub-module, the `enabled` state, every `Gamepad*` event reaching kopad and why `padnav.lua` passed it through or which handler consumed it. Remove the flag file to stop; without it nothing is written. The log is capped (~256 KB, then only the newest ~64 KB are kept) and rate-limited (~20 lines/s, repeated stick events are collapsed). Implemented in `kopad_trace.lua`; the plugin works without that file.
 
-## Bundled `paginmapo.lua`
+### Bundled `paginmapo.lua`
 
 This plugin vendors `paginmapo.lua` — a 411-line CRengine helper that extracts visible words with screen positions and xpointer anchors. It is also used by sibling plugins keyreader, marjenoti, and assistant. Each ships its own copy so they remain runtime-independent.
 
 If you maintain a fork or copy and edit `paginmapo.lua` here, keep it identical to the upstream copies in those plugins.
 
-## Compatibility
+### Compatibility
 
 Targets stock KOReader 2026.07+ (the `Gamepad*` event interface was taken from the 2026.07.1 Flatpak sources; the new handlers are unit-tested against mocks, not yet confirmed on the Steam Deck). Earlier tested with a generic Bluetooth gamepad on KOReader 2026.03 desktop Linux with the patched SDL3 backend, which keeps working through key events.
 
-## License
+### Tests
 
-[AGPL-3.0](LICENSE). Matches KOReader.
+The only automated test covers the pure remapping layer (`padmap.lua`):
+
+```bash
+lua tests/padmap_test.lua
+```
+
+## How this was made
+
+kopad was written largely by Claude, working from my specifications and
+under my direction ("vibe coding"). I reviewed and tested the results, but
+the code has not had an independent audit. Treat it as you would any young
+project and report what you find.
+
+## Feedback
+
+kopad is a young project. If something breaks, behaves oddly or is missing, tell me:
+
+<!-- feedback-form: https://sypian.ski/uwagi/?app=kopad -->
+- [Open an issue on GitHub](https://github.com/sypianski/kopad.koplugin/issues/new). Bug reports, ideas and questions are all fine there; include your KOReader version and your gamepad model.
+- Or email jakub.sypianski@gmail.com.
+
+## Support
+
+kopad is free. If it is useful to you, you can [buy me a coffee on Ko-fi](https://ko-fi.com/sypianski).
+
+## License and credits
+
+kopad is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0), see [LICENSE](LICENSE).
+
+kopad matches KOReader's license. It vendors `paginmapo.lua`, a CRengine word-extraction helper that is shared with the sibling plugins (see Technical notes).
+
+---
+
+<p align="center">kopad · <a href="https://sypian.ski/">Jakub Sypiański</a> · AGPL-3.0</p>
