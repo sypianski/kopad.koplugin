@@ -392,7 +392,6 @@ do
         favorites = "ShowColl", collections = "ShowCollList",
         dict_lookup = "ShowDictionaryLookup",
         font_bigger = "IncreaseFontSize:1", font_smaller = "DecreaseFontSize:1",
-        zoom_in = "Zoom:in", zoom_out = "Zoom:out",
         zoom_fit_width = "SetZoomMode:contentwidth", zoom_fit_page = "SetZoomMode:page",
         night_mode = "ToggleNightMode", rotate = "IterateRotation", full_refresh = "FullRefresh",
         frontlight_toggle = "ToggleFrontlight",
@@ -407,7 +406,8 @@ do
     end
     -- the rest of the vocabulary is exactly the non-event actions tested below
     local other = { footer_menu = true, sentence_select = true, highlights = true, word_walk = true,
-                    crosshair = true, cheat_sheet = true, x_modifier = true, none = true }
+                    crosshair = true, cheat_sheet = true, x_modifier = true, none = true,
+                    zoom_in = true, zoom_out = true }
     for _, id in ipairs(P.ACTION_ORDER) do
         assert((EVENTS[id] ~= nil) ~= (other[id] ~= nil), id .. " is covered by exactly one test group")
     end
@@ -487,6 +487,8 @@ do
     local function paged(ctx)
         local p, plog = nav(nil, ctx)
         p.ui.paging = { current_page = 5 }
+        p.ui.zooming = { zoom = 1, onSetZoomMode = function(z, m) z.mode = m end }
+        p.ui.view.onZoomUpdate = function(_, zoom) plog.events[#plog.events + 1] = ("zoom:%.3f"):format(zoom) end
         p.ui.handleEvent = function(_, ev)
             local a = ev.args[1]
             if type(a) == "table" then a = a[1] .. "," .. a[2] end
@@ -503,12 +505,21 @@ do
     end
     for _, c in ipairs({ { 0, -20000, "Panning:-1,0" }, { 0, 20000, "Panning:1,0" },
                          { 1, -20000, "Panning:0,-1" }, { 1, 20000, "Panning:0,1" },
-                         { 3, -20000, "Zoom:in" }, { 3, 20000, "Zoom:out" },
+                         { 3, -20000, "zoom:1.100" }, { 3, 20000, "zoom:1.000" },
                          { 2, -20000, "SetZoomMode:page" }, { 2, 20000, "SetZoomMode:contentwidth" } }) do
         log.events = {}
         assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and log.events[1] == c[3],
             "paged stick " .. c[1] .. "/" .. c[2] .. " -> " .. c[3] .. ", got " .. tostring(log.events[1]))
     end
+    assert(n.ui.zooming.mode == "free", "small zoom step switches to free zoom")
+    -- zoom_in / zoom_out actions: the same small step; nothing outside a paged document
+    n, log = paged()
+    n:set_padmap(P.build(acts({ b = "zoom_in", y = "zoom_out" }), "xbox"))
+    n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonDown({ button = 3 })
+    assert(log.events[1] == "zoom:1.100" and log.events[2] == "zoom:1.210" and log.events[3] == "zoom:1.100", "zoom actions")
+    n, log = nav(acts({ b = "zoom_in" }))
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 0, "zoom_in in an EPUB does nothing")
+    n, log = paged()
     -- page turns: bumpers and triggers, whole page from the current one
     log.events = {}
     assert(n:onGamepadButtonDown({ button = 9 }) == true and log.events[1] == "GotoPage:4", "LB")

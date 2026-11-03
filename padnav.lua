@@ -185,16 +185,17 @@ local BUTTON_SWALLOW = {
 -- control stays on the current page, so nothing turns pages by surprise:
 --   D-pad / L-stick  pan (stock ReaderPanning, half a screen per step, bounded
 --                    by the page; the stick keeps moving while held)
---   R-stick ↑ / ↓    zoom in / out;  ← / →  whole page / text width
+--   R-stick ↑ / ↓    zoom in / out in small steps (ZOOM_STEP; held, it keeps
+--                    zooming);  ← / →  whole page / text width
 local PAGED_PAN_DPAD = {
     [11] = { 0, -1 }, [12] = { 0, 1 }, [13] = { -1, 0 }, [14] = { 1, 0 },
 }
 local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
--- R-stick: axis -> { negative direction, positive direction } as event + arg
-local PAGED_RSTICK = {
-    [AXIS_RX] = { { "SetZoomMode", "page" }, { "SetZoomMode", "contentwidth" } },
-    [AXIS_RY] = { { "Zoom", "in" }, { "Zoom", "out" } },
-}
+-- R-stick X: { negative direction, positive direction } as event + arg
+-- (R-stick Y zooms, see PadNav:_zoom_step)
+local PAGED_RSTICK_X = { { "SetZoomMode", "page" }, { "SetZoomMode", "contentwidth" } }
+-- One zoom step of the pad: KOReader's own Zoom event jumps ×1.33 / ×0.75.
+local ZOOM_STEP = 1.1
 
 -- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
 -- device.lua fires the first repeat 0.5 s after the press (delay) and then
@@ -1025,8 +1026,8 @@ local ACTION_RUNNERS = {
     -- display
     font_bigger       = ui_event("IncreaseFontSize", 1),
     font_smaller      = ui_event("DecreaseFontSize", 1),
-    zoom_in           = ui_event("Zoom", "in"),
-    zoom_out          = ui_event("Zoom", "out"),
+    zoom_in           = function(self) self:_zoom_step(1) end,
+    zoom_out          = function(self) self:_zoom_step(-1) end,
     zoom_fit_width    = ui_event("SetZoomMode", "contentwidth"),
     zoom_fit_page     = ui_event("SetZoomMode", "page"),
     night_mode        = ui_event("ToggleNightMode"),
@@ -1086,6 +1087,17 @@ function PadNav:_paged_pan(dx, dy)
         self.ui:handleEvent(Event:new("SetScrollMode", false))
     end
     self.ui:handleEvent(Event:new("Panning", { dx, dy }))
+end
+
+-- Zoom by ZOOM_STEP (dir 1 = in, -1 = out) instead of KOReader's Zoom event,
+-- so the stick zooms gradually. Same steps as ReaderZooming:onZoom; nothing
+-- happens without a paged document (EPUB, FileManager).
+function PadNav:_zoom_step(dir)
+    local z = self.ui.paging and self.ui.zooming
+    if not (z and type(z.zoom) == "number" and self.ui.view) then return end
+    z.zoom = z.zoom * (dir > 0 and ZOOM_STEP or 1 / ZOOM_STEP)
+    z:onSetZoomMode("free")
+    self.ui.view:onZoomUpdate(z.zoom)
 end
 
 -- Run an override. Always consumes the press (true): the user chose this
@@ -1452,8 +1464,11 @@ function PadNav:onGamepadAxisMotion(ax)
             local step = neg and -1 or 1
             if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
             if axis == AXIS_LX then self:_paged_pan(step, 0) else self:_paged_pan(0, step) end
+        elseif axis == AXIS_RY then
+            if tr then Trace.log("padnav axis=%s value=%s: paged zoom %s", tostring(axis), tostring(value), neg and "in" or "out") end
+            self:_zoom_step(neg and 1 or -1)
         else
-            local ev = PAGED_RSTICK[axis][neg and 1 or 2]
+            local ev = PAGED_RSTICK_X[neg and 1 or 2]
             if tr then Trace.log("padnav axis=%s value=%s: paged %s:%s", tostring(axis), tostring(value), ev[1], ev[2]) end
             self.ui:handleEvent(Event:new(ev[1], ev[2]))
         end
