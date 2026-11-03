@@ -165,7 +165,8 @@ Paged documents get their own view controls instead (stock KOReader 2026.07+ `Ga
 
 | Button | Action |
 |---|---|
-| **D-pad** / **L-stick** | move around the page (half a screen per step, never turns the page; the stick keeps moving while held) |
+| **D-pad** | move around the page slowly (about a tenth of the screen per press); never turns the page |
+| **L-stick** | move around the page fast (half a screen per step, keeps moving while held); never turns the page |
 | **R-stick ↑ / ↓** | zoom in / out in small steps (3 % per push; hold to keep zooming; the snap back on release is ignored) |
 | **R-stick ← / →** | fit the whole page / fit the text width (margins cropped) |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |

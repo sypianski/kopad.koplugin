@@ -84,7 +84,8 @@ are suppressed and the selector-dependent handlers return false
 (pass-through); paged documents get their own view controls instead
 (PAGED_* tables, _paged_idle; Gamepad* path only). Only LB/RB and LT/RT
 change the page, always by a whole page:
-  D-pad / L-stick        Pan the page (never turns it)
+  D-pad                  Pan the page slowly (never turns it)
+  L-stick                Pan the page fast (never turns it)
   R-stick ↑ / ↓          Zoom in / out in small steps (ZOOM_STEP)
   R-stick ← / →          Fit whole page / fit text width (margins cropped)
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
@@ -218,12 +219,17 @@ local PAD_CONTEXTS = {
 -- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
 -- the page, always by a whole page (GotoPage, view from the top); every other
 -- control stays on the current page, so nothing turns pages by surprise:
---   D-pad / L-stick  pan (stock ReaderPanning, half a screen per step, bounded
---                    by the page; the stick keeps moving while held)
+--   D-pad            pan slowly (PAGED_DPAD_PAN_STEP of the stock step)
+--   L-stick          pan fast (stock ReaderPanning step = half a screen; the
+--                    stick keeps moving while held); both bounded by the page
 --   R-stick ↑ / ↓    zoom in / out in small steps (ZOOM_STEP; held, it keeps
 --                    zooming);  ← / →  whole page / text width
+-- ReaderPanning:onPanning moves dx/dy × half the visible area, so 0.2 = a
+-- tenth of the screen per D-pad press.
+local PAGED_DPAD_PAN_STEP = 0.2
 local PAGED_PAN_DPAD = {
-    [11] = { 0, -1 }, [12] = { 0, 1 }, [13] = { -1, 0 }, [14] = { 1, 0 },
+    [11] = { 0, -PAGED_DPAD_PAN_STEP }, [12] = { 0, PAGED_DPAD_PAN_STEP },
+    [13] = { -PAGED_DPAD_PAN_STEP, 0 }, [14] = { PAGED_DPAD_PAN_STEP, 0 },
 }
 local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
 -- R-stick X: { negative direction, positive direction } as event + arg
@@ -1655,7 +1661,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nX + LB: TOC    X + RB: bookmarks"
     .. "\n\n" .. _("PDF / DjVu")
-    .. "\nD-pad / L-stick: move around the page"
+    .. "\nD-pad: move around the page slowly    L-stick: fast"
     .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
     .. "\nR-stick \xE2\x86\x90/\xE2\x86\x92: whole page / text width"
     .. "\nLB / RB, LT / RT: previous / next page"

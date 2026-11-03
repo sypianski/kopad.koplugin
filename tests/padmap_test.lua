@@ -504,8 +504,9 @@ do
         return p, plog
     end
     n, log = paged()
-    for btn, want in pairs({ [11] = "Panning:0,-1", [12] = "Panning:0,1",
-                             [13] = "Panning:-1,0", [14] = "Panning:1,0" }) do
+    -- D-pad = slow pan (a fifth of the stock step), L-stick = stock step
+    for btn, want in pairs({ [11] = "Panning:0,-0.2", [12] = "Panning:0,0.2",
+                             [13] = "Panning:-0.2,0", [14] = "Panning:0.2,0" }) do
         log.events = {}
         assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
             "paged D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
@@ -558,7 +559,7 @@ do
     n, log = paged()
     n.ui.view.page_scroll = true
     n:onGamepadButtonDown({ button = 12 })
-    assert(log.events[1] == "SetScrollMode:false" and log.events[2] == "Panning:0,1", "scroll -> page view")
+    assert(log.events[1] == "SetScrollMode:false" and log.events[2] == "Panning:0,0.2", "scroll -> page view")
     n.ui.view.page_scroll = false
     n:onGamepadButtonDown({ button = 12 })
     assert(#log.events == 3, "page view: no second switch")
