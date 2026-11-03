@@ -872,7 +872,17 @@ function SelectorOverlay:_do_dict(sel)
     if word == "" then return end
     local dict = self.ui.dictionary
     if not dict then return end
-    dict:onLookupWord(word, false, sel.sboxes, self.ui.highlight)
+    -- Plugins hooking the popup (Vortpaf) read the occurrence from
+    -- highlight.selected_text, which only a tap/hold sets; publish it for the
+    -- synchronous popup setup, then drop it so it cannot go stale.
+    local rh = self.ui.highlight
+    if rh and not rh.selected_text and type(sel.pos0) == "string" then
+        rh.selected_text = sel
+        UIManager:nextTick(function()
+            if rh.selected_text == sel then rh.selected_text = nil end
+        end)
+    end
+    dict:onLookupWord(word, false, sel.sboxes, rh)
     self:_hook_dict_widget(sel)
 end
 
@@ -1056,7 +1066,20 @@ function SelectorOverlay:_do_vortuyo(sel)
         UIManager:show(InfoMessage:new{ text = _("Vortuyo not available"), timeout = 2 })
         return
     end
-    vortuyo:_vortpafLookup(word)
+    -- The occurrence being looked up: Vortpaf anchors the margin gloss at
+    -- this xpointer (EPUB / rolling only; a paged selection has table
+    -- positions) and puts the definition card next to its screen rows.
+    local xpointer = type(sel.pos0) == "string" and sel.pos0 or nil
+    local anchor
+    if type(sel.sboxes) == "table" and #sel.sboxes > 0 then
+        local y0, y1 = math.huge, -math.huge
+        for _, b in ipairs(sel.sboxes) do
+            y0 = math.min(y0, b.y)
+            y1 = math.max(y1, b.y + b.h)
+        end
+        anchor = { y0 = y0, y1 = y1 }
+    end
+    vortuyo:_vortpafLookup(word, nil, xpointer, nil, nil, anchor)
 end
 
 ----------------------------------------------------------------------
