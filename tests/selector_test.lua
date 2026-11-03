@@ -360,4 +360,49 @@ assert(sel.overlay:point_press("B") == "cancel")
 sel:_close()
 assert(claims == 0)
 
+-- 11. The status bar never covers the page text (statusbar.lua, the user's
+-- rule): it goes into the free strip above or below the text, shortened when
+-- the strips are tight, not drawn at all when no strip holds a line of text.
+-- The stub text widget is 10 px tall: full bar 20 px, short bar 12 px.
+do
+    local sel11, _, ui11 = fresh()
+    sel11:_open()
+    local ov11 = sel11.overlay
+    local short = ov11:_status_text(true)
+    assert(short:match("^SENTENCES?") and short:find("A menu", 1, true) and not short:find("X hl", 1, true),
+        "short status text: " .. short)
+    ui11.view = { footer_visible = true, footer = { getHeight = function() return 44 end } }
+    assert(ov11:_footer_height() == 44)
+    ui11.view.footer_visible = false
+    assert(ov11:_footer_height() == 0, "a hidden footer is no footer")
+    ui11.view = { footer_visible = true, footer = { getHeight = function() error("boom") end } }
+    assert(ov11:_footer_height() == 0, "a failing footer counts as none")
+    ui11.view = nil
+    assert(ov11:_footer_height() == 0)
+
+    -- the white rectangle _draw_status paints for words spanning top..bottom
+    local function bar(top, bottom, footer_h)
+        ov11.words = { { sbox = { y = top, h = 10 } }, { sbox = { y = bottom - 10, h = 10 } } }
+        ui11.view = footer_h and { footer_visible = true, footer = { getHeight = function() return footer_h end } } or nil
+        local rects = {}
+        local rec = setmetatable({}, { __index = function(_, k)
+            return function(_, ...) if k == "paintRect" then rects[#rects + 1] = { ... } end end
+        end })
+        ov11:_draw_status(rec, 0, 0)
+        return rects[1]
+    end
+    local r = bar(100, 700)                         -- 100 px above: the full bar on top
+    assert(r and r[2] == 0 and r[4] == 20 and r[2] + r[4] <= 100, "full bar above the text")
+    r = bar(10, 700)                                -- 10 above, 100 below: the full bar below
+    assert(r and r[2] >= 700 and r[2] + r[4] <= 800 and r[4] == 20, "full bar below the text")
+    r = bar(10, 740, 44)                            -- strips 10 and 16 above the footer: short bar
+    assert(r and r[4] == 12 and r[2] >= 740 and r[2] + r[4] <= 756, "short bar above the footer")
+    assert(bar(5, 795) == nil, "no strip holds a line: no bar")
+    ov11.words = {}
+    local none = {}
+    ov11:_draw_status(setmetatable({}, { __index = function() return function() none[#none + 1] = true end end }), 0, 0)
+    assert(#none == 0, "nothing to measure: nothing painted")
+    sel11:_close()
+end
+
 print("selector_test: all tests passed")

@@ -29,6 +29,7 @@ local Screen         = Device.screen
 
 local Pluginaro  = require("pluginaro")
 local WordSource = require("paginmapo")
+local StatusBar  = require("statusbar")
 local Hints      = require("kopad_hints")
 
 local STATUS_FACE = require("ui/font"):getFace("infofont", 14)
@@ -1180,13 +1181,17 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
 end
 
 -- Status line: the level and the buttons, no counters (TASK-15). ↑ / ↓ after
--- SENTENCE: the selection runs on past the top / bottom of the page.
-function SelectorOverlay:_status_text()
-    local keys = " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+-- SENTENCE: the selection runs on past the top / bottom of the page. `short`
+-- = the shortened bar of statusbar.lua (mode + A / B, for a tight strip).
+function SelectorOverlay:_status_text(short)
+    local keys = short and " \xC2\xB7 A menu \xC2\xB7 B close"
+        or " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
     if self.mode == "point" then
         local p = self.pointer
-        if p and p.step == "end" then return "TO \xC2\xB7 label = end \xC2\xB7 B one word" end
-        return "FROM \xC2\xB7 label = start \xC2\xB7 B close"
+        if p and p.step == "end" then
+            return "TO" .. (short and "" or " \xC2\xB7 label = end") .. " \xC2\xB7 B one word"
+        end
+        return "FROM" .. (short and "" or " \xC2\xB7 label = start") .. " \xC2\xB7 B close"
     end
     if self.mode == "walk" then
         return (self.ww_anchor and "WORDS" or "WORD") .. keys
@@ -1195,7 +1200,8 @@ function SelectorOverlay:_status_text()
         local item = self.hl_items[self.hl_cur]
         local ann = item and item.ann
         local note = (ann and ann.note and ann.note ~= "") and " [note]" or ""
-        return "HIGHLIGHT" .. note .. " \xC2\xB7 X del \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+        return "HIGHLIGHT" .. note .. (short and keys
+            or " \xC2\xB7 X del \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close")
     end
     local ext = ""
     local hs = self.sentences[self.sel_sent]
@@ -1207,14 +1213,10 @@ function SelectorOverlay:_status_text()
     return (many and "SENTENCES" or "SENTENCE") .. ext .. keys
 end
 
-function SelectorOverlay:_draw_status(bb, ox, oy)
-    local txt = self:_status_text()
-
-    local sw      = Screen:getWidth()
-    local TOP_PAD = 18
-    local BOT_PAD = 7
-    local LINE_GAP = 4
-
+-- The segments of a status line: the mode word bold italic, a lone capital
+-- letter (a button) bold lowercase. Returns the TextWidgets, their total
+-- width and the tallest height; the caller paints and frees them.
+local function build_status(txt)
     local mode_txt = (txt or ""):match("^(%S+)") or ""
     local rest_txt = (txt or ""):match("^%S+(.*)") or ""
     local segs = { {t=mode_txt, bold=true, italic=true} }
@@ -1244,19 +1246,57 @@ function SelectorOverlay:_draw_status(bb, ox, oy)
         total_w = total_w + sz.w
         if sz.h > total_h then total_h = sz.h end
     end
+    return widgets, total_w, total_h
+end
 
-    local bar_h  = TOP_PAD + total_h + LINE_GAP + 2 + BOT_PAD
-    bb:paintRect(ox, oy, sw, bar_h, Blitbuffer.COLOR_WHITE)
+local function free_status(widgets)
+    for _, entry in ipairs(widgets) do entry.tw:free() end
+end
 
+-- Height of the reader's footer (0 when it is hidden or unknown): the free
+-- strip below the text ends at its top. Overlap mode (reclaim_height) is
+-- covered too, the bar never goes onto the footer either.
+function SelectorOverlay:_footer_height()
+    local view = self.ui and self.ui.view
+    local footer = view and view.footer
+    if not (view and view.footer_visible and footer and footer.getHeight) then return 0 end
+    local ok, h = pcall(footer.getHeight, footer)
+    return (ok and tonumber(h)) or 0
+end
+
+-- The status bar never covers the book text (statusbar.lua): it measures the
+-- free strips above the first and below the last line of the page and goes
+-- where it fits, shortened when it has to, drawn not at all when no strip
+-- holds a line of text.
+function SelectorOverlay:_draw_status(bb, ox, oy)
+    local sw = Screen:getWidth()
+    local widgets, total_w, total_h = build_status(self:_status_text(false))
+    local ext = StatusBar.extent(self.words, Screen:getHeight(), self:_footer_height())
+    local lay = StatusBar.layout(ext, total_h)
+    if lay.kind == "none" then
+        free_status(widgets)
+        return
+    end
+    if lay.short then
+        free_status(widgets)
+        widgets, total_w, total_h = build_status(self:_status_text(true))
+    end
+
+    local y = oy + lay.y
+    bb:paintRect(ox, y, sw, lay.h, Blitbuffer.COLOR_WHITE)
+
+    local text_y = lay.rule and (y + StatusBar.PAD_TOP) or (y + math.floor((lay.h - total_h) / 2))
     local line_x = ox + math.floor((sw - total_w) / 2)
     local cx     = line_x
     for _, entry in ipairs(widgets) do
-        entry.tw:paintTo(bb, cx, oy + TOP_PAD)
+        entry.tw:paintTo(bb, cx, text_y)
         cx = cx + entry.w
         entry.tw:free()
     end
 
-    bb:paintRect(line_x, oy + TOP_PAD + total_h + LINE_GAP, total_w, 2, Blitbuffer.COLOR_BLACK)
+    if lay.rule then
+        bb:paintRect(line_x, text_y + total_h + StatusBar.PAD_GAP, total_w, StatusBar.RULE, Blitbuffer.COLOR_BLACK)
+    end
 end
 
 ----------------------------------------------------------------------

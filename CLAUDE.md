@@ -18,7 +18,7 @@ directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, lines from word boxes, the pointer's two
-steps); plain `assert`, KOReader stubbed.
+steps); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`, KOReader stubbed.
 
 ## Runtime requirements
 
@@ -386,7 +386,7 @@ in both directions (`_turn_page` + `_ww_land` / `_sent_land` / `_para_land`,
 TASK-18); a sentence running over the edge is skipped on the other side, so it
 counts once. A range never leaves its page. Use `_adjacent_word`, never
 `dir > 0 and next() or prev()`: a nil next word falls through to the previous
-one. Status line (`_status_text`): level + buttons, no counters.
+one. Status line (`_status_text(short)`): level + buttons, no counters. It never covers the page text (`statusbar.lua`, pure, `tests/statusbar_test.lua`; chosen in /ux, 2026-11-03): `_draw_status` measures the free strips above the first and below the last line (`StatusBar.extent` over the `sbox` of `self.words`, down to the top of the reader's footer via `_footer_height`) and `StatusBar.layout` puts the compact bar (text + rule) in the top strip, else the bottom one, else a shortened one (`_status_text(true)`: mode + A / B, no rule) in the larger strip when it holds a line of text, else nothing is drawn. The same rule in a PDF (its word boxes are screen coordinates too).
 
 Actions on the current selection (`_get_selection`): `_do_dict`, `_do_ai`,
 `_do_vortuyo`, `_do_highlight`/`_do_toggle_highlight`, `_do_copy`, `_do_note`.
