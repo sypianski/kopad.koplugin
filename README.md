@@ -14,11 +14,11 @@
 > [KoTheme](https://github.com/sypianski/kotheme.koplugin), rounded corners and thinner borders;
 > and others.
 
-A [KOReader](https://github.com/koreader/koreader) plugin that turns a connected **gamepad** into a reading controller — page-turning, menu navigation, and a crosshair cursor that snaps to nearest words for highlight / dictionary / AI lookup.
+A [KOReader](https://github.com/koreader/koreader) plugin that turns a connected **gamepad** into a reading controller — page-turning, menu navigation, and selecting words or sentences for highlight / dictionary / AI lookup.
 
 > *Kopad* — KO(Reader) + (game)pad.
 
-E-readers and reading-mode laptops often sit far from your hands. A gamepad is more relaxed than a keyboard, easier to use one-handed in a recliner or in bed. *Kopad* maps the standard SDL3 gamepad layout to reading actions and adds a structured word/sentence selector you can drive entirely with the right stick + face buttons.
+E-readers and reading-mode laptops often sit far from your hands. A gamepad is more relaxed than a keyboard, easier to use one-handed in a recliner or in bed. *Kopad* maps the standard SDL3 gamepad layout to reading actions and adds a word/sentence selector you can drive entirely with the D-pad and the face buttons.
 
 ## Install
 
@@ -54,15 +54,14 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **RB** / **LB** | next / previous page (**X** + RB = bookmarks, **X** + LB = table of contents) |
 | **Select** | top menu |
 | **Start** | bottom menu (font, margins, contrast); **Start** again closes it |
-| **D-pad** | open word walk |
-| **R-stick** | open crosshair |
-| **L-stick** | ↑/← page turn, ↓ crosshair, → word walk |
-| **A** | sentence selector |
-| **Y** | highlight mode (crosshair if the page has none) |
-| **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
+| **A** | select sentences, starting at the first sentence of the page |
+| **D-pad** | select words: ↓ / → start at the first word of the page, ↑ / ← at the last one |
+| **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
+| **L-stick** / **R-stick** | nothing |
+| hold **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 | **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
 
-A pending **X** is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
+**X** is a modifier you hold: the combos work while it is down and stop when you let go. On older patched builds (no button releases) and when a trigger is mapped to X, it is a latch instead: press X, then one combo. It is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
 
 ### Menus versus reading
 
@@ -99,19 +98,29 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | **RB** / **LB**, **RT** / **LT** | next / previous page of the list |
 | **Select** | top menu |
 
-### Selection mode (sentence / word walk / crosshair)
+### Selection mode (sentences and words)
 
-| Button | Action |
-|---|---|
-| **L-stick** | ←/→ sentence, ↑/↓ paragraph |
-| **D-pad** / **R-stick** | word navigation (R-stick ↑/↓ cycles page highlights) |
-| **A** | action menu (dictionary, AI, copy, note) |
-| **Y** | Vortuyo lookup |
-| **X** | toggle highlight |
-| **RB** / **LB** | extend selection right / left (again = quick extend) |
-| **B** | exit extend mode / close selection |
-| **RT** / **LT** | close selection and turn page |
-| **Select** / **Start** | close selection and open top / bottom menu |
+The selection has two levels: sentences (opened with **A**) and words (opened with the **D-pad**). The arrows do the same on both, one step bigger on the sentence level.
+
+| Button | Words | Sentences |
+|---|---|---|
+| **D-pad** / **L-stick** ←/→ | previous / next word | previous / next sentence |
+| **D-pad** / **L-stick** ↑/↓ | line above / below | start of this or the previous paragraph / next paragraph |
+| hold **A** + arrows | select a range from the word where you pressed A, in both directions (going back past it shrinks the range, then grows it on the other side) | the same with sentences |
+| tap **A** | action menu (dictionary, AI, copy, note), when you let go | same |
+| **R-stick** ↓ | — | go to the first word of this sentence (word level) |
+| **R-stick** ↑ | go to the sentence containing this word | — |
+| **Y** | Vortuyo lookup | same |
+| **X** | toggle highlight | same |
+| **B** | close the selection | same |
+| **RB** / **LB**, **RT** / **LT** | close the selection and turn the page | same |
+| **Select** / **Start** | close the selection and open the top / bottom menu | same |
+
+The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the first word of the next one. A sentence that runs over the edge counts once. A range (A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second). The status line at the top shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters.
+
+While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
+
+On older patched builds there are no button releases, so **A** opens the action menu at once and **RB** / **LB** grow / shrink the selection at its moving end instead of turning the page.
 
 In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to explain the selection (when the popup was opened from kopad's selection) and **B** closes the popup. Everything else reaches the popup as stock keys; the triggers do nothing there.
 
@@ -121,7 +130,8 @@ On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and
 
 - **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
-- **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. The D-pad is passed through to the original Up/Down/Left/Right keys.
+- **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. In an EPUB kopad handles the D-pad itself (so that a held D-pad can repeat); elsewhere it is passed through to the original Up/Down/Left/Right keys.
+- Button releases (`GamepadButtonUp`) end holding **A** (range, or a tap for the menu), holding **X** and a D-pad repeat. They are remapped like the presses.
 - With kopad disabled nothing is intercepted. With a menu, list, dialog or the dictionary popup on top, only the additions listed under *Menus versus reading* are intercepted; everything else behaves as stock.
 
 On **older patched builds** there are no such events; buttons arrive as key names (`LPgBack`/`LPgFwd` for LT/RT, F-keys for the R-stick and X). Select and Start are then bound to **F12** / **F2**: add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad. The back paddles **L4** / **R4** (`ScrollLock` / `Pause`) are aliases of **LB** / **RB** on these patched builds only; on KOReader 2026.07+ they are not handled (SDL paddle ids have no stock mapping and Steam Input usually does not expose them).
@@ -163,13 +173,13 @@ Button names in this README are Xbox-style **roles** (A = bottom face button, et
 
 Keys are physical controls by position — `south east west north back start lshoulder rshoulder ltrigger rtrigger` — and values are roles — `a b x y select start lb rb lt rt`. A button may take a trigger role and vice versa. Controls not listed keep the layout's default. Anything malformed (other `version`, unknown names, wrong types) is skipped with a log warning; with no data kopad behaves exactly as without remapping. The D-pad, sticks, Guide/L3/R3 and the older patched-build key path are not remappable, and when kopad passes an event through to KOReader (kopad off, a dialog on top), KOReader sees the physical button. The pure logic is `padmap.lua`, tested by `lua tests/padmap_test.lua`.
 
-**Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup`; display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `config_menu` (until kopad TASK-13: `footer_menu`; the footer mode toggle stays on **X** + D-pad ↓); B has no default action id; it goes back to the previous location, like `back_location`. Roles not listed keep their default.
+**Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup` (`crosshair` is kept for older koligilo data and now opens the word level, like `word_walk`); display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `config_menu` (until kopad TASK-13: `footer_menu`; the footer mode toggle stays on **X** + D-pad ↓); B has no default action id; it goes back to the previous location, like `back_location`. Roles not listed keep their default.
 
-An override applies only in the idle reading context: the book itself is on top (no menu, list, dialog, dictionary popup or selection) and no X combo is pending. Everywhere else the role keeps what it does today (RB still extends a selection and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
+An override applies only in the idle reading context: the book itself is on top (no menu, list, dialog, dictionary popup or selection) and no X combo is pending. Everywhere else the role keeps what it does today (RB still closes a selection and turns the page, and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
 
 ### Scope
 
-The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys are suppressed and selector-dependent handlers pass through.
+The selector (words / sentences / highlights) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys are suppressed and selector-dependent handlers pass through.
 
 Paged documents get their own view controls instead (stock KOReader 2026.07+ `Gamepad*` path). Only the bumpers and the triggers change the page, always by a whole page, so nothing else turns pages by surprise:
 
@@ -191,7 +201,7 @@ X + D-pad still opens the menus, and role overrides from koligilo still win over
 
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
-- **selector.lua** — crosshair widget + word-snap logic. Pulls visible word positions from the bundled `paginmapo.lua` (Ido for "page-map") and finds the nearest by Euclidean distance.
+- **selector.lua** — the selection overlay: sentence, word and highlight modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map").
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
@@ -223,11 +233,14 @@ Targets stock KOReader 2026.07+ (the `Gamepad*` event interface was taken from t
 
 ### Tests
 
-The only automated test covers the pure remapping layer (`padmap.lua`):
+Two automated tests: the remapping layer (`padmap.lua`) with the pad wiring in `padnav.lua`, and the selection overlay (`selector.lua`):
 
 ```bash
 lua tests/padmap_test.lua
+lua tests/selector_test.lua
 ```
+
+`selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and line moves, page crossing, ranges, level switches and highlights.
 
 ## How this was made
 

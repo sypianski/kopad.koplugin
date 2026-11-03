@@ -5,14 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `kopad` is a **KOReader plugin** (pure Lua, AGPL-3.0) that turns a connected SDL3
-gamepad into a reading controller: page-turning, menu navigation, and a
-crosshair cursor that snaps to nearest words for highlight / dictionary / AI
-lookup. Name = KO(Reader) + (game)pad.
+gamepad into a reading controller: page-turning, menu navigation, and selecting
+words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
+(game)pad.
 
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
-only automated test covers the pure remapping layer: `lua tests/padmap_test.lua`
-(plain `assert`, KOReader stubbed; also checks the padnav wiring).
+automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
+padnav wiring) and `lua tests/selector_test.lua` (selector.lua on a fake
+three-page document: moves, page crossing, ranges, levels, highlights); plain
+`assert`, KOReader stubbed.
 
 ## Runtime requirements
 
@@ -105,10 +107,34 @@ Every `on<Key>` handler first checks `_is_enabled()` (true only in the
 `PAD_CONTEXTS`: reading, paged, selection, filemanager — so the legacy key path
 stands down in menus too). Handlers
 branch on whether `selector.overlay` exists and which `mode` it's in, then
-delegate to overlay methods. Reading-mode-only state: `_x_mode` (X button acts
-as a modifier for D-pad/shoulder combos: menu / footer / history / files / TOC /
-bookmarks; only in a document, dropped by `_drop_x_mode` whenever the pad is
-used in any other context). RTL languages flip horizontal directions via `_is_rtl()`.
+delegate to overlay methods (`step` / `line` for the arrows, `to_words` /
+`to_sentences` for the R-stick, `action_menu`). Reading-mode-only state:
+`_x_mode` (X button acts as a modifier for D-pad/shoulder combos: menu / footer
+/ history / files / TOC / bookmarks; only in a document, dropped by
+`_drop_x_mode` whenever the pad is used in any other context). RTL languages
+flip horizontal directions via `_is_rtl()` (in `_sel_move`, once).
+
+**Holds (TASK-16, Gamepad* path only).** `onGamepadButtonUp` (relayed by
+main.lua, remapped through padmap like the press) ends three holds:
+- **A**: `_press_a` sets `_a_down`; while it is set `_sel_move` passes
+  `range = true` (the overlay keeps an anchor) and marks `_a_moved`.
+  `_release_a` opens the action menu only for a tap (no arrow, and not the A
+  press that opened the selection: `_a_opened`). The legacy `Press` key goes
+  to `onKPConfirm` (menu on the press).
+- **X**: `_button_down` wraps `_button_dispatch`; a press that arms `_x_mode`
+  records its role in `_x_hold`, and its release clears the modifier.
+  `_x_combo` keeps the modifier armed while `_x_hold` is set. A trigger acting
+  as a button (`_trigger_as_button`, no release) and the legacy key path keep
+  the latch.
+- **D-pad**: in an EPUB (reading / selection) `_button_dispatch` calls the
+  `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
+  step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
+  other than `selection`, or `DPAD_REPEAT_MAX`. X combos are not repeated.
+
+In the selection LB / RB close it and turn the page (`_turn_page`, in
+`_button_dispatch`); `onKPPgBk` / `onKPPgFwd` with an overlay are reached only
+from the legacy key path, where they step the range (`step(±1, true)`).
+While reading, both sticks are consumed and do nothing (TASK-12 / TASK-15).
 
 ### `padmap.lua` — button remapping (pure, PC-011)
 No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
@@ -149,18 +175,32 @@ Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-g
 
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
-(`_open`, `_open_walk`, `_close`); `SelectorOverlay` is the painted widget with
-a single `self.mode` state machine:
+(`_open` = sentences, `_open_walk(from_end)` = words, `_open_highlights` =
+saved highlights or `false` when the page has none, `_close`; all share
+`_new_overlay`, which holds the pluginaro claim); `SelectorOverlay` is the
+painted widget with a single `self.mode` state machine (no crosshair any more:
+removed in TASK-15; the padmap id `crosshair` stays as an alias of
+`word_walk`):
 
-- **`cross`** — free crosshair driven by R-stick; snaps to nearest word by
-  Euclidean distance (`_nearest_word`). Entry mode.
-- **`struct`** — sentence/paragraph/word structured selection after confirming.
-  Navigates `self.sentences[]` (from `paginmapo`), tracks `sel_sent`/`sel_tail`/
-  `sel_word`, cycles page highlights (`hl_items`/`hl_cur`), supports
-  extend/trim (`enter_extend`, `quick_extend_*`, `extend_dpad`).
-- **`walk`** — linear word-by-word walk across the whole page (`_ww_move`,
-  `_ww_line`), including split-word fragment handling for hyphenated/wrapped
-  words (`_is_split_word`, `_resolve_split_fragment`).
+- **`struct`** — sentences (`self.sentences[]` from `paginmapo`). Cursor
+  `sel_cur`, optional `sel_anchor`; `_set_sent` derives the selected span
+  `sel_sent`..`sel_tail`. ←/→ `_sent_step`, ↑/↓ `_para_step` (↓ next paragraph,
+  ↑ start of this one or the previous one).
+- **`walk`** — words (`ww_word`, optional `ww_anchor`; `_ww_span` orders them
+  with `compareXPointers`, 1 = first argument earlier). ←/→ `_ww_step`, ↑/↓
+  `_ww_line`, with split-word fragment handling for hyphenated/wrapped words
+  (`_is_split_word`, `_resolve_split_fragment`).
+- **`hl`** — the page's saved highlights (`hl_items` / `hl_cur`, opened by Y);
+  every arrow steps between them (`_hl_step`, wrapping).
+
+Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
+document order, already RTL-flipped), `to_words()` / `to_sentences()` (the two
+levels, TASK-17), `action_menu()`. Without a range the moves cross the page edge
+in both directions (`_turn_page` + `_ww_land` / `_sent_land` / `_para_land`,
+TASK-18); a sentence running over the edge is skipped on the other side, so it
+counts once. A range never leaves its page. Use `_adjacent_word`, never
+`dir > 0 and next() or prev()`: a nil next word falls through to the previous
+one. Status line (`_status_text`): level + buttons, no counters.
 
 Actions on the current selection (`_get_selection`): `_do_dict`, `_do_ai`,
 `_do_vortuyo`, `_do_highlight`/`_do_toggle_highlight`, `_do_copy`, `_do_note`.
@@ -299,7 +339,9 @@ Two input paths end in the same `on<Key>` handlers:
   handler returns `true` the stock default key press is suppressed.
   `PadNav:onGamepadButtonDown` / `onGamepadAxisMotion` map SDL ids (A0 B1 X2 Y3
   Select4 Guide5 Start6 L3=7 R3=8 LB9 RB10 D-pad11-14; axes LX0 LY1 RX2 RY3
-  LT4 RT5) onto the handlers. **`main.lua` must relay these two events to
+  LT4 RT5) onto the handlers. `GamepadButtonUp {button}` is broadcast too (no
+  stock key follows; `PadNav:onGamepadButtonUp`, see Holds above). **`main.lua`
+  must relay these three events to
   `subs.nav`**: the broadcast reaches the window widgets and their children (the
   kopad plugin widget) but not `ui.active_widgets`, where PadNav lives. Triggers
   are de-bounced (stock auto-repeats held axes and never reports release; own

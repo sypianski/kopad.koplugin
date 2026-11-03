@@ -140,7 +140,7 @@ do
         local o = setmetatable({ enabled_ref = { enabled = true }, ui = { document = {} } }, { __index = PadNav })
         o._is_enabled = function() return true end
         o._top_menu = function() return nil end
-        for _, m in ipairs({ "onKPConfirm", "onKPBack", "onKPExtend", "onKPMenu",
+        for _, m in ipairs({ "_press_a", "onKPBack", "onKPExtend", "onKPMenu",
                              "onKPSelect", "onKPStart", "onKPPgBk", "onKPPgFwd",
                              "onKPPgBk2", "onKPPgFwd2" }) do
             o[m] = function() calls[#calls + 1] = m; return true end
@@ -149,20 +149,20 @@ do
         return o, calls
     end
 
-    -- identity (no padmap): physical A -> onKPConfirm, D-pad passes through
+    -- identity (no padmap): physical A -> _press_a (hold control), D-pad passes through
     local n, c = nav(nil)
-    assert(n:onGamepadButtonDown({ button = 0 }) == true and c[1] == "onKPConfirm")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and c[1] == "_press_a")
     assert(n:onGamepadButtonDown({ button = 11 }) == false, "D-pad passthrough")
     assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and c[2] == "onKPPgFwd2")
 
-    -- nintendo: physical east (1) -> role A -> onKPConfirm
+    -- nintendo: physical east (1) -> role A -> _press_a
     n, c = nav(P.build(nil, "nintendo"))
-    n:onGamepadButtonDown({ button = 1 }); assert(c[1] == "onKPConfirm", c[1])
+    n:onGamepadButtonDown({ button = 1 }); assert(c[1] == "_press_a", c[1])
     n:onGamepadButtonDown({ button = 0 }); assert(c[2] == "onKPBack", c[2])
 
     -- trigger -> button and button -> trigger
     n, c = nav(P.build({ version = 1, layouts = { xbox = { rtrigger = "a", rshoulder = "lt" } } }, "xbox"))
-    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and c[1] == "onKPConfirm")
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and c[1] == "_press_a")
     assert(n:onGamepadButtonDown({ button = 10 }) == true and c[2] == "onKPPgBk2")
     -- kopad switched off: remapped trigger passes through
     n.enabled_ref.enabled = false
@@ -342,7 +342,7 @@ do
         o._selector = function() return selector end
         o._open_sentence_select = function(_, i) log.calls[#log.calls + 1] = "sentence_select:" .. tostring(i) end
         o._open_highlights = function() log.calls[#log.calls + 1] = "highlights" end
-        for _, m in ipairs({ "onKPConfirm", "onKPBack", "onKPExtend", "onKPMenu",
+        for _, m in ipairs({ "_press_a", "onKPBack", "onKPExtend", "onKPMenu",
                              "onKPSelect", "onKPStart", "onKPPgBk", "onKPPgFwd",
                              "onKPPgBk2", "onKPPgFwd2" }) do
             o[m] = function() log.calls[#log.calls + 1] = m; return true end
@@ -425,10 +425,11 @@ do
     -- selector openers
     local sel = {}
     n, log = nav(acts({ b = "sentence_select", x = "highlights", lb = "word_walk", rb = "crosshair" }), { selector = sel })
-    n:onGamepadButtonDown({ button = 1 }); assert(log.calls[1] == "sentence_select:1")
+    n:onGamepadButtonDown({ button = 1 }); assert(log.calls[1] == "sentence_select:nil")
     n:onGamepadButtonDown({ button = 2 }); assert(log.calls[2] == "highlights")
     n:onGamepadButtonDown({ button = 9 }); assert(log.selector[1] == "_open_walk:false")
-    n:onGamepadButtonDown({ button = 10 }); assert(log.selector[2] == "_open")
+    -- the crosshair is gone (TASK-15): the id opens the word level
+    n:onGamepadButtonDown({ button = 10 }); assert(log.selector[2] == "_open_walk:false")
     -- ...without a selector (PDF): the press is swallowed, nothing runs, no error
     n, log = nav(acts({ rb = "crosshair", b = "highlights" }))
     assert(n:onGamepadButtonDown({ button = 10 }) == true and #log.calls == 0 and #log.events == 0)
@@ -443,7 +444,7 @@ do
     n, log = nav(acts({ rb = "top_menu", a = "none" }), { overlay = true, selector = {} })
     assert(n:onGamepadButtonDown({ button = 10 }) == true and log.calls[1] == "onKPPgFwd" and #log.events == 0,
         "overlay: RB keeps its built-in")
-    n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "onKPConfirm", "overlay: A keeps its built-in")
+    n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "_press_a", "overlay: A keeps its built-in")
     -- ...and the FileManager keeps the STOCK list navigation (TASK-9): no
     -- override, no handler, the stock key goes to the list
     n, log = nav(acts({ rb = "top_menu", a = "none" }), { doc = false })

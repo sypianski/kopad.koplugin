@@ -9,12 +9,11 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     RT / LT                  Next / previous page (always)
     RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
     Select / Start           Top menu / bottom menu
-    D-pad                    Open word walk
-    R-stick                  Open crosshair
-    L-stick ↑/←              Page turn; ↓ crosshair selector; → word walk
-    A                        Sentence selector
-    Y                        Highlight mode
-    X + D-pad                Combo: ↑menu ↓footer ←history →files
+    A                        Select sentences
+    D-pad                    Select words
+    Y                        The page's highlights (none = a message)
+    L-stick / R-stick        Nothing
+    X held + D-pad           Combo: ↑menu ↓footer ←history →files
 
   Menus versus reading (KOReader >= 2026.07, PadNav:_context): the reading
   and selection controls apply only while the book (or kopad's selection) is
@@ -24,16 +23,17 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Lists / dialogs          RT / LT list page (TOC, bookmarks, history, ...)
     File browser             LB / RB, LT / RT list page, Select top menu
 
-  Selection (struct/walk/cross):
-    L-stick ←/→              Sentence move    ↑/↓  Paragraph jump
-    D-pad / R-stick          Word navigation (R-stick ↑/↓ cycles highlights)
+  Selection (sentences / words; highlights after Y):
+    D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,
+                             across page edges; held D-pad repeats
+    A held + arrows          Range from where A was pressed
+    A tapped                 Action menu (dict, AI, copy, note)
+    R-stick ↓ / ↑            Sentence -> its first word / word -> its sentence
     Y                        Vortuyo lookup
     X                        Toggle highlight
-    A                        Action menu (dict, AI, copy, note)
-    B                        Exit extend / close overlay
-    RB / LB                  Extend selection right / left
-    RT / LT                  Close overlay and turn page
-    Select / Start           Close overlay and open top / bottom menu
+    B                        Close
+    RB / LB, RT / LT         Close and turn the page
+    Select / Start           Close and open top / bottom menu
 
   Dictionary popup:
     LB / RB                  Cycle dictionaries (the popup's own keys)
@@ -42,8 +42,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
 
 Input paths:
   KOReader >= 2026.07 (stock, no patch): the device broadcasts
-  GamepadButtonDown / GamepadAxisMotion events; kopad:onGamepadButtonDown /
-  :onGamepadAxisMotion below relay them to PadNav (see padnav.lua header for
+  GamepadButtonDown / GamepadButtonUp / GamepadAxisMotion events;
+  kopad:onGamepadButtonDown / :onGamepadButtonUp / :onGamepadAxisMotion below
+  relay them to PadNav (see padnav.lua header for
   the SDL button/axis ids). LT/RT/Select/Start work without any patch.
 
   Button remapping (KOReader >= 2026.07 path only, padmap.lua / PC-011):
@@ -386,6 +387,19 @@ function kopad:onGamepadButtonDown(ev)
         Trace.end_event()
     end
     return res
+end
+
+-- The release (TASK-16): ends the A hold, the X hold and a D-pad repeat.
+function kopad:onGamepadButtonUp(ev)
+    local nav = self.subs and self.subs.nav
+    if not nav then return false end
+    if Trace.active() then
+        Trace.begin_event(nil)
+        Trace.log("relay btn up: button=%s", tostring(type(ev) == "table" and ev.button))
+    end
+    nav:onGamepadButtonUp(ev)
+    if Trace.active() then Trace.end_event() end
+    return false
 end
 
 function kopad:onGamepadAxisMotion(ax)

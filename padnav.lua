@@ -15,15 +15,18 @@ Reading:
                          margins, contrast, ...: ShowConfigMenu)
   B                      Back to the previous location (TOC entry, link, ...);
                          never KOReader's "Exit KOReader?" (Gamepad* path)
-  D-pad                  Open word walk
-  L-stick ↑/←            Page turn (↑/← = next page, legacy)
-  L-stick ↓              Open crosshair   L-stick → Open word walk
-  R-stick                Open crosshair (immediate)
-  A                      Open sentence selector
-  Y                      Open highlight mode (crosshair if none)
-  X                      Modifier: X + D-pad = ↑menu ↓footer ←history →files
-                         (documents only; a pending X is dropped as soon as
-                         the pad is used anywhere but plain reading)
+  A                      Select sentences (from the first one of the page)
+  D-pad                  Select words: ↓/→ from the first word of the page,
+                         ↑/← from the last one
+  Y                      The page's saved highlights (D-pad steps between
+                         them); none on the page = a message
+  L-stick / R-stick      Nothing (consumed; TASK-12 / TASK-15)
+  X (held)               Modifier: X + D-pad = ↑menu ↓footer ←history →files,
+                         X + LB / RB = TOC / bookmarks. Gamepad* path: only
+                         while X is held (TASK-16); legacy key path and a
+                         trigger acting as X: a latch, spent by one combo.
+                         Documents only; dropped as soon as the pad is used
+                         anywhere but plain reading.
 
 Context (PadNav:_context; Gamepad* path = KOReader >= 2026.07): what the pad
 drives depends on the topmost non-toast window of the UIManager stack. The
@@ -73,17 +76,30 @@ FileManager (nothing on top of the file list):
   RT / LT                Next / previous list page (file_chooser)
   Select                 Top menu
 
-Selection (struct/walk/cross overlay):
-  L-stick ←/→            Sentence move    ↑/↓  Paragraph jump
-  D-pad / R-stick        Word navigation (R-stick ↑/↓ cycles highlights in struct)
+Selection (kopad's overlay; two levels, sentences "struct" and words "walk",
+plus the saved highlights "hl" opened by Y):
+  D-pad / L-stick ←/→    Words: word          Sentences: sentence
+  D-pad / L-stick ↑/↓    Words: line          Sentences: paragraph
+                         Highlights: previous / next one (all four)
+                         Past the page edge: the next / previous page, both
+                         directions (TASK-18). Held D-pad repeats (TASK-16).
+  A held + arrows        Range from where A was pressed, both directions
+                         (moving back over the anchor shrinks it); never
+                         leaves the page (Gamepad* path, TASK-16)
+  A tapped               Action menu (dict, AI, copy, note) -- on the release;
+                         the A press that opened the selection does not
+                         count. Legacy key path: on the press.
+  R-stick ↓              Sentence -> its first word (walk)    (TASK-17)
+  R-stick ↑              Word -> the sentence containing it (struct)
+  R-stick ←/→            Nothing
   Y                      Vortuyo lookup
-  X                      Toggle highlight
-  A                      Action menu (dict, AI, copy, note)
-  B                      Exit extend mode / close overlay
-  RB                     Extend selection right (quick extend when active)
-  LB                     Extend selection left (quick extend when active)
-  RT / LT                Close overlay and turn page
-  Select / Start         Close overlay and open top / bottom menu
+  X                      Toggle highlight (highlights: remove; the last one
+                         removed closes the overlay)
+  B                      Close
+  RB / LB, RT / LT       Close and turn the page. Legacy key path: RB / LB
+                         grow / shrink the range at its moving end instead
+                         (no button release there, so no A hold)
+  Select / Start         Close and open top / bottom menu
 
 Dictionary popup:
   LB / RB                Cycle dictionaries (the popup's own RPgBack/RPgFwd)
@@ -96,7 +112,7 @@ Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   RB / LB               Extend / trim selection (as Shift+→ / Shift+←)
   B                     Close visel
 
-Scope: the selector (word walk / struct / crosshair) only exists for
+Scope: the selector (words / sentences / highlights) only exists for
 crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys
 are suppressed and the selector-dependent handlers return false
 (pass-through); paged documents get their own view controls instead
@@ -121,10 +137,15 @@ Input paths (two, both end in the same on<Key> handlers):
    main.lua relays the broadcast here (PadNav lives in ui.active_widgets,
    which UIManager:broadcastEvent does not visit).
      Buttons (SDL ids): A=0 B=1 X=2 Y=3 Select=4 Start=6 LB=9 RB=10;
-       D-pad 11..14 is passed through (stock sends Up/Down/Left/Right ->
-       KPUp2.. bindings). Guide=5, L3=7, R3=8 are swallowed while kopad is
-       active: stock maps them to RPgFwd / Menu / Menu, i.e. accidental page
-       turns or menus from a stick click.
+       D-pad 11..14: in an EPUB (reading / selection) kopad calls the KPUp2..
+       handlers itself and repeats a held D-pad (stock buttons do not
+       auto-repeat; DPAD_REPEAT_*); elsewhere it is passed through (stock
+       sends Up/Down/Left/Right). Guide=5, L3=7, R3=8 are swallowed while
+       kopad is active: stock maps them to RPgFwd / Menu / Menu, i.e.
+       accidental page turns or menus from a stick click.
+     Releases: GamepadButtonUp {button} is broadcast too (no stock key
+       follows it); onGamepadButtonUp remaps it like the press and ends the
+       A hold (range / tap = menu), the X hold and a D-pad repeat (TASK-16).
      Triggers: axis 4 = LT, axis 5 = RT. Stock has no mapping for them. One
        press = one page (in the top menu: one menu page): the stock
        auto-repeat (first repeat after 0.5 s, then every 0.2 s while held) is
@@ -140,8 +161,10 @@ Input paths (two, both end in the same on<Key> handlers):
        navigation). Stock maps R-stick Y to RPgBack/RPgFwd, which with the
        auto-repeat flips pages endlessly, so while kopad drives reading or a
        selection axes 2/3 are always consumed (axis 2 has no stock mapping);
-       in menus, dialogs, the dictionary popup and the FileManager both
-       sticks are stock.
+       in an EPUB without a selection the L-stick is consumed as well (it
+       does nothing there). In the selection both sticks drop release bounces
+       (MENU_STICK_LOCK_S). In menus, dialogs, the dictionary popup and the
+       FileManager both sticks are stock.
 
    Remapping (padmap.lua, PC-011): onGamepadButtonDown / onGamepadAxisMotion
      first translate the PHYSICAL control into its logical ROLE (the ids
@@ -203,13 +226,13 @@ local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 local BTN_A, BTN_B, BTN_X, BTN_Y = 0, 1, 2, 3
 local BTN_SELECT, BTN_GUIDE, BTN_START = 4, 5, 6
 local BTN_L3, BTN_R3, BTN_LB, BTN_RB = 7, 8, 9, 10
-local BTN_DPAD_LEFT, BTN_DPAD_RIGHT = 13, 14
+local BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT = 11, 12, 13, 14
 local AXIS_LX, AXIS_LY, AXIS_RX, AXIS_RY = 0, 1, 2, 3
 local AXIS_LT, AXIS_RT = 4, 5
 
 -- button id -> on<Key> handler (return value true = consumed).
 local BUTTON_HANDLERS = {
-    [BTN_A]      = "onKPConfirm",
+    [BTN_A]      = "_press_a", -- a hold control (TASK-16); legacy Press = onKPConfirm
     [BTN_B]      = "onKPBack",
     [BTN_X]      = "onKPExtend",
     [BTN_Y]      = "onKPMenu",
@@ -233,6 +256,19 @@ local BUTTON_SWALLOW = {
 local PAD_CONTEXTS = {
     reading = true, paged = true, selection = true, filemanager = true,
 }
+
+-- D-pad on the Gamepad* path in an EPUB (see _button_down): handler per
+-- button, and the repeat of a held D-pad in the selection (stock buttons do
+-- not auto-repeat): first step after DPAD_REPEAT_DELAY_S, then every
+-- DPAD_REPEAT_EVERY_S until the release, a context change or
+-- DPAD_REPEAT_MAX steps (a lost release must not run forever).
+local DPAD_HANDLERS = {
+    [BTN_DPAD_UP] = "onKPUp2", [BTN_DPAD_DOWN] = "onKPDown2",
+    [BTN_DPAD_LEFT] = "onKPLeft2", [BTN_DPAD_RIGHT] = "onKPRight2",
+}
+local DPAD_REPEAT_DELAY_S = 0.45
+local DPAD_REPEAT_EVERY_S = 0.15
+local DPAD_REPEAT_MAX     = 200
 
 -- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
 -- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
@@ -266,7 +302,8 @@ local ZOOM_STEP = 1.03
 local STICK_LOCK_S = 0.6
 -- The same filter in menus, lists, the dictionary popup and the FileManager,
 -- where the sticks otherwise stay stock: there a bounce would move the focus
--- back by one item or off the tab bar. Shorter, so that a quick deliberate
+-- back by one item or off the tab bar. Also in kopad's selection, where it
+-- would undo a step or switch the level back. Shorter, so that a quick deliberate
 -- reversal still works (bounces seen at 8-110 ms).
 local MENU_STICK_LOCK_S = 0.2
 
@@ -476,148 +513,58 @@ function PadNav:_is_rtl()
 end
 
 
-function PadNav:_lstick_dir(dx, dy)
+-- Arrows in the selection overlay (D-pad, L-stick): dx / dy are screen
+-- directions, dx flipped for RTL here; the overlay moves word / sentence /
+-- highlight (step) or line / paragraph (line). While A is held (Gamepad*
+-- path, TASK-16) the move extends a range from the anchor.
+function PadNav:_sel_move(dx, dy)
+    local selector = self:_selector()
+    local ov = selector and selector.overlay
+    if not ov then return end
+    local range = self._a_down or false
+    if range then self._a_moved = true end
     if self:_is_rtl() then dx = -dx end
-    local selector = self:_selector()
-    if not selector then return end
-    if not selector.overlay then
-        self:_open_sentence_select(1)
-        return
-    end
-    local ov = selector.overlay
-    if ov.mode == "walk" then return end
-    if ov.mode ~= "struct" then
-        ov.mode = "struct"; ov.sel_sent = 1; ov.sel_tail = 1; ov.sel_word = nil
-        ov:_refresh(); return
-    end
-
-    ov.hl_cur = 0
-    if dy ~= 0 then
-        -- ↑↓: paragraph jump
-        local cur_para = ov.sentences[ov.sel_sent] and ov.sentences[ov.sel_sent].para
-        if dy > 0 then
-            for j = ov.sel_sent + 1, #ov.sentences do
-                if ov.sentences[j].para ~= cur_para then
-                    ov.sel_sent = j; ov.sel_tail = j; ov.sel_word = nil
-                    ov:_refresh(); return
-                end
-            end
-        else
-            local j = ov.sel_sent - 1
-            while j >= 1 and ov.sentences[j].para == cur_para do j = j - 1 end
-            if j >= 1 then
-                local prev_para = ov.sentences[j].para
-                while j > 1 and ov.sentences[j - 1].para == prev_para do j = j - 1 end
-                ov.sel_sent = j; ov.sel_tail = j; ov.sel_word = nil
-                ov:_refresh()
-            end
-        end
-    else
-        -- ←→: move sentence
-        local new = ov.sel_sent + dx
-        if new >= 1 and new <= #ov.sentences then
-            ov.sel_sent = new; ov.sel_tail = new; ov.sel_word = nil
-            ov:_refresh()
-        end
-    end
+    if dx ~= 0 then ov:step(dx, range) else ov:line(dy, range) end
 end
 
--- Walk mode L-stick = page turn. After the page reflows we must recollect the
--- overlay's words so it re-anchors to the new page; GotoViewRel changes the
--- visible page synchronously (same pattern _ww_move uses after its own off-page
--- page turn), so reload() right after is safe. Without it the overlay keeps
--- drawing/selecting the previous page's stale word.
-function PadNav:_walk_page(ov, dir)
-    self.ui:handleEvent(Event:new("GotoViewRel", dir))
-    ov:reload()
-end
-
-function PadNav:onKPUp()
+-- L-stick: in the selection the same as the D-pad. While reading it does
+-- nothing (TASK-12, TASK-15) but is consumed, so that the stock
+-- Up/Down/Left/Right key it would become cannot open a word walk. Without a
+-- selector (paged documents, FileManager) the key passes.
+function PadNav:_lstick(dx, dy)
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.mode == "walk" then
-            self:_walk_page(selector.overlay, 1); return true
-        end
-        if selector.overlay.mode == "cross" then
-            selector.overlay:_cross_move(0, -1); return true
-        end
-        self:_lstick_dir(0, -1); return true
-    end
-    self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
-end
-function PadNav:onKPDown()
-    if not self:_is_enabled() then return false end
-    local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.mode == "walk" then
-            self:_walk_page(selector.overlay, -1); return true
-        end
-        if selector.overlay.mode == "cross" then
-            selector.overlay:_cross_move(0, 1); return true
-        end
-        self:_lstick_dir(0, 1); return true
-    end
-    -- No selector (paged doc / FileManager): pass the key through instead of
-    -- consuming it as a no-op.
     if not selector then return false end
-    selector:_open()
+    if selector.overlay then self:_sel_move(dx, dy) end
     return true
 end
+
+function PadNav:onKPUp()   return self:_lstick(0, -1) end
+function PadNav:onKPDown() return self:_lstick(0, 1) end
 function PadNav:onKPLeft()
     if self:_visel_route("move", -1) then return true end
-    if not self:_is_enabled() then return false end
-    local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.mode == "walk" then
-            self:_walk_page(selector.overlay, 1); return true
-        end
-        if selector.overlay.mode == "cross" then
-            selector.overlay:_cross_move(-1, 0); return true
-        end
-        self:_lstick_dir(-1, 0); return true
-    end
-    self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
+    return self:_lstick(-1, 0)
 end
 function PadNav:onKPRight()
     if self:_visel_route("move", 1) then return true end
-    if not self:_is_enabled() then return false end
-    local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.mode == "walk" then
-            self:_walk_page(selector.overlay, -1); return true
-        end
-        if selector.overlay.mode == "cross" then
-            selector.overlay:_cross_move(1, 0); return true
-        end
-        self:_lstick_dir(1, 0); return true
-    end
-    if not self:_selector() then return false end
-    self:_rstick_dir(1, 0); return true
+    return self:_lstick(1, 0)
 end
 
--- D-pad: X-mode combos (reading) or word walk (overlay / normal)
+-- A combo of the X modifier. While X is held (Gamepad* path, _x_hold) it
+-- stays armed for the next combo; the latch (legacy key path, a trigger
+-- acting as X) is spent by one combo.
 function PadNav:_x_combo(action_fn)
-    self._x_mode = false
+    if not self._x_hold then self._x_mode = false end
     action_fn()
 end
 
+-- D-pad: arrows in the selection, else open the word level: ↓/→ on the first
+-- word of the page, ↑/← on the last one.
 function PadNav:_dpad(dx, dy)
     local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.extend_side then
-            if self:_is_rtl() then dx = -dx end
-            selector.overlay:extend_dpad(dx, dy); return
-        end
-        if selector.overlay.mode == "walk" then
-            self:_rstick_dir(dx, dy); return
-        end
-        if selector.overlay.mode == "struct" and not selector.overlay.sel_word then
-            self:_lstick_dir(dx, dy); return
-        end
-        self:_rstick_dir(dx, dy); return
+    if selector.overlay then
+        self:_sel_move(dx, dy); return
     end
-    if not selector then return end
     selector:_open_walk(dy < 0 or dx < 0)
 end
 
@@ -665,151 +612,42 @@ function PadNav:onKPRight2()
     self:_dpad(1, 0); return true
 end
 
--- Sentence selection: open overlay, navigate, extend/trim
-function PadNav:_open_sentence_select(start_idx)
+-- The sentence level, from the first sentence of the page (A while reading,
+-- the `sentence_select` action).
+function PadNav:_open_sentence_select()
     local selector = self:_selector()
-    if not selector then return end
-    if not selector.overlay then
-        selector:_open()
-        if not selector.overlay then return end
-        selector.overlay.mode = "struct"
-        selector.overlay.sel_sent = start_idx or 1
-        selector.overlay.sel_tail = selector.overlay.sel_sent
-        selector.overlay.sel_word = nil
-        selector.overlay:_refresh()
-    end
+    if selector and not selector.overlay then selector:_open() end
 end
 
--- R-stick: immediate crosshair — opens crosshair if needed, moves cursor in any mode
-function PadNav:_cross_dir(dx, dy)
-    if self:_is_rtl() then dx = -dx end
+-- R-stick: switches the selection level (TASK-17): ↓ sentence -> its first
+-- word, ↑ word -> the sentence containing it; ←/→ nothing. While reading it
+-- does nothing (TASK-15). Consumed whenever a selector exists.
+function PadNav:_rstick(dy)
+    if not self:_is_enabled() then return false end
     local selector = self:_selector()
-    if not selector then return end
-    if not selector.overlay then
-        selector:_open()
-        if not selector.overlay then return end
-    end
+    if not selector then return false end
     local ov = selector.overlay
-    if ov.extend_side then ov:exit_extend() end
-    if ov.mode == "cross" then
-        ov:_cross_move(dx, dy)
-    elseif ov.mode == "walk" then
-        if dx ~= 0 then ov:_ww_move(dx) end
-        if dy ~= 0 then ov:_ww_line(dy) end
-    elseif ov.mode == "struct" then
-        -- in struct: HL cycling (↑↓ no word) or word nav
-        if not ov.sel_word and #ov.hl_items > 0 and dy ~= 0 then
-            if dy > 0 then
-                ov.hl_cur = (ov.hl_cur < #ov.hl_items) and ov.hl_cur + 1 or 1
-            else
-                ov.hl_cur = (ov.hl_cur > 1) and ov.hl_cur - 1 or #ov.hl_items
-            end
-            ov:_refresh()
-        else
-            -- dx was already RTL-flipped at the top of _cross_dir; tell
-            -- _rstick_dir not to flip again (M1).
-            self:_rstick_dir(dx, dy, true)
-        end
+    if ov then
+        if dy > 0 then ov:to_words() elseif dy < 0 then ov:to_sentences() end
     end
+    return true
 end
 
--- D-pad word handling: walk mode (no overlay) or word-within-sentence (struct)
--- already_flipped: set by callers (e.g. _cross_dir) that have already applied
--- the RTL dx flip, so we don't flip a second time (M1: double-flip netting zero).
-function PadNav:_rstick_dir(dx, dy, already_flipped)
-    if not already_flipped and self:_is_rtl() then dx = -dx end
-    local selector = self:_selector()
-    if not selector then return end
-    if not selector.overlay then
-        selector:_open_walk()
-        if not selector.overlay then return end
-    end
-    local ov = selector.overlay
-    if ov.mode == "walk" then
-        if dx ~= 0 then ov:_ww_move(dx) end
-        if dy ~= 0 then ov:_ww_line(dy) end
-        return
-    end
-    if ov.mode == "cross" then
-        ov:_cross_move(dx, dy); return
-    end
-    if ov.mode ~= "struct" then return end
-    local sent = ov.sentences[ov.sel_sent]
-    if not sent or not sent.word_list or #sent.word_list == 0 then return end
-
-    ov.hl_cur = 0
-    if not ov.sel_word then
-        ov.sel_word = 1
-        ov.sel_word_tail = 1
-        ov:_refresh()
-        return
-    end
-
-    local delta
-    if dx ~= 0 then
-        delta = dx
-    else
-        local cur_w = sent.word_list[ov.sel_word]
-        if cur_w and cur_w.sbox then
-            local cx = cur_w.sbox.x + cur_w.sbox.w / 2
-            local cy = cur_w.sbox.y + cur_w.sbox.h / 2
-            local lh = cur_w.sbox.h
-            local best, best_dist = ov.sel_word, math.huge
-            for i, w in ipairs(sent.word_list) do
-                if w.sbox then
-                    local wy = w.sbox.y + w.sbox.h / 2
-                    if (dy > 0 and wy > cy + lh * 0.5) or
-                       (dy < 0 and wy < cy - lh * 0.5) then
-                        local d = math.abs(wy - (cy + dy * lh)) * 2
-                                + math.abs(w.sbox.x + w.sbox.w/2 - cx)
-                        if d < best_dist then best = i; best_dist = d end
-                    end
-                end
-            end
-            ov.sel_word = best
-            ov.sel_word_tail = best
-            ov:_refresh()
-            return
-        end
-        delta = dy
-    end
-    local new = ov.sel_word + delta
-    if new >= 1 and new <= #sent.word_list then
-        ov.sel_word = new
-        ov.sel_word_tail = new
-    end
-    ov:_refresh()
-end
-
-function PadNav:onKPRStickUp()
-    if not self:_is_enabled() then return false end
-    if not self:_selector() then return false end
-    self:_cross_dir(0, -1); return true
-end
-function PadNav:onKPRStickDown()
-    if not self:_is_enabled() then return false end
-    if not self:_selector() then return false end
-    self:_cross_dir(0, 1); return true
-end
-function PadNav:onKPRStickLeft()
-    if not self:_is_enabled() then return false end
-    if not self:_selector() then return false end
-    self:_cross_dir(-1, 0); return true
-end
-function PadNav:onKPRStickRight()
-    if not self:_is_enabled() then return false end
-    if not self:_selector() then return false end
-    self:_cross_dir(1, 0); return true
-end
+function PadNav:onKPRStickUp()    return self:_rstick(-1) end
+function PadNav:onKPRStickDown()  return self:_rstick(1) end
+function PadNav:onKPRStickLeft()  return self:_rstick(0) end
+function PadNav:onKPRStickRight() return self:_rstick(0) end
 
 -- X: highlight toggle (overlay) or combo modifier (reading)
 function PadNav:onKPExtend()
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.extend_side then selector.overlay:exit_extend() end
-        local sel = selector.overlay:_get_selection()
-        if sel then selector.overlay:_do_toggle_highlight(sel) end
+    local ov = selector and selector.overlay
+    if ov then
+        local sel = ov:_get_selection()
+        if sel then ov:_do_toggle_highlight(sel) end
+        -- browsing highlights and the page's last one removed: done
+        if ov.mode == "hl" and ov.hl_cur == 0 then selector:_close() end
         return true
     end
     -- The modifier only exists in a document: in the FileManager the stock
@@ -819,7 +657,10 @@ function PadNav:onKPExtend()
     return true
 end
 
--- RB: X+RB=bm, enter/quick extend right (overlay), next page (reading)
+-- RB: X+RB = bookmarks, next page (reading). In the selection only the legacy
+-- key path gets here (the Gamepad* path turns the page in _button_down): it
+-- has no button release, so no A hold -- RB grows the range at its moving end
+-- instead (LB shrinks it), in document order.
 function PadNav:onKPPgFwd()
     if self:_visel_route("extend", 1) then return true end
     if not self:_is_enabled() then return false end
@@ -828,22 +669,13 @@ function PadNav:onKPPgFwd()
         return true
     end
     local selector = self:_selector()
-    if selector and selector.overlay
-        and (selector.overlay.mode == "struct" or selector.overlay.mode == "walk") then
-        local ov = selector.overlay
-        if ov.extend_side == "right" then
-            ov:quick_extend_right()
-        elseif ov.extend_side == "left" then
-            ov.extend_side = "right"; ov:_refresh()
-        else
-            ov:enter_extend("right")
-        end
-        return true
+    if selector and selector.overlay then
+        selector.overlay:step(1, true); return true
     end
     self.ui:handleEvent(Event:new("GotoViewRel", 1)); return true
 end
 
--- LB: X+LB=TOC, enter/quick extend left (overlay), previous page (reading)
+-- LB: X+LB = TOC, previous page (reading); legacy range step (see onKPPgFwd).
 function PadNav:onKPPgBk()
     if self:_visel_route("extend", -1) then return true end
     if not self:_is_enabled() then return false end
@@ -852,24 +684,16 @@ function PadNav:onKPPgBk()
         return true
     end
     local selector = self:_selector()
-    if selector and selector.overlay
-        and (selector.overlay.mode == "struct" or selector.overlay.mode == "walk") then
-        local ov = selector.overlay
-        if ov.extend_side == "left" then
-            ov:quick_extend_left()
-        elseif ov.extend_side == "right" then
-            ov.extend_side = "left"; ov:_refresh()
-        else
-            ov:enter_extend("left")
-        end
-        return true
+    if selector and selector.overlay then
+        selector.overlay:step(-1, true); return true
     end
     self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
 end
 
--- LT/RT: page turn, independent of overlay state. GotoViewRel +1 = next page
--- (KOReader semantics, same in RTL books: "next" is reading order, so no
--- _is_rtl() flip here — triggers are semantic, not spatial).
+-- LT/RT (and LB/RB in the selection on the Gamepad* path): page turn,
+-- closing the selection. GotoViewRel +1 = next page (KOReader semantics, same
+-- in RTL books: "next" is reading order, so no _is_rtl() flip here --
+-- triggers are semantic, not spatial).
 function PadNav:_turn_page(dir)
     local selector = self:_selector()
     if selector and selector.overlay then selector:_close() end
@@ -910,33 +734,55 @@ end
 function PadNav:onKPPgBk3()  return self:onKPPgBk()  end
 function PadNav:onKPPgFwd3() return self:onKPPgFwd() end
 
--- A: sentence selection (reading), confirm/action menu (overlay)
+-- A on the LEGACY key path (Press): sentence selection (reading), action menu
+-- at once (overlay). On the Gamepad* path A is _press_a / _release_a.
 function PadNav:onKPConfirm()
     if not self:_is_enabled() then return false end
 
     local selector = self:_selector()
     if selector and selector.overlay then
-        selector.overlay:confirm()
+        selector.overlay:action_menu()
         return true
     end
     -- No selector (paged doc / FileManager): Press bindings are not
     -- suppressed there — pass through so e.g. FileManager item selection works.
     if not selector then return false end
-    self:_open_sentence_select(1)
+    self:_open_sentence_select()
     return true
 end
 
--- B: exit extend mode, or close overlay
+-- A pressed (Gamepad* path, TASK-16). Reading: open the sentence level; its
+-- release opens nothing. Selection: while held, the arrows select a range
+-- (_sel_move); released without an arrow = a tap = the action menu, see
+-- _release_a.
+function PadNav:_press_a()
+    if not self:_is_enabled() then return false end
+    local selector = self:_selector()
+    if not selector then return false end
+    self._a_down, self._a_moved = true, false
+    self._a_opened = not selector.overlay
+    if self._a_opened then self:_open_sentence_select() end
+    return true
+end
+
+-- A released (Gamepad* path): a tap in the selection opens the action menu.
+-- A range selected while A was held stays the selection.
+function PadNav:_release_a()
+    if not self._a_down then return end
+    local tap = not self._a_moved and not self._a_opened
+    self._a_down, self._a_moved, self._a_opened = false, false, false
+    local selector = self:_selector()
+    local ov = selector and selector.overlay
+    if tap and ov and self:_context() == "selection" then ov:action_menu() end
+end
+
+-- B: close the overlay
 function PadNav:onKPBack()
     if self:_visel_route("close") then return true end
     if not self:_is_enabled() then return false end
 
     local selector = self:_selector()
     if selector and selector.overlay then
-        if selector.overlay.extend_side then
-            selector.overlay:exit_extend()
-            return true
-        end
         selector:_close()
         return true
     end
@@ -954,41 +800,79 @@ function PadNav:onKPBack()
     return false
 end
 
--- Y: Vortuyo (overlay) or highlight mode / crosshair fallback (reading)
+-- Y: Vortuyo (overlay) or the page's highlights (reading)
 -- When dict is open, Y→AI is handled by _hook_dict_widget on the dict widget itself.
 function PadNav:onKPMenu()
     if not self:_is_enabled() then return false end
 
     local selector = self:_selector()
-    if selector and selector.overlay then
-        if selector.overlay.extend_side then selector.overlay:exit_extend() end
-        local sel = selector.overlay:_get_selection()
-        if sel then
-            selector.overlay:_do_vortuyo(sel)
-            return true
-        end
-    end
-
     -- No selector (paged doc / FileManager): pass through, don't eat the key.
     if not selector then return false end
+    local ov = selector.overlay
+    if ov then
+        local sel = ov:_get_selection()
+        if sel then ov:_do_vortuyo(sel) end
+        return true
+    end
     self:_open_highlights(selector)
     return true
 end
 
--- Highlight mode: open the selector (crosshair); when the page already has
--- highlights, start on the first one instead. Y in reading, and the
--- `highlights` action (ACTION_RUNNERS).
+-- The page's saved highlights (TASK-15): the overlay in mode "hl" on the
+-- first one, the D-pad steps between them; none on the page = a short
+-- message. Y in reading, and the `highlights` action (ACTION_RUNNERS).
 function PadNav:_open_highlights(selector)
-    selector:_open()
-    if not selector.overlay then return end
-    if #selector.overlay.hl_items > 0 then
-        selector.overlay.mode = "struct"
-        selector.overlay.sel_sent = 1
-        selector.overlay.sel_tail = 1
-        selector.overlay.sel_word = nil
-        selector.overlay.hl_cur = 1
-        selector.overlay:_refresh()
+    if selector:_open_highlights() == false then
+        self:_show_text(_("No highlights on this page"), 2)
     end
+end
+
+-- Held D-pad in the selection (Gamepad* path): repeat the step of button
+-- `btn` until its release (onGamepadButtonUp), a context change (menu,
+-- dialog, overlay closed) or DPAD_REPEAT_MAX steps.
+function PadNav:_dpad_start(btn)
+    self:_dpad_stop()
+    if type(UIManager.scheduleIn) ~= "function" then return end
+    local steps = 0
+    local tick
+    tick = function()
+        if self._dpad_tick ~= tick then return end
+        steps = steps + 1
+        if steps > DPAD_REPEAT_MAX or self:_context() ~= "selection" then
+            self:_dpad_stop(); return
+        end
+        self[DPAD_HANDLERS[btn]](self)
+        UIManager:scheduleIn(DPAD_REPEAT_EVERY_S, tick)
+    end
+    self._dpad_held, self._dpad_tick = btn, tick
+    UIManager:scheduleIn(DPAD_REPEAT_DELAY_S, tick)
+end
+
+function PadNav:_dpad_stop()
+    if self._dpad_tick and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self._dpad_tick)
+    end
+    self._dpad_held, self._dpad_tick = nil, nil
+end
+
+-- KOReader >= 2026.07 broadcasts the release too (device.lua; no stock key
+-- follows it, so the return value does not matter). Remapped like the
+-- press, so the role that was pressed is the role released (TASK-16): ends
+-- a D-pad repeat, the X hold (the modifier drops) and the A hold (a tap
+-- opens the action menu).
+function PadNav:onGamepadButtonUp(ev)
+    if type(ev) ~= "table" or ev.button == nil then return false end
+    local kind, btn = self:_resolve("button", ev.button)
+    if kind ~= "button" then return false end
+    if Trace.active() then
+        Trace.log("padnav btn=%s up: role=%s", tostring(ev.button), tostring(btn))
+    end
+    if self._dpad_held == btn then self:_dpad_stop() end
+    if self._x_hold == btn then
+        self._x_hold, self._x_mode = nil, false
+    end
+    if btn == BTN_A then self:_release_a() end
+    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -1070,10 +954,12 @@ local ACTION_RUNNERS = {
     favorites         = ui_event("ShowColl"),
     collections       = ui_event("ShowCollList"),
     -- selection and dictionary
-    sentence_select   = with_selector(function(self) self:_open_sentence_select(1) end),
+    sentence_select   = with_selector(function(self) self:_open_sentence_select() end),
     highlights        = with_selector(function(self, selector) self:_open_highlights(selector) end),
     word_walk         = with_selector(function(self, selector) selector:_open_walk(false) end),
-    crosshair         = with_selector(function(self, selector) selector:_open() end),
+    -- The crosshair is gone (TASK-15); the id stays in the vocabulary (the
+    -- koligilo contract) and opens the word level.
+    crosshair         = with_selector(function(self, selector) selector:_open_walk(false) end),
     dict_lookup       = ui_event("ShowDictionaryLookup"),
     -- display
     font_bigger       = ui_event("IncreaseFontSize", 1),
@@ -1203,8 +1089,21 @@ function PadNav:onGamepadButtonDown(ev)
     return self:_button_down(ev)
 end
 
--- LOGICAL button down (after remapping).
-function PadNav:_button_down(ev)
+-- LOGICAL button down (after remapping). A press that arms the X modifier
+-- (X, or a role whose action is x_modifier) makes it a hold: the release of
+-- that role ends it (onGamepadButtonUp, TASK-16). latch = true for a trigger
+-- acting as a button, which never reports a release: the modifier stays a
+-- latch then.
+function PadNav:_button_down(ev, latch)
+    local x_before = self._x_mode
+    local res = self:_button_dispatch(ev)
+    if self._x_mode and not x_before then
+        self._x_hold = (not latch) and type(ev) == "table" and ev.button or nil
+    end
+    return res
+end
+
+function PadNav:_button_dispatch(ev)
     local tr = Trace.active()
     local btn = type(ev) == "table" and ev.button or nil
     local ctx = self:_context()
@@ -1247,9 +1146,27 @@ function PadNav:_button_down(ev)
         if pan then self:_paged_pan(pan[1], pan[2]) else self:_paged_page(page) end
         return true
     end
+    -- In the selection LB / RB close it and turn the page (TASK-16); the
+    -- range steps of onKPPgBk / onKPPgFwd belong to the legacy key path.
+    if (btn == BTN_LB or btn == BTN_RB) and ctx == "selection" then
+        if tr then Trace.log("padnav btn=%s: selection, close and turn the page", tostring(btn)) end
+        return self:_turn_page(btn == BTN_RB and 1 or -1)
+    end
+    -- D-pad in an EPUB: kopad's own handlers, and a held D-pad repeats its
+    -- step in the selection (stock buttons do not auto-repeat). Not after an
+    -- X combo (it must fire once). Without a selector the stock key passes.
+    local dpad = DPAD_HANDLERS[btn]
+    if dpad and (ctx == "reading" or ctx == "selection") and self:_selector() then
+        local combo = self._x_mode
+        local handled = self[dpad](self) or false
+        local selector = self:_selector()
+        if handled and not combo and selector and selector.overlay then self:_dpad_start(btn) end
+        if tr then Trace.log("padnav btn=%s: dpad %s -> result=%s", tostring(btn), dpad, tostring(handled)) end
+        return handled
+    end
     local method = BUTTON_HANDLERS[btn]
     local handled = method and self[method](self) or false
-    -- D-pad (11..14) and the rest: false -> stock Up/Down/Left/Right key.
+    -- D-pad (11..14) without a selector and the rest: false -> stock key.
     local result = handled or BUTTON_SWALLOW[btn] or false
     if tr then
         Trace.log("padnav btn=%s: handler=%s returned %s, %s -> result=%s", tostring(btn),
@@ -1743,7 +1660,7 @@ function PadNav:_trigger_as_button(phys_axis, value, btn)
     if not (self.enabled_ref and self.enabled_ref.enabled) then return false end
     if value > 0 and self:_trigger_is_new_press(phys_axis) then
         Trace.log("padnav axis=%s: remapped to btn=%s", tostring(phys_axis), tostring(btn))
-        self:_button_down({ button = btn })
+        self:_button_down({ button = btn }, true)
     end
     return true
 end
@@ -1838,6 +1755,12 @@ function PadNav:onGamepadAxisMotion(ax)
         end
         return true
     end
+    -- kopad's selection: a stick snapping back to centre must not undo the
+    -- step or switch the level back.
+    if ctx == "selection" and self:_stick_bounce(axis, value < 0, MENU_STICK_LOCK_S) then
+        if tr then Trace.log("padnav axis=%s value=%s: selection stick bounce, ignored", tostring(axis), tostring(value)) end
+        return true
+    end
     if axis == AXIS_RX or axis == AXIS_RY then
         -- Always consumed while kopad is active: stock maps R-stick Y to
         -- RPgBack/RPgFwd and auto-repeats it -> endless page turning. The
@@ -1851,9 +1774,9 @@ function PadNav:onGamepadAxisMotion(ax)
         return true
     end
 
-    -- L-stick. Without a selector (FileManager / paged docs) the L-stick
-    -- handlers would eat the event as a no-op or a page turn, so let the stock
-    -- Up/Down/Left/Right key through to the original list/page navigation.
+    -- L-stick. Without a selector (FileManager / paged docs) let the stock
+    -- Up/Down/Left/Right key through to the original list/page navigation;
+    -- with one the handlers consume it (in reading as a no-op).
     if not self:_selector() then
         if tr then
             Trace.log("padnav axis=%s value=%s: L-stick, no selector, passthrough -> result=false",
@@ -1870,14 +1793,13 @@ function PadNav:onGamepadAxisMotion(ax)
 end
 
 local CHEAT_READING = _("Reading mode")
-    .. "\nRT / LT: next / previous page"
-    .. "\nRB / LB: next / previous page"
+    .. "\nRT / LT, RB / LB: next / previous page"
     .. "\nSelect: top menu    Start: bottom menu"
     .. "\nB: back to the previous location"
-    .. "\nA: sentence selector    Y: highlights"
-    .. "\nD-pad: word walk    R-stick: crosshair"
-    .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
-    .. "\nX + LB: TOC    X + RB: bookmarks"
+    .. "\nA: select sentences    D-pad: select words"
+    .. "\nY: highlights on the page"
+    .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
+    .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\n\n" .. _("PDF / DjVu")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
     .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
@@ -1897,20 +1819,22 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: parent folder"
 
 local CHEAT_SELECTION = _("Selection mode")
-    .. "\nL-stick \xE2\x86\x90/\xE2\x86\x92: sentence    \xE2\x86\x91/\xE2\x86\x93: paragraph"
-    .. "\nD-pad / R-stick: word navigation"
-    .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: cycle highlights"
+    .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
+    .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: line / paragraph"
+    .. "\nHold A + arrows: select a range"
     .. "\nA: action menu    Y: Vortuyo"
-    .. "\nX: toggle highlight    B: close / exit extend"
-    .. "\nRB / LB: extend right / left"
-    .. "\nRT / LT: close and turn page"
+    .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"
+    .. "\nX: toggle highlight    B: close"
+    .. "\nRB / LB, RT / LT: close and turn page"
     .. "\nSelect / Start: close and open menu"
+    .. "\n\n" .. _("Highlights (Y)")
+    .. "\nD-pad: previous / next    X: remove"
     .. "\n\n" .. _("Dictionary popup")
     .. "\nLB / RB: cycle dictionaries    Y: AI explain    B: close"
 
-function PadNav:_show_text(text)
+function PadNav:_show_text(text, timeout)
     local InfoMessage = require("ui/widget/infomessage")
-    UIManager:show(InfoMessage:new{ text = text })
+    UIManager:show(InfoMessage:new{ text = text, timeout = timeout })
 end
 
 -- Role names as the docs write them, and the English action labels (the panel
@@ -1953,7 +1877,7 @@ local ACTION_LABELS = {
     sentence_select   = _("sentence selector"),
     highlights        = _("highlights"),
     word_walk         = _("word walk"),
-    crosshair         = _("crosshair"),
+    crosshair         = _("word walk"),
     dict_lookup       = _("dictionary lookup"),
     font_bigger       = _("bigger font"),
     font_smaller      = _("smaller font"),

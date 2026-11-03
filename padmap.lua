@@ -143,8 +143,9 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --   favorites / collections
 --  Selection and dictionary
 --   sentence_select         open the sentence selector (A today)
---   highlights              open highlight mode, crosshair if none (Y today)
---   word_walk / crosshair   open the word walk / the crosshair
+--   highlights              browse the page's highlights, a message if none (Y today)
+--   word_walk / crosshair   open the word walk (crosshair: kept for old data,
+--                           the crosshair itself was removed in kopad TASK-15)
 --   dict_lookup             the "look up a word" input dialog
 --  Display
 --   font_bigger / font_smaller

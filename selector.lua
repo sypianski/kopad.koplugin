@@ -1,7 +1,11 @@
 --[[
 Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
-documents: crosshair mode, word-walk mode, and structured (sentence/word)
-selection mode, driven by the handlers in padnav.lua.
+documents, driven by the handlers in padnav.lua. Three modes: sentences
+("struct", opened by A), words ("walk", D-pad) and the page's saved
+highlights ("hl", Y); R-stick ↓/↑ switches between sentence and word. The
+arrows move a cursor; while A is held padnav passes range = true and an
+anchor stays where the range began. Without a range the cursor crosses the
+page edge in both directions.
 
 This file owns the overlay widget and its drawing/selection logic; it does
 not bind its own gamepad keys (key_events is intentionally left empty — see
@@ -62,23 +66,21 @@ function SelectorOverlay:init()
                            w = Screen:getWidth(), h = Screen:getHeight() }
     self.covers_fullscreen = false
 
-    self.mode = "cross"  -- "cross" | "struct" | "walk"
+    -- "struct" = sentences (A), "walk" = words (D-pad), "hl" = the page's
+    -- saved highlights (Y). Opens as struct; Selector:_open_walk /
+    -- _open_highlights switch before showing it.
+    self.mode = "struct"
 
-    self.cursor_word = nil   -- index into self.words
-    self.cursor_sent = nil   -- index into self.sentences
+    self.sel_sent = nil      -- first sentence of the selection
+    self.sel_tail = nil      -- last sentence of the selection
+    self.sel_cur = nil       -- sentence the arrows move
+    self.sel_anchor = nil    -- fixed end of a sentence range (A held), nil = none
 
-    self.sel_sent = nil      -- selected sentence index (single / head)
-    self.sel_tail = nil      -- sentence tail for multi-sentence selection
-    self.sel_word = nil      -- word head index (nil = whole sentence)
-    self.sel_word_tail = nil -- word tail for multi-word selection
-
-    self.ww_word = nil       -- current word in walk mode {pos0, pos1, sbox, word}
-    self.ww_extend_pos0 = nil -- left boundary xpointer (walk extend)
-
-    self.extend_side = nil   -- nil | "right" | "left"
+    self.ww_word = nil       -- word the arrows move in walk mode {pos0, pos1, sbox, word}
+    self.ww_anchor = nil     -- fixed end of a word range (A held), nil = none
 
     self.hl_items = {}       -- on-screen highlights { ann, boxes, sbox }
-    self.hl_cur   = 0        -- focused highlight index (0 = none)
+    self.hl_cur   = 0        -- focused highlight index in mode "hl" (0 = none)
 
     -- RTL: reverse ↔ direction for right-to-left scripts
     local rtl_langs = { ar=true, he=true, fa=true, ur=true }
@@ -89,9 +91,7 @@ function SelectorOverlay:init()
 
     self:_collect()
     self:_collect_highlights()
-    if #self.words > 0 then
-        self:_snap_to_center()
-    end
+    if #self.sentences > 0 then self:_set_sent(1) end
 end
 
 function SelectorOverlay:_collect()
@@ -151,22 +151,6 @@ function SelectorOverlay:_collect()
     end
 end
 
-function SelectorOverlay:reload()
-    self:_collect()
-    self:_collect_highlights()
-    if self.mode == "walk" then
-        -- Walk mode tracks ww_word (an xpointer), not the crosshair cursor; after
-        -- a page reflow re-anchor it to the first word of the freshly collected
-        -- page instead of snapping the (unused-in-walk) crosshair cursor.
-        self.ww_extend_pos0 = nil
-        self.ww_word = (#self.words > 0)
-            and self:_ww_word_from_xp(self.words[1].xp0) or nil
-    elseif #self.words > 0 then
-        self:_snap_to_center()
-    end
-    self:_refresh()
-end
-
 function SelectorOverlay:_collect_highlights()
     self.hl_items = {}
     self.hl_cur   = 0
@@ -195,13 +179,6 @@ function SelectorOverlay:_collect_highlights()
     table.sort(self.hl_items, function(a, b) return a.sbox.y < b.sbox.y end)
 end
 
-function SelectorOverlay:_snap_to_center()
-    local cx = Screen:getWidth() / 2
-    local cy = Screen:getHeight() / 2
-    self.cursor_word = self:_nearest_word(cx, cy)
-    self.cursor_sent = self.word_to_sent[self.cursor_word]
-end
-
 function SelectorOverlay:_nearest_word(px, py)
     local best, best_dist = 1, math.huge
     for i, w in ipairs(self.words) do
@@ -219,46 +196,6 @@ end
 
 function SelectorOverlay:_refresh()
     UIManager:setDirty("all", "ui")
-end
-
-----------------------------------------------------------------------
--- Crosshair movement
-----------------------------------------------------------------------
-
-function SelectorOverlay:_cross_move(dx, dy)
-    if #self.words == 0 then return end
-    local cur = self.words[self.cursor_word]
-    if not cur or not cur.sbox then return end
-
-    local cx = cur.sbox.x + cur.sbox.w / 2
-    local cy = cur.sbox.y + cur.sbox.h / 2
-    local lh = cur.sbox.h
-
-    if dy ~= 0 and dx == 0 then
-        local target_y = cy + dy * lh * 1.2
-        local best, best_dist = self.cursor_word, math.huge
-        for i, w in ipairs(self.words) do
-            if w.sbox then
-                local wy = w.sbox.y + w.sbox.h / 2
-                if (dy > 0 and wy > cy + lh * 0.5) or
-                   (dy < 0 and wy < cy - lh * 0.5) then
-                    local d = math.abs(wy - target_y) * 2 + math.abs(w.sbox.x + w.sbox.w/2 - cx)
-                    if d < best_dist then
-                        best = i; best_dist = d
-                    end
-                end
-            end
-        end
-        self.cursor_word = best
-    elseif dx ~= 0 then
-        local new = self.cursor_word + dx
-        if new >= 1 and new <= #self.words then
-            self.cursor_word = new
-        end
-    end
-
-    self.cursor_sent = self.word_to_sent[self.cursor_word]
-    self:_refresh()
 end
 
 ----------------------------------------------------------------------
@@ -321,89 +258,100 @@ function SelectorOverlay:_ww_word_from_xp(xp)
     }
 end
 
-function SelectorOverlay:_ww_snap_first()
+-- Land on the first (dir > 0) or the last word of the page.
+function SelectorOverlay:_ww_land(dir)
+    local w = self.words[dir > 0 and 1 or #self.words]
+    self.ww_word = w and self:_ww_word_from_xp(w.xp0) or nil
+    if self.ww_word and self:_is_split_word(self.ww_word) then
+        self.ww_word.is_split_fragment = dir > 0 and "head" or "tail"
+    end
+end
+
+-- True when xpointer a comes before b in the document.
+-- CreDocument:compareXPointers(a, b) is 1 when b follows a (ReaderHighlight
+-- relies on the same sign).
+function SelectorOverlay:_xp_before(a, b)
+    local ok, order = pcall(self.doc.compareXPointers, self.doc, a, b)
+    return ok and type(order) == "number" and order > 0
+end
+
+-- The word selection as xpointers: the cursor word, or anchor .. cursor in
+-- document order.
+function SelectorOverlay:_ww_span()
+    local w, a = self.ww_word, self.ww_anchor
+    if not w then return nil end
+    if not a or a.pos0 == w.pos0 then return w.pos0, w.pos1 end
+    if self:_xp_before(a.pos0, w.pos0) then return a.pos0, w.pos1 end
+    return w.pos0, a.pos1
+end
+
+-- Start of the next (dir > 0) / previous word, nil at the end of the book.
+-- (Not `dir > 0 and next() or prev()`: a nil next word would fall through to
+-- the previous one.)
+function SelectorOverlay:_adjacent_word(xp, dir)
+    if dir > 0 then return self.doc:getNextVisibleWordStart(xp) end
+    return self.doc:getPrevVisibleWordStart(xp)
+end
+
+-- Turn the page under the overlay and collect the new one. False when the
+-- document did not move (first / last page).
+function SelectorOverlay:_turn_page(dir)
+    local before = self.words[1] and self.words[1].xp0
+    self.ui:handleEvent(Event:new("GotoViewRel", dir))
     self:_collect()
-    if #self.words > 0 then
-        self.ww_word = self:_ww_word_from_xp(self.words[1].xp0)
+    self:_collect_highlights()
+    local after = self.words[1] and self.words[1].xp0
+    return before == nil or after ~= before
+end
+
+-- Words: one word forward / back (dir in document order). range (A held):
+-- the anchor stays where the range began and the range never leaves the
+-- page; otherwise the page edge turns the page (TASK-18).
+function SelectorOverlay:_ww_step(dir, range)
+    local w = self.ww_word
+    if not w then
+        if not range and self:_turn_page(dir) then self:_ww_land(dir) end
+        return
+    end
+    if range then
+        self.ww_anchor = self.ww_anchor or w
     else
-        self.ww_word = nil
-    end
-end
-
-function SelectorOverlay:_ww_extend()
-    if not self.ww_word then return end
-    if not self.ww_extend_pos0 then
-        self.ww_extend_pos0 = self.ww_word.pos0
-    end
-    local doc = self.doc
-    local next_xp = doc:getNextVisibleWordStart(self.ww_word.pos0)
-    if not next_xp or next_xp == self.ww_word.pos0
-        or not doc:isXPointerInCurrentPage(next_xp) then
-        return
-    end
-    self.ww_word = self:_ww_word_from_xp(next_xp)
-    self:_refresh()
-end
-
-function SelectorOverlay:_ww_trim()
-    if not self.ww_word or not self.ww_extend_pos0 then return end
-    if self.ww_word.pos0 == self.ww_extend_pos0 then
-        self.ww_extend_pos0 = nil
-        self:_refresh()
-        return
-    end
-    local doc = self.doc
-    local prev_xp = doc:getPrevVisibleWordStart(self.ww_word.pos0)
-    if not prev_xp or prev_xp == self.ww_word.pos0 then return end
-    self.ww_word = self:_ww_word_from_xp(prev_xp)
-    self:_refresh()
-end
-
-function SelectorOverlay:_ww_move(delta)
-    if not self.ww_word then return end
-    self.ww_extend_pos0 = nil
-
-    if self:_is_split_word(self.ww_word) and self.ww_word.is_split_fragment then
-        if delta > 0 and self.ww_word.is_split_fragment == "head" then
-            self.ww_word.is_split_fragment = "tail"
-            self:_refresh(); return
-        elseif delta < 0 and self.ww_word.is_split_fragment == "tail" then
-            self.ww_word.is_split_fragment = "head"
-            self:_refresh(); return
-        end
-    end
-
-    local doc = self.doc
-    local cur_xp = self.ww_word.pos0
-    if delta > 0 then
-        local next_xp = doc:getNextVisibleWordStart(cur_xp)
-        if not next_xp or next_xp == cur_xp
-            or not doc:isXPointerInCurrentPage(next_xp) then
-            self.ui:handleEvent(Event:new("GotoViewRel", 1))
-            self:_ww_snap_first()
-        else
-            self.ww_word = self:_ww_word_from_xp(next_xp)
-            if self.ww_word and self:_is_split_word(self.ww_word) then
-                self.ww_word.is_split_fragment = "head"
+        self.ww_anchor = nil
+        -- a word hyphenated over two lines: its other half first
+        if self:_is_split_word(w) and w.is_split_fragment then
+            if dir > 0 and w.is_split_fragment == "head" then
+                w.is_split_fragment = "tail"; return
+            elseif dir < 0 and w.is_split_fragment == "tail" then
+                w.is_split_fragment = "head"; return
             end
         end
-    else
-        local prev_xp = doc:getPrevVisibleWordStart(cur_xp)
-        if not prev_xp or prev_xp == cur_xp
-            or not doc:isXPointerInCurrentPage(prev_xp) then
-            return
-        end
-        self.ww_word = self:_ww_word_from_xp(prev_xp)
-        if self.ww_word and self:_is_split_word(self.ww_word) then
-            self.ww_word.is_split_fragment = "tail"
-        end
     end
-    self:_refresh()
+    local xp = self:_adjacent_word(w.pos0, dir)
+    if not xp or xp == w.pos0 or not self.doc:isXPointerInCurrentPage(xp) then
+        if not range and self:_turn_page(dir) then self:_ww_land(dir) end
+        return
+    end
+    local nw = self:_ww_word_from_xp(xp)
+    if not nw then return end
+    if not range and self:_is_split_word(nw) then
+        nw.is_split_fragment = dir > 0 and "head" or "tail"
+    end
+    self.ww_word = nw
 end
 
-function SelectorOverlay:_ww_line(delta)
-    if not self.ww_word or not self.ww_word.sbox then return end
-    self.ww_extend_pos0 = nil
+-- Words: the word on the next / previous line nearest to the same x. Past
+-- the last / first line: the next page's first word / the previous page's
+-- last one (TASK-18); a range (A held) stays on the page.
+function SelectorOverlay:_ww_line(delta, range)
+    if not self.ww_word or not self.ww_word.sbox then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
+    if range then
+        self.ww_anchor = self.ww_anchor or self.ww_word
+    else
+        self.ww_anchor = nil
+    end
     local doc    = self.doc
     local fsbox  = self:_ww_fragment_sbox() or self.ww_word.sbox
     local target_x = fsbox.x
@@ -415,9 +363,7 @@ function SelectorOverlay:_ww_line(delta)
     local target_line_y = nil
     local fallback_xp   = nil
     for _ = 1, 80 do
-        local next_xp = delta > 0
-            and doc:getNextVisibleWordStart(current_xp)
-            or  doc:getPrevVisibleWordStart(current_xp)
+        local next_xp = self:_adjacent_word(current_xp, delta)
         if not next_xp or next_xp == current_xp then break end
         if not doc:isXPointerInCurrentPage(next_xp) then break end
         current_xp = next_xp
@@ -430,7 +376,10 @@ function SelectorOverlay:_ww_line(delta)
             break
         end
     end
-    if not target_line_y then return end
+    if not target_line_y then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
 
     local ok, probe = pcall(function()
         return doc:getWordFromPosition({x = target_x, y = target_line_y}, true)
@@ -451,326 +400,210 @@ function SelectorOverlay:_ww_line(delta)
                         segments = boxes,
                         is_split_fragment = resolved.is_split_fragment,
                     }
-                    self:_refresh()
                     return
                 end
             end
         end
     end
 
-    if fallback_xp then
-        local word = self:_ww_word_from_xp(fallback_xp)
-        if word then
-            self.ww_word = word
-            self:_refresh()
-        end
-    end
+    local word = self:_ww_word_from_xp(fallback_xp)
+    if word then self.ww_word = word end
 end
 
 ----------------------------------------------------------------------
--- Extend mode (RB = right end, LB = left end)
+-- Sentence navigation (struct)
 ----------------------------------------------------------------------
 
-function SelectorOverlay:enter_extend(side)
-    self.extend_side = side
-    if self.mode == "walk" and not self.ww_extend_pos0 then
-        self.ww_extend_pos0 = self.ww_word and self.ww_word.pos0
-    elseif self.mode == "struct" then
-        if not self.sel_tail then self.sel_tail = self.sel_sent end
-        if self.sel_word and not self.sel_word_tail then
-            self.sel_word_tail = self.sel_word
-        end
+-- Move the sentence cursor to i; with an anchor the selection spans both.
+function SelectorOverlay:_set_sent(i)
+    self.sel_cur = i
+    local a = self.sel_anchor or i
+    self.sel_sent, self.sel_tail = math.min(a, i), math.max(a, i)
+end
+
+-- After a page turn: the first (dir > 0) / last sentence of the new page, or
+-- the one after / before it when `skip` -- that one is the sentence the
+-- cursor was on, running over the page edge.
+function SelectorOverlay:_sent_land(dir, skip)
+    local n = #self.sentences
+    self.sel_anchor = nil
+    if n == 0 then
+        self.sel_cur, self.sel_sent, self.sel_tail = nil, nil, nil
+        return
     end
-    self:_refresh()
+    local i = dir > 0 and 1 or n
+    if skip and n > 1 then i = i + dir end
+    self:_set_sent(i)
 end
 
-function SelectorOverlay:exit_extend()
-    self.extend_side = nil
-    self:_refresh()
-end
-
-function SelectorOverlay:extend_dpad(dx, dy)
-    if self.mode == "walk" then
-        self:_extend_walk(dx, dy)
-    elseif self.mode == "struct" then
-        if self.sel_word then
-            self:_extend_struct_word(dx, dy)
-        else
-            self:_extend_struct_sent(dx, dy)
-        end
+-- Sentences: one sentence forward / back; past the page edge the next /
+-- previous page (TASK-18). range (A held) stays on the page.
+function SelectorOverlay:_sent_step(dir, range)
+    local cur = self.sel_cur
+    if not cur or #self.sentences == 0 then
+        if not range and self:_turn_page(dir) then self:_sent_land(dir, false) end
+        return
     end
-end
-
-function SelectorOverlay:_extend_walk(dx, dy)
-    if not self.ww_word or not self.ww_extend_pos0 then return end
-    local doc = self.doc
-    if self.extend_side == "right" then
-        if dx ~= 0 then
-            local cur = self.ww_word.pos0
-            local next_xp = dx > 0
-                and doc:getNextVisibleWordStart(cur)
-                or  doc:getPrevVisibleWordStart(cur)
-            if next_xp and next_xp ~= cur and doc:isXPointerInCurrentPage(next_xp) then
-                self.ww_word = self:_ww_word_from_xp(next_xp)
-            end
-        elseif dy ~= 0 then
-            local new_xp = self:_xp_line_jump(self.ww_word.pos0, dy)
-            if new_xp and new_xp ~= self.ww_word.pos0 then
-                self.ww_word = self:_ww_word_from_xp(new_xp)
-            end
-        end
+    if range then
+        self.sel_anchor = self.sel_anchor or cur
     else
-        if dx ~= 0 then
-            local cur = self.ww_extend_pos0
-            local next_xp = dx < 0
-                and doc:getPrevVisibleWordStart(cur)
-                or  doc:getNextVisibleWordStart(cur)
-            if next_xp and next_xp ~= cur and doc:isXPointerInCurrentPage(next_xp) then
-                self.ww_extend_pos0 = next_xp
-            end
-        elseif dy ~= 0 then
-            local new_xp = self:_xp_line_jump(self.ww_extend_pos0, dy)
-            if new_xp and new_xp ~= self.ww_extend_pos0 then
-                self.ww_extend_pos0 = new_xp
-            end
+        self.sel_anchor = nil
+    end
+    local new = cur + dir
+    if new >= 1 and new <= #self.sentences then
+        self:_set_sent(new)
+        return
+    end
+    if range then return end
+    local s = self.sentences[cur]
+    local split = (dir > 0 and s._extends_after) or (dir < 0 and s._extends_before)
+    if self:_turn_page(dir) then self:_sent_land(dir, split) end
+end
+
+-- First sentence of the paragraph of sentence i.
+function SelectorOverlay:_para_start(i)
+    local p = self.sentences[i].para
+    while i > 1 and self.sentences[i - 1].para == p do i = i - 1 end
+    return i
+end
+
+-- Paragraph target on the page: ↓ = first sentence of the next paragraph;
+-- ↑ = first sentence of this paragraph, or of the previous one when already
+-- there. nil = beyond the page.
+function SelectorOverlay:_para_target(cur, dir)
+    local s = self.sentences
+    if dir > 0 then
+        for j = cur + 1, #s do
+            if s[j].para ~= s[cur].para then return j end
         end
+        return nil
+    end
+    local start = self:_para_start(cur)
+    if start < cur then return start end
+    if start > 1 then return self:_para_start(start - 1) end
+    return nil
+end
+
+-- After a page turn by paragraph: ↓ the first sentence of the new page (the
+-- next paragraph on it when `skip`: the cursor's sentence ran over the edge,
+-- so the page starts inside its paragraph); ↑ the start of the page's last
+-- paragraph.
+function SelectorOverlay:_para_land(dir, skip)
+    local n = #self.sentences
+    self.sel_anchor = nil
+    if n == 0 then
+        self.sel_cur, self.sel_sent, self.sel_tail = nil, nil, nil
+        return
+    end
+    if dir > 0 then
+        self:_set_sent(skip and self:_para_target(1, 1) or 1)
+    else
+        self:_set_sent(self:_para_start(n))
+    end
+end
+
+-- Sentences: paragraph down / up (see _para_target); past the page edge the
+-- next / previous page (TASK-18). range (A held) stays on the page.
+function SelectorOverlay:_para_step(dir, range)
+    local cur = self.sel_cur
+    if not cur or #self.sentences == 0 then
+        if not range and self:_turn_page(dir) then self:_para_land(dir, false) end
+        return
+    end
+    if range then
+        self.sel_anchor = self.sel_anchor or cur
+    else
+        self.sel_anchor = nil
+    end
+    local target = self:_para_target(cur, dir)
+    if target then
+        self:_set_sent(target)
+        return
+    end
+    if range then return end
+    -- no paragraph below: the cursor is in the page's last paragraph, which
+    -- goes on over the edge when the last sentence does
+    local split = dir > 0 and self.sentences[#self.sentences]._extends_after
+    if self:_turn_page(dir) then self:_para_land(dir, split) end
+end
+
+-- Sentence (index) that contains the walk word w: by its xpointer, else the
+-- sentence of the nearest collected word on screen.
+function SelectorOverlay:_sent_of_word(w)
+    local i = self._xp_to_sent[w.pos0]
+    if i then return i end
+    if not w.sbox or #self.words == 0 then return nil end
+    local wi = self:_nearest_word(w.sbox.x + w.sbox.w / 2, w.sbox.y + w.sbox.h / 2)
+    return self.word_to_sent[wi]
+end
+
+----------------------------------------------------------------------
+-- Arrows and levels (called by padnav)
+----------------------------------------------------------------------
+
+-- Saved highlights (mode "hl"): the next / previous one, wrapping.
+function SelectorOverlay:_hl_step(dir)
+    local n = #self.hl_items
+    if n == 0 then return end
+    self.hl_cur = (self.hl_cur - 1 + dir) % n + 1
+end
+
+-- ←/→: one word / sentence / highlight. dir in document order (+1 =
+-- forward; padnav has already flipped it for RTL). range = A held: the anchor
+-- stays, the cursor moves, both directions (back over the anchor shrinks the
+-- range and then grows it on the other side).
+function SelectorOverlay:step(dir, range)
+    if self.mode == "hl" then
+        self:_hl_step(dir)
+    elseif self.mode == "walk" then
+        self:_ww_step(dir, range)
+    else
+        self:_sent_step(dir, range)
     end
     self:_refresh()
 end
 
-function SelectorOverlay:_extend_struct_sent(dx, dy)
-    if not self.sel_sent or not self.sel_tail then return end
-    if self.extend_side == "right" then
-        if dx ~= 0 then
-            local new = self.sel_tail + dx
-            if new >= self.sel_sent and new <= #self.sentences then
-                self.sel_tail = new; self:_refresh()
-            end
-        elseif dy ~= 0 then
-            local cur_para = self.sentences[self.sel_tail]
-                and self.sentences[self.sel_tail].para
-            if dy > 0 then
-                for j = self.sel_tail + 1, #self.sentences do
-                    if self.sentences[j].para ~= cur_para then
-                        self.sel_tail = j; self:_refresh(); return
-                    end
-                end
-            else
-                local j = self.sel_tail - 1
-                while j >= self.sel_sent and self.sentences[j].para == cur_para do
-                    j = j - 1
-                end
-                if j >= self.sel_sent then
-                    self.sel_tail = j; self:_refresh()
-                end
-            end
-        end
+-- ↑/↓: one line / paragraph / highlight; range as in step().
+function SelectorOverlay:line(dir, range)
+    if self.mode == "hl" then
+        self:_hl_step(dir)
+    elseif self.mode == "walk" then
+        self:_ww_line(dir, range)
     else
-        if dx ~= 0 then
-            local new = self.sel_sent + dx
-            if new >= 1 and new <= self.sel_tail then
-                self.sel_sent = new; self:_refresh()
-            end
-        elseif dy ~= 0 then
-            local cur_para = self.sentences[self.sel_sent]
-                and self.sentences[self.sel_sent].para
-            if dy < 0 then
-                local j = self.sel_sent - 1
-                while j >= 1 and self.sentences[j].para == cur_para do
-                    j = j - 1
-                end
-                if j >= 1 then
-                    local prev_para = self.sentences[j].para
-                    while j > 1 and self.sentences[j-1].para == prev_para do
-                        j = j - 1
-                    end
-                    self.sel_sent = j; self:_refresh()
-                end
-            else
-                for j = self.sel_sent + 1, self.sel_tail do
-                    if self.sentences[j].para ~= cur_para then
-                        self.sel_sent = j; self:_refresh(); return
-                    end
-                end
-            end
-        end
-    end
-end
-
-function SelectorOverlay:_extend_struct_word(dx, dy)
-    local sent = self.sentences[self.sel_sent]
-    if not sent or not sent.word_list then return end
-    local n = #sent.word_list
-    if self.extend_side == "right" then
-        if dx ~= 0 then
-            local new = (self.sel_word_tail or self.sel_word) + dx
-            if new >= self.sel_word and new <= n then
-                self.sel_word_tail = new; self:_refresh()
-            end
-        elseif dy ~= 0 then
-            local cur = self.sel_word_tail or self.sel_word
-            local target = self:_word_line_jump(sent.word_list, cur, dy)
-            if target and target >= self.sel_word then
-                self.sel_word_tail = target; self:_refresh()
-            end
-        end
-    else
-        if dx ~= 0 then
-            local new = self.sel_word + dx
-            if new >= 1 and new <= (self.sel_word_tail or self.sel_word) then
-                self.sel_word = new; self:_refresh()
-            end
-        elseif dy ~= 0 then
-            local target = self:_word_line_jump(sent.word_list, self.sel_word, dy)
-            if target and target <= (self.sel_word_tail or self.sel_word) then
-                self.sel_word = target; self:_refresh()
-            end
-        end
-    end
-end
-
-function SelectorOverlay:_word_line_jump(word_list, cur_idx, delta)
-    local cur_w = word_list[cur_idx]
-    if not cur_w or not cur_w.sbox then return nil end
-    local cx = cur_w.sbox.x + cur_w.sbox.w / 2
-    local cy = cur_w.sbox.y + cur_w.sbox.h / 2
-    local lh = cur_w.sbox.h
-    local best, best_dist = nil, math.huge
-    for i, w in ipairs(word_list) do
-        if w.sbox then
-            local wy = w.sbox.y + w.sbox.h / 2
-            if (delta > 0 and wy > cy + lh * 0.5) or
-               (delta < 0 and wy < cy - lh * 0.5) then
-                local d = math.abs(wy - (cy + delta * lh)) * 2
-                        + math.abs(w.sbox.x + w.sbox.w/2 - cx)
-                if d < best_dist then best = i; best_dist = d end
-            end
-        end
-    end
-    return best
-end
-
-function SelectorOverlay:_xp_line_jump(xp, delta)
-    local doc = self.doc
-    local sy = doc:getScreenPositionFromXPointer(xp)
-    if not sy then return xp end
-    local end_xp = doc:getNextVisibleWordEnd(xp)
-    if not end_xp then return xp end
-    local ok, boxes = pcall(function()
-        return doc:getScreenBoxesFromPositions(xp, end_xp, true)
-    end)
-    if not ok or not boxes or #boxes == 0 then return xp end
-    local line_h = boxes[1].h
-    local line_tol = line_h * 0.3
-    local target_x = boxes[1].x
-
-    local current_xp = xp
-    local target_line_y, fallback_xp = nil, nil
-    for _ = 1, 80 do
-        local next_xp = delta > 0
-            and doc:getNextVisibleWordStart(current_xp)
-            or  doc:getPrevVisibleWordStart(current_xp)
-        if not next_xp or next_xp == current_xp then break end
-        if not doc:isXPointerInCurrentPage(next_xp) then break end
-        current_xp = next_xp
-        local ny = doc:getScreenPositionFromXPointer(next_xp)
-        if not ny then break end
-        if (delta > 0 and ny > sy + line_tol)
-            or (delta < 0 and ny < sy - line_tol) then
-            target_line_y = ny; fallback_xp = next_xp; break
-        end
-    end
-    if not fallback_xp then return xp end
-    local ok2, probe = pcall(function()
-        return doc:getWordFromPosition({x = target_x, y = target_line_y}, true)
-    end)
-    if ok2 and probe and probe.pos0 then return probe.pos0 end
-    return fallback_xp
-end
-
-function SelectorOverlay:quick_extend_right()
-    if self.mode == "walk" then
-        if not self.ww_word then return end
-        if not self.ww_extend_pos0 then
-            self.ww_extend_pos0 = self.ww_word.pos0
-        end
-        local doc = self.doc
-        local next_xp = doc:getNextVisibleWordStart(self.ww_word.pos0)
-        if next_xp and next_xp ~= self.ww_word.pos0
-            and doc:isXPointerInCurrentPage(next_xp) then
-            self.ww_word = self:_ww_word_from_xp(next_xp)
-        end
-    elseif self.mode == "struct" then
-        if self.sel_word then
-            local sent = self.sentences[self.sel_sent]
-            if sent and sent.word_list then
-                local new = (self.sel_word_tail or self.sel_word) + 1
-                if new <= #sent.word_list then self.sel_word_tail = new end
-            end
-        else
-            local new = (self.sel_tail or self.sel_sent) + 1
-            if new <= #self.sentences then self.sel_tail = new end
-        end
+        self:_para_step(dir, range)
     end
     self:_refresh()
 end
 
-function SelectorOverlay:quick_extend_left()
-    if self.mode == "walk" then
-        if not self.ww_word then return end
-        if not self.ww_extend_pos0 then
-            self.ww_extend_pos0 = self.ww_word.pos0
-        end
-        local doc = self.doc
-        local prev_xp = doc:getPrevVisibleWordStart(self.ww_extend_pos0)
-        if prev_xp and prev_xp ~= self.ww_extend_pos0
-            and doc:isXPointerInCurrentPage(prev_xp) then
-            self.ww_extend_pos0 = prev_xp
-        end
-    elseif self.mode == "struct" then
-        if self.sel_word then
-            local new = self.sel_word - 1
-            if new >= 1 then self.sel_word = new end
-        else
-            local new = self.sel_sent - 1
-            if new >= 1 then self.sel_sent = new end
-        end
-    end
+-- R-stick ↓ in sentences (TASK-17): the first word of the cursor's sentence,
+-- as a word walk. A range is dropped.
+function SelectorOverlay:to_words()
+    if self.mode ~= "struct" then return end
+    local s = self.sel_cur and self.sentences[self.sel_cur]
+    local w = s and s.word_list and s.word_list[1]
+    local ww = w and self:_ww_word_from_xp(w.xp0)
+    if not ww then return end
+    self.mode = "walk"
+    self.ww_word, self.ww_anchor, self.sel_anchor = ww, nil, nil
+    self:_refresh()
+end
+
+-- R-stick ↑ in words (TASK-17): the sentence that contains the cursor word.
+function SelectorOverlay:to_sentences()
+    if self.mode ~= "walk" or not self.ww_word then return end
+    local i = self:_sent_of_word(self.ww_word)
+    if not i then return end
+    self.mode = "struct"
+    self.ww_anchor, self.sel_anchor = nil, nil
+    self:_set_sent(i)
     self:_refresh()
 end
 
 ----------------------------------------------------------------------
--- Confirm / mode transitions
-----------------------------------------------------------------------
-
-function SelectorOverlay:confirm()
-    if self.mode == "cross" then
-        self.mode = "struct"
-        self.sel_sent = self.cursor_sent or 1
-        self.sel_word = nil
-        if self.cursor_word and self.sel_sent then
-            local sent = self.sentences[self.sel_sent]
-            if sent and sent.word_list then
-                local target_xp = self.words[self.cursor_word] and self.words[self.cursor_word].xp0
-                for wi, witem in ipairs(sent.word_list) do
-                    if witem.xp0 == target_xp then
-                        self.sel_word = wi; break
-                    end
-                end
-            end
-        end
-        self:_refresh()
-    else
-        self:action_menu()
-    end
-end
-
-----------------------------------------------------------------------
--- Action menu (Y button or A in struct mode)
+-- Action menu (A tapped)
 ----------------------------------------------------------------------
 
 function SelectorOverlay:action_menu()
-    if self.mode ~= "struct" and self.mode ~= "walk" then return end
     local sel = self:_get_selection()
     if not sel then return end
 
@@ -838,8 +671,9 @@ end
 ----------------------------------------------------------------------
 
 function SelectorOverlay:_get_selection()
-    if self.hl_cur > 0 and self.hl_items[self.hl_cur] then
+    if self.mode == "hl" then
         local item = self.hl_items[self.hl_cur]
+        if not item then return nil end
         local ann = item.ann
         local ok, text = pcall(function()
             return self.doc:getTextFromXPointers(ann.pos0, ann.pos1)
@@ -847,56 +681,24 @@ function SelectorOverlay:_get_selection()
         return { text = (ok and text) or "", pos0 = ann.pos0, pos1 = ann.pos1,
                  sboxes = item.boxes }
     end
-    if self.mode == "cross" then
-        if not self.cursor_word then return nil end
-        local w = self.words[self.cursor_word]
-        if not w then return nil end
-        local ok, text = pcall(function()
-            return self.doc:getTextFromXPointers(w.xp0, w.xp1)
-        end)
-        if not ok or not text or text == "" then return nil end
-        local ok2, boxes = pcall(function()
-            return self.doc:getScreenBoxesFromPositions(w.xp0, w.xp1, true)
-        end)
-        return { text = text, pos0 = w.xp0, pos1 = w.xp1,
-                 sboxes = ok2 and boxes or nil }
-    end
-    if self.mode == "walk" then
-        if not self.ww_word then return nil end
-        local w = self.ww_word
-        local p0 = self.ww_extend_pos0 or w.pos0
-        local ok, text = pcall(function()
-            return self.doc:getTextFromXPointers(p0, w.pos1)
-        end)
-        if not ok or not text or text == "" then text = w.word end
-        local ok2, boxes = pcall(function()
-            return self.doc:getScreenBoxesFromPositions(p0, w.pos1, true)
-        end)
-        return { text = text, pos0 = p0, pos1 = w.pos1,
-                 sboxes = ok2 and boxes or nil }
-    end
-    if not self.sel_sent then return nil end
-    local head = self.sentences[self.sel_sent]
-    local tail_idx = self.sel_tail or self.sel_sent
-    local tail = self.sentences[tail_idx]
-    if not head or not tail then return nil end
-
     local xp0, xp1
-    if self.sel_word and head.word_list and head.word_list[self.sel_word] then
-        local wh = head.word_list[self.sel_word]
-        local wt_idx = self.sel_word_tail or self.sel_word
-        local wt = head.word_list[wt_idx] or wh
-        xp0 = wh.xp0
-        xp1 = wt.next_xp0 or wt.xp1
+    if self.mode == "walk" then
+        xp0, xp1 = self:_ww_span()
+        if not xp0 then return nil end
     else
-        xp0 = head.xp0
-        xp1 = tail.xp1
+        local head = self.sel_sent and self.sentences[self.sel_sent]
+        local tail = head and self.sentences[self.sel_tail or self.sel_sent]
+        if not head or not tail then return nil end
+        xp0, xp1 = head.xp0, tail.xp1
     end
 
     local ok, text = pcall(function()
         return self.doc:getTextFromXPointers(xp0, xp1)
     end)
-    if not ok or not text or text == "" then return nil end
+    if not ok or not text or text == "" then
+        if self.mode ~= "walk" then return nil end
+        text = self.ww_word.word
+    end
     local ok2, boxes = pcall(function()
         return self.doc:getScreenBoxesFromPositions(xp0, xp1, true)
     end)
@@ -988,16 +790,22 @@ function SelectorOverlay:_do_toggle_highlight(sel)
                     { a, nb_highlights_added = -1,
                       nb_notes_added = a.note and -1 or 0 }))
                 UIManager:show(InfoMessage:new{ text = _("Highlight removed"), timeout = 1 })
-                -- Rebuild hl_items and reset hl_cur so the deleted highlight is
-                -- no longer drawn, focusable, or actionable (otherwise X could
-                -- re-add it and Y would run AI on a now-gone annotation).
+                -- Rebuild hl_items so the deleted highlight is no longer drawn,
+                -- focusable or actionable (otherwise X could re-add it and Y
+                -- would run on a now-gone annotation). Browsing highlights,
+                -- the focus stays in place; 0 = none left (padnav closes).
+                local cur = self.hl_cur
                 self:_collect_highlights()
+                if self.mode == "hl" then self.hl_cur = math.min(cur, #self.hl_items) end
                 self:_refresh()
                 return
             end
         end
     end
     self:_do_highlight(sel)
+    -- the new highlight gets its margin dot
+    self:_collect_highlights()
+    self:_refresh()
 end
 
 function SelectorOverlay:_do_note(sel)
@@ -1082,9 +890,7 @@ end
 ----------------------------------------------------------------------
 
 function SelectorOverlay:paintTo(bb, x, y)
-    if self.mode == "cross" then
-        self:_draw_crosshair(bb, x, y)
-    elseif self.mode == "walk" then
+    if self.mode == "walk" then
         self:_draw_walk(bb, x, y)
     else
         self:_draw_struct(bb, x, y)
@@ -1094,10 +900,10 @@ function SelectorOverlay:paintTo(bb, x, y)
 end
 
 function SelectorOverlay:_draw_walk(bb, ox, oy)
-    if self.ww_extend_pos0 and self.ww_word then
+    if self.ww_anchor and self.ww_word then
+        local p0, p1 = self:_ww_span()
         local ok, boxes = pcall(function()
-            return self.doc:getScreenBoxesFromPositions(
-                self.ww_extend_pos0, self.ww_word.pos1, true)
+            return self.doc:getScreenBoxesFromPositions(p0, p1, true)
         end)
         if ok and boxes then
             for _, b in ipairs(boxes) do
@@ -1111,71 +917,27 @@ function SelectorOverlay:_draw_walk(bb, ox, oy)
     invert_rounded_rect(bb, ox, oy, s.x, s.y, s.w, s.h)
 end
 
-function SelectorOverlay:_draw_crosshair(bb, ox, oy)
-    if not self.cursor_word then return end
-    local w = self.words[self.cursor_word]
-    if not w or not w.sbox then return end
-
-    invert_rounded_rect(bb, ox, oy, w.sbox.x, w.sbox.y, w.sbox.w, w.sbox.h)
-
-    -- crosshair lines with gap around the word
-    local cx = ox + w.sbox.x + math.floor(w.sbox.w / 2)
-    local cy = oy + w.sbox.y + math.floor(w.sbox.h / 2)
-    local sw = Screen:getWidth()
-    local sh = Screen:getHeight()
-    local gap = math.max(w.sbox.w, w.sbox.h) + 8
-    local lw = 2
-
-    if cx - gap > 0 then
-        bb:invertRect(ox, cy - 1, cx - gap - ox, lw)
-    end
-    if cx + gap < sw then
-        bb:invertRect(cx + gap, cy - 1, sw - cx - gap, lw)
-    end
-    if cy - gap > 0 then
-        bb:invertRect(cx - 1, oy, lw, cy - gap - oy)
-    end
-    if cy + gap < sh then
-        bb:invertRect(cx - 1, cy + gap, lw, sh - cy - gap)
-    end
-end
-
+-- The selected sentences (struct) or the focused saved highlight (hl).
 function SelectorOverlay:_draw_struct(bb, ox, oy)
-    -- Draw focused highlight if hl_cur is set
-    if self.hl_cur > 0 and self.hl_items[self.hl_cur] then
-        for _, b in ipairs(self.hl_items[self.hl_cur].boxes) do
-            invert_rounded_rect(bb, ox, oy, b.x, b.y, b.w, b.h)
+    if self.mode == "hl" then
+        local item = self.hl_items[self.hl_cur]
+        if item then
+            for _, b in ipairs(item.boxes) do
+                invert_rounded_rect(bb, ox, oy, b.x, b.y, b.w, b.h)
+            end
         end
         return
     end
 
     if not self.sel_sent then return end
     local head = self.sentences[self.sel_sent]
-    local tail_idx = self.sel_tail or self.sel_sent
-    local tail = self.sentences[tail_idx]
+    local tail = self.sentences[self.sel_tail or self.sel_sent]
     if not head or not tail then return end
 
     local ok, boxes = pcall(function()
         return self.doc:getScreenBoxesFromPositions(head.xp0, tail.xp1, true)
     end)
-
-    if self.sel_word then
-        if ok and boxes then
-            for _, b in ipairs(boxes) do
-                bb:paintRect(ox + b.x, oy + b.y + b.h - 2, b.w, 2, Blitbuffer.COLOR_BLACK)
-            end
-        end
-        local sent = self.sentences[self.sel_sent]
-        if sent and sent.word_list then
-            local wt = self.sel_word_tail or self.sel_word
-            for wi = self.sel_word, wt do
-                local ww = sent.word_list[wi]
-                if ww and ww.sbox then
-                    invert_rounded_rect(bb, ox, oy, ww.sbox.x, ww.sbox.y, ww.sbox.w, ww.sbox.h)
-                end
-            end
-        end
-    elseif ok and boxes then
+    if ok and boxes then
         for _, b in ipairs(boxes) do
             invert_rounded_rect(bb, ox, oy, b.x, b.y, b.w, b.h)
         end
@@ -1183,13 +945,11 @@ function SelectorOverlay:_draw_struct(bb, ox, oy)
 end
 
 -- Saved highlights on the page: a dot in the right margin next to each one,
--- the focused one (hl_cur, cycled with R-stick up/down) filled, the others a
+-- the focused one (hl_cur, browsed with Y and the D-pad) filled, the others a
 -- ring. No numbers and no sentence labels: the pad has no digit input (visel's
--- labels are there to be typed), the selection itself is inverted and the
--- position is in the status line (TASK-14).
+-- labels are there to be typed) and the selection itself is inverted (TASK-14).
 function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     if #self.hl_items == 0 then return end
-    if self.sel_word then return end
     local sh = Screen:getHeight()
     local sw = Screen:getWidth()
     local page_right = 0
@@ -1217,48 +977,31 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     end
 end
 
-function SelectorOverlay:_draw_status(bb, ox, oy)
-    local txt
+-- Status line: the level and the buttons, no counters (TASK-15). ↑ / ↓ after
+-- SENTENCE: the selection runs on past the top / bottom of the page.
+function SelectorOverlay:_status_text()
+    local keys = " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
     if self.mode == "walk" then
-        local ext = self.extend_side and (" +" .. self.extend_side:sub(1,1):upper()) or ""
-        txt = ("WALK%s \xC2\xB7 Y vort \xC2\xB7 X hl \xC2\xB7 A menu \xC2\xB7 B quit"):format(ext)
-    elseif self.mode == "cross" then
-        local w = self.cursor_word and self.words[self.cursor_word]
-        local word_text = w and w.text or "?"
-        if #word_text > 30 then word_text = word_text:sub(1, 27) .. "..." end
-        txt = ("CROSS \xC2\xB7 \"%s\" \xC2\xB7 Y vort \xC2\xB7 X hl \xC2\xB7 A struct \xC2\xB7 B quit"):format(word_text)
-    elseif self.hl_cur > 0 and self.hl_items[self.hl_cur] then
-        local ann = self.hl_items[self.hl_cur].ann
-        local note = (ann.note and ann.note ~= "") and " [note]" or ""
-        txt = ("HL %d/%d%s \xC2\xB7 X del \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"):format(
-            self.hl_cur, #self.hl_items, note)
-    elseif self.sel_word then
-        local sent = self.sentences[self.sel_sent]
-        local wt = self.sel_word_tail or self.sel_word
-        local n_words = sent and sent.word_list and #sent.word_list or 0
-        local range = (wt == self.sel_word)
-            and tostring(self.sel_word)
-            or  (self.sel_word .. "-" .. wt)
-        txt = ("WORD %s/%d \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"):format(
-            range, n_words)
-    else
-        local tail_idx = self.sel_tail or self.sel_sent
-        local range
-        if tail_idx == self.sel_sent then
-            range = tostring(self.sel_sent or 0)
-        else
-            range = (self.sel_sent or 0) .. "-" .. tail_idx
-        end
-        local ext = ""
-        local hs = self.sentences[self.sel_sent]
-        local ts = self.sentences[self.sel_tail or self.sel_sent]
-        if hs and hs._extends_before then ext = "\xE2\x86\x91" end
-        if ts and ts._extends_after  then ext = ext .. "\xE2\x86\x93" end
-        if ext ~= "" then ext = " " .. ext end
-        local hl_hint = #self.hl_items > 0 and (" \xC2\xB7 D\xE2\x86\x95 " .. #self.hl_items .. " hl") or ""
-        txt = ("SENT %s/%d%s \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu%s"):format(
-            range, #self.sentences, ext, hl_hint)
+        return (self.ww_anchor and "WORDS" or "WORD") .. keys
     end
+    if self.mode == "hl" then
+        local item = self.hl_items[self.hl_cur]
+        local ann = item and item.ann
+        local note = (ann and ann.note and ann.note ~= "") and " [note]" or ""
+        return "HIGHLIGHT" .. note .. " \xC2\xB7 X del \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+    end
+    local ext = ""
+    local hs = self.sentences[self.sel_sent]
+    local ts = self.sentences[self.sel_tail or self.sel_sent]
+    if hs and hs._extends_before then ext = "\xE2\x86\x91" end
+    if ts and ts._extends_after  then ext = ext .. "\xE2\x86\x93" end
+    if ext ~= "" then ext = " " .. ext end
+    local many = self.sel_sent and self.sel_tail and self.sel_tail > self.sel_sent
+    return (many and "SENTENCES" or "SENTENCE") .. ext .. keys
+end
+
+function SelectorOverlay:_draw_status(bb, ox, oy)
+    local txt = self:_status_text()
 
     local sw      = Screen:getWidth()
     local TOP_PAD = 18
@@ -1328,15 +1071,16 @@ end
 -- Open / close (called by padnav)
 ----------------------------------------------------------------------
 
-function Selector:_open()
-    if self.overlay then return end
-    if not self.ui or not self.ui.document then return end
-    if not self.ui.rolling then return end
-    -- Family overlay claim: refused while visel/hilite own the screen;
-    -- claiming here makes keyboard openers (Space/D/O/I…) stand down over
-    -- the gamepad overlay. padnav._is_enabled exempts our own claim, so
-    -- the gamepad keeps driving this overlay.
-    if not Pluginaro.claim_overlay(self.ui, "kopad") then return end
+-- A new overlay on the current page, holding the family overlay claim (nil
+-- when it cannot open). The claim is refused while visel/hilite own the
+-- screen; holding it makes keyboard openers (Space/D/O/I…) stand down over the
+-- gamepad overlay. padnav._is_enabled exempts our own claim, so the gamepad
+-- keeps driving this overlay.
+function Selector:_new_overlay()
+    if self.overlay then return nil end
+    if not self.ui or not self.ui.document then return nil end
+    if not self.ui.rolling then return nil end
+    if not Pluginaro.claim_overlay(self.ui, "kopad") then return nil end
     local ok, ov = pcall(SelectorOverlay.new, SelectorOverlay, {
         doc  = self.ui.document,
         ui   = self.ui,
@@ -1344,36 +1088,45 @@ function Selector:_open()
     if not ok then
         Pluginaro.release_overlay(self.ui, "kopad")
         UIManager:show(InfoMessage:new{ text = _("kopad error: ") .. tostring(ov) })
-        return
+        return nil
     end
+    return ov
+end
+
+function Selector:_show(ov)
     self.overlay = ov
     UIManager:show(ov)
     UIManager:setDirty("all", "ui")
 end
 
+-- Sentences, from the first sentence of the page (A while reading).
+function Selector:_open()
+    local ov = self:_new_overlay()
+    if ov then self:_show(ov) end
+end
+
+-- Words: the first word of the page, or the last one with from_end (D-pad
+-- ↑/← while reading).
 function Selector:_open_walk(from_end)
-    if self.overlay then return end
-    if not self.ui or not self.ui.document then return end
-    if not self.ui.rolling then return end
-    -- Same claim contract as _open (see comment there).
-    if not Pluginaro.claim_overlay(self.ui, "kopad") then return end
-    local ok, ov = pcall(SelectorOverlay.new, SelectorOverlay, {
-        doc  = self.ui.document,
-        ui   = self.ui,
-    })
-    if not ok then
+    local ov = self:_new_overlay()
+    if not ov then return end
+    ov.mode = "walk"
+    ov:_ww_land(from_end and -1 or 1)
+    self:_show(ov)
+end
+
+-- The page's saved highlights, the first one focused (Y while reading).
+-- False, with nothing shown, when the page has none.
+function Selector:_open_highlights()
+    local ov = self:_new_overlay()
+    if not ov then return nil end
+    if #ov.hl_items == 0 then
         Pluginaro.release_overlay(self.ui, "kopad")
-        UIManager:show(InfoMessage:new{ text = _("kopad error: ") .. tostring(ov) })
-        return
+        return false
     end
-    ov.mode    = "walk"
-    if #ov.words > 0 then
-        local idx = from_end and #ov.words or 1
-        ov.ww_word = ov:_ww_word_from_xp(ov.words[idx].xp0)
-    end
-    self.overlay = ov
-    UIManager:show(ov)
-    UIManager:setDirty("all", "ui")
+    ov.mode, ov.hl_cur = "hl", 1
+    self:_show(ov)
+    return true
 end
 
 function Selector:_close()
@@ -1392,7 +1145,7 @@ end
 function Selector:getMenuItems()
     return {
         {
-            text = _("Crosshair selector"),
+            text = _("Sentence selector"),
             callback = function() self:_open() end,
         },
     }

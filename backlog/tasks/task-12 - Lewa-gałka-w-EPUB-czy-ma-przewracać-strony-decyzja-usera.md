@@ -1,9 +1,10 @@
 ---
 id: TASK-12
 title: 'Lewa gałka w EPUB: czy ma przewracać strony (decyzja usera)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 17:47'
+updated_date: '2026-11-03 19:14'
 labels:
   - gamepad
   - ux
@@ -19,6 +20,12 @@ Obecnie w czytaniu EPUB (padnav.lua onKPUp/onKPLeft/onKPDown/onKPRight): L-gałk
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 User wybrał wariant
-- [ ] #2 Handlery L-gałki, nagłówek padnav.lua, ściągawka, README i testy zgodne z wyborem
+- [x] #1 User wybrał wariant
+- [x] #2 Handlery L-gałki, nagłówek padnav.lua, ściągawka, README i testy zgodne z wyborem
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Rozstrzygnięte 2026-11-03 w ramach nowego mapowania pada: wariant 1 (L-stick w czytaniu EPUB bez akcji, strony tylko LB/RB/LT/RT). Realizacja: TASK-15.
+<!-- SECTION:NOTES:END -->
