@@ -149,7 +149,7 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --  Display
 --   font_bigger / font_smaller
 --                           one step (reflowable documents only)
---   zoom_in / zoom_out      one small zoom step, 10 % (paged documents only: PDF/DjVu)
+--   zoom_in / zoom_out      one small zoom step, 3 % (paged documents only: PDF/DjVu)
 --   zoom_fit_width / zoom_fit_page
 --                           fit the text width (margins cropped) / the whole
 --                           page (paged documents only)
