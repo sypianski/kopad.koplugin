@@ -179,6 +179,13 @@ local BUTTON_SWALLOW = {
     [BTN_L3] = true, [BTN_R3] = true,
 }
 
+-- Contexts (PadNav:_context) in which PadNav's own handlers drive the pad.
+-- In the others ("top_menu", "window", "foreign", "off") the pad belongs to
+-- KOReader, apart from the few controls _menu_button / _menu_trigger take.
+local PAD_CONTEXTS = {
+    reading = true, paged = true, selection = true, dict = true, filemanager = true,
+}
+
 -- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
 -- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
 -- the page, always by a whole page (GotoPage, view from the top); every other
@@ -278,31 +285,18 @@ function PadNav:init()
     end
 end
 
+-- True when PadNav's own handlers may act: the current context (see
+-- PadNav:_context) is reading, a paged document, kopad's selection overlay,
+-- the dictionary popup or the FileManager. With a menu or any other window on
+-- top (or kopad off / a foreign overlay) they stand down and return false.
 function PadNav:_is_enabled()
-    -- A FOREIGN family overlay (visel / hilite) owns the screen — stand
-    -- down. kopad's own selector overlay also claims ui._kokb_overlay
-    -- (as "kopad", see selector._open*), and must NOT lock out the very
-    -- gamepad that drives it — hence the `except` argument.
-    if Pluginaro.overlay_active(self.ui, "kopad") then return false end
-    -- Modal arbitration: while a KOReader Menu / dialog owns the top of the
-    -- window stack, stand down from every reader-context gamepad handler
-    -- (crosshair / selector openers, shoulder-button page turns, face
-    -- buttons). Menu D-pad navigation is unaffected: the Menu sits on top of
-    -- the window stack and consumes Up/Down/Left/Right/Press before padnav
-    -- (in active_widgets) is ever consulted. kopad's own overlay is a Widget,
-    -- not in MODAL_CLASSES, so selection handling inside it still works.
-    if Pluginaro.is_modal_active() then return false end
-    return self.enabled_ref and self.enabled_ref.enabled
+    return PAD_CONTEXTS[self:_context()] or false
 end
 
--- Why _is_enabled() is false (same checks, same order). Trace output only;
--- call it only when Trace.active().
+-- Why _is_enabled() is false. Trace output only; call it only when
+-- Trace.active().
 function PadNav:_why_disabled()
-    if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign overlay" end
-    if Pluginaro.is_modal_active() then return "modal active" end
-    if not self.enabled_ref then return "no enabled_ref" end
-    if not self.enabled_ref.enabled then return "not enabled" end
-    return "enabled"
+    return "context " .. self:_context()
 end
 
 function PadNav:_suppress_reader_keys()
@@ -1060,13 +1054,11 @@ function PadNav:_override_action(role)
 end
 
 -- True when the pad should steer a paged document's view (PAGED_* tables):
--- a PDF/DjVu is open (the FileManager has no ui.paging, so its
--- list navigation stays stock), no X-combo pending (X + D-pad keeps its
--- menus) and no dictionary popup.
+-- context "paged" (a PDF/DjVu with nothing on top of it: no menu, dialog or
+-- dictionary popup) and no X-combo pending (X + D-pad keeps its menus).
 function PadNav:_paged_idle()
-    if not (self.ui and self.ui.document and self.ui.paging) or self.ui.rolling then return false end
+    if self:_context() ~= "paged" then return false end
     if self._x_mode then return false end
-    if self:_find_dict_widget() then return false end
     return true
 end
 
@@ -1143,19 +1135,19 @@ end
 -- LOGICAL button down (after remapping).
 function PadNav:_button_down(ev)
     local tr = Trace.active()
-    -- Top menu first (before the modal guard): LB/RB switch categories there.
-    if type(ev) == "table" and self:_menu_button(ev.button) then
-        if tr then Trace.log("padnav btn=%s: menu-branch handled -> result=true", tostring(ev.button)) end
-        return true
+    local btn = type(ev) == "table" and ev.button or nil
+    local ctx = self:_context()
+    -- A menu or another window on top: the pad belongs to it (_menu_button
+    -- takes LB/RB and Select in the top menu, the rest is stock).
+    if ctx == "top_menu" or ctx == "window" then
+        local res = self:_menu_button(btn, ctx)
+        if tr then Trace.log("padnav btn=%s: context %s -> result=%s", tostring(btn), ctx, tostring(res)) end
+        return res
     end
-    if not self:_is_enabled() then
-        if tr then
-            Trace.log("padnav btn=%s: passthrough, %s -> result=false",
-                tostring(type(ev) == "table" and ev.button), self:_why_disabled())
-        end
+    if not PAD_CONTEXTS[ctx] then
+        if tr then Trace.log("padnav btn=%s: passthrough, context %s -> result=false", tostring(btn), ctx) end
         return false
     end
-    local btn = type(ev) == "table" and ev.button or nil
     if btn == nil then
         if tr then Trace.log("padnav btn=nil: no button in event -> result=false") end
         return false
@@ -1225,43 +1217,97 @@ local STICK_HANDLERS = {
     [AXIS_RY] = { "onKPRStickUp",   "onKPRStickDown" },
 }
 
--- Top menu (TouchMenu), reader and FileManager alike. The window on top of
--- the UIManager stack is a container (ReaderMenu / FileManagerMenu:
--- CenterContainer with the TouchMenu as child [1]); we do not assume
--- self.ui.menu (FileManager's `ui` differs) and duck-type instead: a table
--- with a `tab_item_table` list and a `switchMenuTab` function. Toast widgets
--- (Notification) on top of the menu are skipped; any other widget on top
--- (dialog, InfoMessage, keyboard) means "not the top menu" -> nil.
+-- Context of the pad = the topmost window on the UIManager stack that is not a
+-- toast (Notification). Positive rule: kopad steers the document only when
+-- that window is the reader / FileManager itself (self.ui) or kopad's own
+-- selection overlay. Pluginaro.is_modal_active() is not enough: it only
+-- looks at the class of the top window, and KOReader wraps the top menu
+-- (ReaderMenu / FileManagerMenu), the TOC and the bookmark list in a
+-- CenterContainer, while ConfigDialog and many full-screen widgets are no
+-- modal class at all -- the pad would then drive the page under the menu.
+--   "off"          kopad switched off
+--   "foreign"      a FOREIGN family overlay (visel / hilite) owns the screen
+--                  (kopad's own claim does not count, see selector._open*)
+--   "reading"      a reflowable document (EPUB, ...), nothing on top
+--   "paged"        a paged document (PDF / DjVu), nothing on top
+--   "filemanager"  the file browser, nothing on top
+--   "selection"    kopad's selection overlay on top
+--   "dict"         the dictionary popup (DictQuickLookup) on top
+--   "top_menu"     the top menu (TouchMenu) on top, reader or FileManager
+--   "window"       anything else: TOC, bookmarks, history, config dialog,
+--                  dialogs, book map, ... -- the pad belongs to it
 local MENU_SEARCH_DEPTH = 3
 
-local function is_touch_menu(w)
-    return type(w) == "table"
-        and type(w.tab_item_table) == "table"
-        and type(w.switchMenuTab) == "function"
-end
-
-local function find_touch_menu_in(w, depth, seen)
+-- Depth-limited search of a window's widget tree (children = array part)
+-- for the first widget `pred` accepts; `seen` guards against cycles.
+local function find_in(w, pred, depth, seen)
     if type(w) ~= "table" or seen[w] then return nil end
     seen[w] = true
-    if is_touch_menu(w) then return w end
+    if pred(w) then return w end
     if depth <= 0 then return nil end
     for i = 1, #w do
-        local m = find_touch_menu_in(w[i], depth - 1, seen)
+        local m = find_in(w[i], pred, depth - 1, seen)
         if m then return m end
     end
     return nil
 end
 
-local function find_touch_menu()
+-- TouchMenu, duck-typed (FileManager's `ui` has no ui.menu like the reader's).
+local function is_touch_menu(w)
+    return type(w.tab_item_table) == "table" and type(w.switchMenuTab) == "function"
+end
+
+-- Anything with pages to turn: Menu (TOC, bookmarks, history, ...), TouchMenu.
+local function is_pager(w)
+    return type(w.onNextPage) == "function" and type(w.onPrevPage) == "function"
+end
+
+-- The dictionary popup. DictQuickLookup has no `name` field; every open one
+-- is listed in the class-level DictQuickLookup.window_list. (`name` is kept
+-- as a fallback for builds / tests that set it.)
+local function is_dict_window(w)
+    if type(w) ~= "table" then return false end
+    if w.name == "DictQuickLookup" then return true end
+    local ok, DQL = pcall(require, "ui/widget/dictquicklookup")
+    if ok and type(DQL) == "table" and type(DQL.window_list) == "table" then
+        for _, d in ipairs(DQL.window_list) do
+            if d == w then return true end
+        end
+    end
+    return false
+end
+
+local function top_window()
     local stack = UIManager._window_stack
     if type(stack) ~= "table" then return nil end
     for i = #stack, 1, -1 do
         local w = stack[i] and stack[i].widget
-        if type(w) == "table" and not w.toast then
-            return find_touch_menu_in(w, MENU_SEARCH_DEPTH, {})
-        end
+        if type(w) == "table" and not w.toast then return w end
     end
     return nil
+end
+
+local function find_touch_menu()
+    local top = top_window()
+    return top and find_in(top, is_touch_menu, MENU_SEARCH_DEPTH, {}) or nil
+end
+
+function PadNav:_context()
+    if not (self.enabled_ref and self.enabled_ref.enabled) then return "off" end
+    if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign" end
+    local top = top_window()
+    -- No stack (bare Lua tests) counts as the reader / FileManager itself.
+    if top == nil or top == self.ui then
+        local ui = self.ui
+        if not (ui and ui.document) then return "filemanager" end
+        if ui.paging and not ui.rolling then return "paged" end
+        return "reading"
+    end
+    local selector = self:_selector()
+    if selector and selector.overlay and top == selector.overlay then return "selection" end
+    if is_dict_window(top) then return "dict" end
+    if find_in(top, is_touch_menu, MENU_SEARCH_DEPTH, {}) then return "top_menu" end
+    return "window"
 end
 
 -- Switch the TouchMenu `dir` (+1 / -1) categories, wrapping at the ends.
@@ -1297,10 +1343,8 @@ local function menu_tab_step(menu, dir)
     return false
 end
 
--- The top menu (TouchMenu) when kopad should drive it, else nil. Used by the
--- menu branches that run BEFORE the _is_enabled() guard (a TouchMenu on top
--- counts as modal there): kopad must be switched on, and no FOREIGN family
--- overlay may own the screen (kopad's own claim does not count).
+-- The top menu (TouchMenu) when kopad should drive it, else nil: kopad
+-- switched on, no FOREIGN family overlay, a TouchMenu in the top window.
 function PadNav:_top_menu()
     if not (self.enabled_ref and self.enabled_ref.enabled) then return nil end
     if Pluginaro.overlay_active(self.ui, "kopad") then return nil end
@@ -1308,47 +1352,62 @@ function PadNav:_top_menu()
     return ok and menu or nil
 end
 
--- LB / RB with the top menu up: previous / next category. Buttons do not
--- auto-repeat (GamepadButtonDown fires once), so no filter is needed. Returns
--- true = consumed (the stock RPgBack/RPgFwd key, i.e. a menu page turn, is not
--- sent); false = no top menu / not our business, the caller continues as before.
-function PadNav:_menu_button(btn)
-    if btn ~= BTN_LB and btn ~= BTN_RB then return false end
-    local menu = self:_top_menu()
-    if not menu then
-        if Trace.active() then
-            Trace.log("padnav btn=%s: menu-branch no top menu (enabled=%s foreign_overlay=%s)",
-                tostring(btn), tostring(self.enabled_ref and self.enabled_ref.enabled),
-                tostring(Pluginaro.overlay_active(self.ui, "kopad")))
+-- Buttons (logical role id) while a menu or another window is on top
+-- (ctx "top_menu" / "window"). Returns true = consumed, false = the stock key
+-- goes to the menu. Rule: in menus the pad is KOReader's (D-pad / A / B /
+-- L-stick navigate as stock); kopad only adds
+--   top menu: LB / RB = previous / next category (buttons do not
+--             auto-repeat, so no filter; the stock RPgBack/RPgFwd = menu page
+--             turn is not sent), Select = close the menu (Select opened it).
+--             Start passes: its stock key "Menu" closes a TouchMenu too.
+--   both:     BUTTON_SWALLOW (stick clicks, Guide, Select / Start elsewhere)
+--             would send surprising stock keys, so they are eaten.
+function PadNav:_menu_button(btn, ctx)
+    if ctx == "top_menu" then
+        if btn == BTN_LB or btn == BTN_RB then
+            local menu = self:_top_menu()
+            if menu then
+                local ok, err = pcall(menu_tab_step, menu, btn == BTN_RB and 1 or -1)
+                if not ok then logger.warn("kopad: menu tab switch failed: " .. tostring(err)) end
+                Trace.log("padnav btn=%s: menu tab step ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
+            end
+            return true
         end
-        return false
+        if btn == BTN_SELECT then
+            local menu = self:_top_menu()
+            if menu and type(menu.closeMenu) == "function" then
+                local ok, err = pcall(menu.closeMenu, menu)
+                if not ok then logger.warn("kopad: menu close failed: " .. tostring(err)) end
+            end
+            return true
+        end
+        if btn == BTN_START then return false end
     end
-    local ok, err = pcall(menu_tab_step, menu, btn == BTN_RB and 1 or -1)
-    if not ok then
-        logger.warn("kopad: menu tab switch failed: " .. tostring(err))
-    end
-    Trace.log("padnav btn=%s: menu tab step ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
-    return true
+    return BUTTON_SWALLOW[btn] or false
 end
 
--- LT / RT with the top menu up: previous / next page of the menu. One press =
--- one page (_trigger_is_new_press); auto-repeats are consumed without action.
--- Returns true when the event belongs to the menu, false = caller continues.
-function PadNav:_menu_trigger(axis, value, from_button)
-    local menu = self:_top_menu()
-    if not menu then return false end
-    Trace.log("padnav axis=%s value=%s: menu page branch (new_press check next)",
-        tostring(axis), tostring(value))
-    if value > 0 and (from_button or self:_trigger_is_new_press(axis)) then
+-- LT / RT while a menu or another window is on top: previous / next page of
+-- the top menu, or of the first pager (Menu: TOC, bookmarks, ...) in the top
+-- window. One press = one page (_trigger_is_new_press); auto-repeats and
+-- windows without pages are consumed without action (stock has no trigger
+-- mapping anyway).
+function PadNav:_menu_trigger(axis, value, from_button, ctx)
+    local target
+    if ctx == "top_menu" then
+        target = self:_top_menu()
+    else
+        local top = top_window()
+        target = top and find_in(top, is_pager, MENU_SEARCH_DEPTH, {}) or nil
+    end
+    if value > 0 and (from_button or self:_trigger_is_new_press(axis)) and target then
         local method = axis == AXIS_RT and "onNextPage" or "onPrevPage"
-        if type(menu[method]) == "function" then
-            local ok, err = pcall(menu[method], menu)
+        if type(target[method]) == "function" then
+            local ok, err = pcall(target[method], target)
             if not ok then
                 logger.warn("kopad: menu page turn failed: " .. tostring(err))
             end
         end
     end
-    return true
 end
 
 -- LOGICAL trigger (axis AXIS_LT / AXIS_RT after remapping), numeric value.
@@ -1356,17 +1415,19 @@ end
 -- per press, so the auto-repeat filter is skipped.
 function PadNav:_trigger_event(axis, value, from_button)
     local tr = Trace.active()
-    if self:_menu_trigger(axis, value, from_button) then
+    local ctx = self:_context()
+    if ctx == "top_menu" or ctx == "window" then
+        self:_menu_trigger(axis, value, from_button, ctx)
         if tr then
-            Trace.log("padnav axis=%s value=%s: menu-branch handled -> result=true",
-                tostring(axis), tostring(value))
+            Trace.log("padnav axis=%s value=%s: context %s, menu page -> result=true",
+                tostring(axis), tostring(value), ctx)
         end
         return true
     end
-    if not self:_is_enabled() then
+    if not PAD_CONTEXTS[ctx] then
         if tr then
-            Trace.log("padnav axis=%s value=%s: passthrough, %s -> result=false",
-                tostring(axis), tostring(value), self:_why_disabled())
+            Trace.log("padnav axis=%s value=%s: passthrough, context %s -> result=false",
+                tostring(axis), tostring(value), ctx)
         end
         return false
     end

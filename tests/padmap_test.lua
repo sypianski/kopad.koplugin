@@ -446,10 +446,12 @@ do
         n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "onKPConfirm", name .. ": A keeps its built-in")
     end
 
-    -- kopad off / modal: untouched pass-through (override never reached)
-    n, log = nav(acts({ rb = "top_menu" }))
-    n._is_enabled = function() return false end
-    assert(n:onGamepadButtonDown({ button = 10 }) == false and #log.events == 0)
+    -- kopad off / foreign overlay: untouched pass-through (override never reached)
+    for _, c in ipairs({ "off", "foreign" }) do
+        n, log = nav(acts({ rb = "top_menu" }))
+        n._context = function() return c end
+        assert(n:onGamepadButtonDown({ button = 10 }) == false and #log.events == 0, c)
+    end
 
     -- X-combos stay on the built-in handlers: with the modifier on, RB is X+RB
     n, log = nav(acts({ rb = "top_menu" }))
@@ -547,8 +549,11 @@ do
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "X + D-pad is not a pan")
     -- dictionary popup open: D-pad and sticks pass through
     n, log = paged({ dict = {} })
+    local wstack = require("ui/uimanager")._window_stack
+    wstack[1] = { widget = { name = "DictQuickLookup" } }
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0)
     assert(n:onGamepadAxisMotion({ axis = 1, value = 20000 }) ~= true or #log.events == 0, "dict: no pan")
+    wstack[1] = nil
     -- FileManager (no document) and reflowable documents: D-pad unchanged
     n, log = paged({ doc = false })
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "FileManager list navigation")
@@ -556,6 +561,127 @@ do
     n.ui.rolling = {}
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "EPUB keeps word walk")
     n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd", "EPUB keeps its page turn")
+end
+
+-- 11. Context (TASK-7): menus and other windows on top of the reader get the
+-- pad; the document under them is never touched. Window stack laid out as
+-- KOReader does it: ReaderMenu / FileManagerMenu = CenterContainer{TouchMenu},
+-- TOC / bookmarks = CenterContainer{Menu}. Real handlers, no stubs in PadNav.
+do
+    local PadNav = require("padnav")
+    local stack = require("ui/uimanager")._window_stack
+    local function set_stack(...)
+        for i = #stack, 1, -1 do stack[i] = nil end
+        for i, w in ipairs({ ... }) do stack[i] = { widget = w } end
+    end
+
+    -- kind: "epub" | "pdf" | "fm"
+    local function reader(kind, padmap)
+        local log = { events = {}, selector = {}, menu = {} }
+        local ui = {
+            handleEvent = function(_, ev) log.events[#log.events + 1] = ev.name end,
+            view = { footer = { onToggleFooterMode = function() log.events[#log.events + 1] = "footer" end } },
+        }
+        local selector
+        if kind == "epub" then
+            ui.document, ui.rolling = {}, {}
+            selector = {
+                _open = function() log.selector[#log.selector + 1] = "_open" end,
+                _open_walk = function() log.selector[#log.selector + 1] = "_open_walk" end,
+                _close = function() end,
+            }
+        elseif kind == "pdf" then
+            ui.document, ui.paging = {}, { current_page = 5 }
+        end
+        local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = { selector = selector } } },
+            { __index = PadNav })
+        n:set_padmap(padmap and P.build(padmap, "xbox") or nil)
+        local function rec(name) return function() log.menu[#log.menu + 1] = name; return true end end
+        local touch = { tab_item_table = { {}, {}, {} }, cur_tab = 1,
+                        switchMenuTab = function(m, k) m.cur_tab = k; log.menu[#log.menu + 1] = "tab:" .. k end,
+                        onNextPage = rec("next"), onPrevPage = rec("prev"), closeMenu = rec("close") }
+        local list = { onNextPage = rec("next"), onPrevPage = rec("prev") }
+        return n, log, ui, selector, { touch }, { list }
+    end
+    local function nothing_moved(log, what)
+        assert(#log.events == 0 and #log.selector == 0,
+            what .. ": document untouched, got " .. table.concat(log.events, ",") .. table.concat(log.selector, ","))
+    end
+
+    for _, kind in ipairs({ "epub", "pdf", "fm" }) do
+        -- top menu: stock navigation passes, LB/RB = category, LT/RT = page, Select = close
+        local n, log, ui, _, top_menu = reader(kind, { version = 1, actions = { a = "next_page", x = "toc" } })
+        set_stack(ui, top_menu)
+        assert(n:_context() == "top_menu", kind)
+        for _, b in ipairs({ 0, 1, 2, 3, 6, 11, 12, 13, 14 }) do
+            assert(n:onGamepadButtonDown({ button = b }) == false, kind .. " top menu: button " .. b .. " goes to the menu")
+        end
+        for _, a in ipairs({ { 0, -20000 }, { 0, 20000 }, { 1, -20000 }, { 1, 20000 },
+                             { 2, -20000 }, { 2, 20000 }, { 3, -20000 }, { 3, 20000 } }) do
+            assert(n:onGamepadAxisMotion({ axis = a[1], value = a[2] }) == false, kind .. " top menu: stick " .. a[1])
+        end
+        nothing_moved(log, kind .. " top menu")
+        assert(n:onGamepadButtonDown({ button = 10 }) == true and log.menu[1] == "tab:2", kind .. " RB = next category")
+        assert(n:onGamepadButtonDown({ button = 9 }) == true and log.menu[2] == "tab:1", kind .. " LB = previous category")
+        assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.menu[3] == "next", kind .. " RT")
+        assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true and log.menu[4] == "prev", kind .. " LT")
+        assert(n:onGamepadButtonDown({ button = 4 }) == true and log.menu[5] == "close", kind .. " Select closes")
+        for _, b in ipairs({ 5, 7, 8 }) do assert(n:onGamepadButtonDown({ button = b }) == true, "swallow " .. b) end
+        nothing_moved(log, kind .. " top menu")
+        assert(not n._x_mode, kind .. " X does not arm the modifier under a menu")
+
+        -- TOC / bookmarks / any other window: everything stock, LT/RT = list page
+        local list
+        n, log, ui, _, _, list = reader(kind, { version = 1, actions = { lb = "toc" } })
+        set_stack(ui, list)
+        assert(n:_context() == "window", kind)
+        for _, b in ipairs({ 0, 1, 2, 3, 9, 10, 11, 12, 13, 14 }) do
+            assert(n:onGamepadButtonDown({ button = b }) == false, kind .. " window: button " .. b .. " goes to the window")
+        end
+        for _, b in ipairs({ 4, 6 }) do assert(n:onGamepadButtonDown({ button = b }) == true, "swallow " .. b) end
+        for _, a in ipairs({ 0, 1, 2, 3 }) do
+            assert(n:onGamepadAxisMotion({ axis = a, value = 20000 }) == false, kind .. " window: stick " .. a)
+        end
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 }); n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+        assert(log.menu[1] == "next" and log.menu[2] == "prev", kind .. " window: LT/RT = list page")
+        nothing_moved(log, kind .. " window")
+        -- a window without pages (dialog): triggers are eaten, nothing happens
+        set_stack(ui, {})
+        assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true)
+        nothing_moved(log, kind .. " dialog")
+    end
+
+    -- nothing on top (a toast does not count): the reading controls are back
+    local n, log, ui = reader("epub")
+    set_stack(ui, { toast = true })
+    assert(n:_context() == "reading")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and log.selector[1] == "_open", "EPUB: A opens the selector")
+    n, log, ui = reader("pdf")
+    set_stack(ui)
+    assert(n:_context() == "paged")
+    assert(n:onGamepadButtonDown({ button = 11 }) == true and log.events[1] == "Panning", "PDF: D-pad pans")
+    n, log, ui = reader("fm")
+    set_stack(ui)
+    assert(n:_context() == "filemanager")
+    -- own overlay, dictionary, foreign overlay, kopad off
+    local sel
+    n, log, ui, sel = reader("epub")
+    sel.overlay = {}
+    set_stack(ui, sel.overlay)
+    assert(n:_context() == "selection")
+    -- the real popup has no `name`: it is recognised via DictQuickLookup.window_list
+    local popup = {}
+    package.loaded["ui/widget/dictquicklookup"] = { window_list = { popup } }
+    set_stack(ui, sel.overlay, popup)
+    assert(n:_context() == "dict")
+    package.loaded["ui/widget/dictquicklookup"] = nil
+    ui._kokb_overlay = "visel"
+    package.loaded.pluginaro.overlay_active = function(u, except) return u._kokb_overlay ~= nil and u._kokb_overlay ~= except end
+    assert(n:_context() == "foreign")
+    package.loaded.pluginaro.overlay_active = function() return false end
+    n.enabled_ref.enabled = false
+    assert(n:_context() == "off")
+    set_stack()
 end
 
 print("padmap_test: all tests passed")
