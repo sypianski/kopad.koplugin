@@ -6,7 +6,7 @@ The authoritative control map (and the exact key names) lives in the header of
 padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device.
 
   Reading:
-    RT / LT                  Next / previous page (always)
+    RT / LT                  Next / previous page
     RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
     Select / Start           Top menu / bottom menu
     A                        Select sentences
@@ -25,14 +25,15 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
 
   Selection (sentences / words; highlights after Y):
     D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,
-                             across page edges; held D-pad repeats
+                             across page edges; held D-pad repeats, faster
+    RT / LT                  Next / previous paragraph (held: keeps jumping)
     A held + arrows          Range from where A was pressed
     A tapped                 Action menu (dict, AI, copy, note)
     R-stick ↓ / ↑            Sentence -> its first word / word -> its sentence
     Y                        Vortuyo lookup
     X                        Toggle highlight
     B                        Close
-    RB / LB, RT / LT         Close and turn the page
+    RB / LB                  Close and turn the page
     Select / Start           Close and open top / bottom menu
 
   Dictionary popup:

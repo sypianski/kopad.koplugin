@@ -1004,6 +1004,261 @@ do
     T.now = function() return 0 end
 end
 
+-- 14. The pad in an EPUB (TASK-15..18): sticks inert while reading, A / D-pad
+-- open the two levels, A held = range, A tapped = menu on the release, X held
+-- = modifier, held D-pad repeats, LB / RB / B close, R-stick switches the
+-- level. A recording fake overlay stands in for selector.lua (its own
+-- behaviour: tests/selector_test.lua).
+do
+    local PadNav = require("padnav")
+    local UIM = require("ui/uimanager")
+    local stack = UIM._window_stack
+    local T = package.loaded["ui/time"]
+    local clock = 9000
+    T.now = function() clock = clock + 1; return clock end
+    local sched = {}
+    UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = { s = s, fn = fn } end
+    UIM.unschedule = function(_, fn)
+        for i = #sched, 1, -1 do if sched[i].fn == fn then table.remove(sched, i) end end
+    end
+    local function set_stack(...)
+        for i = #stack, 1, -1 do stack[i] = nil end
+        for i, w in ipairs({ ... }) do stack[i] = { widget = w } end
+    end
+    local function args(...)
+        local t = {}
+        for i = 1, select("#", ...) do t[i] = tostring((select(i, ...))) end
+        return table.concat(t, ",")
+    end
+    local function epub(padmap, layout)
+        local log = { ov = {}, events = {}, sel = {}, text = {} }
+        local ui = { document = {}, rolling = {},
+                     handleEvent = function(_, ev)
+                         log.events[#log.events + 1] = ev.name .. (ev.args[1] ~= nil and (":" .. tostring(ev.args[1])) or "")
+                     end,
+                     view = { footer = { onToggleFooterMode = function() log.events[#log.events + 1] = "footer" end } } }
+        local function rec(name) return function(_, ...) log.ov[#log.ov + 1] = name .. "(" .. args(...) .. ")" end end
+        local selector = {}
+        local function show(mode)
+            local ov = { mode = mode, hl_items = {}, hl_cur = 0,
+                         step = rec("step"), line = rec("line"), para = rec("para"), action_menu = rec("menu"),
+                         to_words = rec("to_words"), to_sentences = rec("to_sentences"),
+                         _get_selection = function() return { text = "verbum" } end,
+                         _do_vortuyo = rec("vortuyo") }
+            function ov:_do_toggle_highlight()
+                log.ov[#log.ov + 1] = "toggle"
+                if self.mode == "hl" then self.hl_cur = 0 end
+            end
+            selector.overlay = ov
+            set_stack(ui, ov)
+        end
+        selector._open = function() log.sel[#log.sel + 1] = "_open"; show("struct") end
+        selector._open_walk = function(_, from_end) log.sel[#log.sel + 1] = "_open_walk:" .. tostring(from_end); show("walk") end
+        selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return false end
+        selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
+        local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = { selector = selector } } },
+            { __index = PadNav })
+        n:set_padmap(padmap and P.build(padmap, layout or "xbox") or nil)
+        n._show_text = function(_, text) log.text[#log.text + 1] = text end
+        set_stack(ui)
+        for i = #sched, 1, -1 do sched[i] = nil end
+        return n, log, selector
+    end
+    local function down(n, b) return n:onGamepadButtonDown({ button = b }) end
+    local function up(n, b) return n:onGamepadButtonUp({ button = b }) end
+
+    -- reading: both sticks are consumed and do nothing (TASK-12 / TASK-15)
+    local n, log = epub()
+    assert(n:_context() == "reading")
+    for _, a in ipairs({ { 0, -20000 }, { 0, 20000 }, { 1, -20000 }, { 1, 20000 },
+                         { 2, -20000 }, { 2, 20000 }, { 3, -20000 }, { 3, 20000 } }) do
+        assert(n:onGamepadAxisMotion({ axis = a[1], value = a[2] }) == true, "reading: stick " .. a[1] .. " consumed")
+    end
+    -- ...also on the legacy key path (LStick* and the F3.. R-stick keys)
+    for _, m in ipairs({ "onKPUp", "onKPDown", "onKPLeft", "onKPRight",
+                         "onKPRStickUp", "onKPRStickDown", "onKPRStickLeft", "onKPRStickRight" }) do
+        assert(n[m](n) == true, m .. " consumed")
+    end
+    assert(#log.events == 0 and #log.sel == 0 and #log.ov == 0, "reading: sticks move nothing")
+
+    -- A opens the sentences; its own release opens no menu
+    assert(down(n, 0) == true and log.sel[1] == "_open" and n:_context() == "selection")
+    up(n, 0)
+    assert(#log.ov == 0, "the A that opened the selection is not a tap")
+    -- a tap (down + up, no arrow) = the action menu, on the release
+    down(n, 0); assert(#log.ov == 0, "nothing on the press")
+    up(n, 0); assert(log.ov[1] == "menu()", "tap = menu")
+    -- A held + arrows = a range; the release then opens nothing
+    log.ov = {}
+    down(n, 0); down(n, 14); down(n, 12)
+    n:onGamepadAxisMotion({ axis = 0, value = -20000 })
+    up(n, 14); up(n, 12); up(n, 0)
+    assert(log.ov[1] == "step(1,true)" and log.ov[2] == "line(1,true)" and log.ov[3] == "step(-1,true)"
+        and #log.ov == 3, "range moves, no menu: " .. table.concat(log.ov, " "))
+    -- without A: plain moves (D-pad and L-stick alike)
+    log.ov = {}
+    down(n, 13); up(n, 13); down(n, 11); up(n, 11)
+    n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+    assert(log.ov[1] == "step(-1,false)" and log.ov[2] == "line(-1,false)" and log.ov[3] == "line(1,false)",
+        "plain moves: " .. table.concat(log.ov, " "))
+    -- a stick snapping back within MENU_STICK_LOCK_S does not undo the move
+    T.now = function() return clock end
+    clock = clock + 5; n:onGamepadAxisMotion({ axis = 0, value = 20000 })
+    clock = clock + 0.05
+    assert(n:onGamepadAxisMotion({ axis = 0, value = -6000 }) == true and #log.ov == 4, "selection: bounce eaten")
+    T.now = function() clock = clock + 1; return clock end
+
+    -- R-stick switches the level (TASK-17); ←/→ nothing
+    log.ov = {}
+    n:onGamepadAxisMotion({ axis = 3, value = 20000 })
+    n:onGamepadAxisMotion({ axis = 3, value = -20000 })
+    n:onGamepadAxisMotion({ axis = 2, value = 20000 })
+    assert(log.ov[1] == "to_words()" and log.ov[2] == "to_sentences()" and #log.ov == 2, table.concat(log.ov, " "))
+    -- Y = Vortuyo, X = toggle highlight
+    log.ov = {}
+    down(n, 3); down(n, 2)
+    assert(log.ov[1]:find("^vortuyo"), "Y = Vortuyo")
+    assert(log.ov[2] == "toggle" and not n._x_mode, "X = highlight, not the modifier")
+
+    -- held D-pad repeats (TASK-16): first after the delay, then every step;
+    -- the release stops it
+    log.ov = {}
+    down(n, 14)
+    assert(#sched == 1 and math.abs(sched[1].s - 0.45) < 1e-9, "repeat scheduled after the delay")
+    local tick = table.remove(sched, 1).fn
+    tick()
+    assert(#log.ov == 2 and log.ov[2] == "step(1,false)" and #sched == 1 and math.abs(sched[1].s - 0.15) < 1e-9,
+        "repeated step, next one scheduled")
+    up(n, 14)
+    assert(#sched == 0, "release unschedules")
+    tick()
+    assert(#log.ov == 2, "a stale tick does nothing")
+    -- ...and a context change stops it too
+    down(n, 12); tick = table.remove(sched, 1).fn
+    set_stack(n.ui, n.enabled_ref.subs.selector.overlay, {}) -- a dialog on top
+    tick()
+    assert(#log.ov == 3 and #sched == 0, "no step under a dialog, repeat ended")
+    set_stack(n.ui, n.enabled_ref.subs.selector.overlay)
+    up(n, 12)
+    -- ...and it speeds up (TASK-25): 0.15 s for the first repeats, then
+    -- shorter and shorter, never below 0.05 s
+    down(n, 14)
+    local gaps = {}
+    for _ = 1, 30 do
+        tick = table.remove(sched, 1).fn; tick()
+        gaps[#gaps + 1] = sched[1].s
+    end
+    up(n, 14)
+    assert(math.abs(gaps[1] - 0.15) < 1e-9 and math.abs(gaps[4] - 0.15) < 1e-9, "first repeats at the base rate")
+    assert(gaps[5] < 0.15 and gaps[6] < gaps[5], "then faster: " .. gaps[5] .. " " .. gaps[6])
+    assert(math.abs(gaps[30] - 0.05) < 1e-9, "floor 0.05 s: " .. gaps[30])
+    for i = 2, 30 do assert(gaps[i] <= gaps[i - 1] + 1e-12, "never slower again") end
+
+    -- LB / RB close the selection and turn the page; B closes it
+    local sel
+    n, log, sel = epub()
+    down(n, 0); up(n, 0)
+    assert(down(n, 10) == true and log.sel[2] == "_close" and log.events[1] == "GotoViewRel:1", "RB")
+    down(n, 0); up(n, 0)
+    assert(down(n, 9) == true and log.events[2] == "GotoViewRel:-1", "LB")
+    down(n, 0); up(n, 0)
+    assert(down(n, 1) == true and sel.overlay == nil and #log.events == 2, "B closes, no page turn")
+
+    -- LT / RT in the selection (TASK-25): a paragraph, the overlay stays open;
+    -- held, the stock auto-repeat keeps jumping; with A held = range
+    n, log, sel = epub()
+    T.now = function() return clock end
+    clock = clock + 10
+    down(n, 0); up(n, 0)
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.ov[1] == "para(1,false)"
+        and sel.overlay and #log.events == 0, "RT = next paragraph, no page turn")
+    clock = clock + 0.5                                  -- first stock repeat
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    clock = clock + 0.2                                  -- next one
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(#log.ov == 3 and log.ov[3] == "para(1,false)", "held RT repeats: " .. table.concat(log.ov, " "))
+    clock = clock + 5
+    down(n, 0)
+    n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+    up(n, 0)
+    assert(log.ov[4] == "para(-1,true)" and #log.ov == 4, "A + LT = range by paragraph, no menu")
+    -- legacy key path (LPgBack / LPgFwd) too
+    n:onKPPgFwd2(); assert(log.ov[5] == "para(1,false)")
+    -- while reading the repeat is still filtered: one press = one page
+    sel:_close()
+    clock = clock + 5
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    clock = clock + 0.5
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(#log.events == 1 and log.events[1] == "GotoViewRel:1", "reading: held RT = one page")
+    T.now = function() clock = clock + 1; return clock end
+
+    -- D-pad while reading: the word level, ↓/→ from the first word, ↑/← from the last
+    n, log, sel = epub()
+    down(n, 12); assert(log.sel[1] == "_open_walk:false" and #log.ov == 0, "D-pad ↓ only opens")
+    up(n, 12); sel:_close()
+    down(n, 13); assert(log.sel[3] == "_open_walk:true", "D-pad ← from the last word")
+    up(n, 13)
+
+    -- Y while reading: the page's highlights; none = a message
+    n, log = epub()
+    assert(down(n, 3) == true and log.sel[1] == "_open_highlights" and log.text[1] == "No highlights on this page")
+    -- browsing highlights: X removing the last one closes the overlay
+    n, log, sel = epub()
+    sel._open_highlights = function()
+        log.sel[#log.sel + 1] = "_open_highlights"
+        sel._open(); sel.overlay.mode, sel.overlay.hl_cur = "hl", 1
+        return true
+    end
+    down(n, 3)
+    assert(sel.overlay and sel.overlay.mode == "hl" and #log.text == 0)
+    down(n, 2)
+    assert(sel.overlay == nil and log.sel[#log.sel] == "_close", "last highlight removed -> closed")
+
+    -- X held = modifier (TASK-16): combos while held, gone on the release
+    n, log = epub()
+    down(n, 2); assert(n._x_mode)
+    down(n, 11); down(n, 12)
+    assert(log.events[1] == "ShowMenu" and log.events[2] == "footer" and n._x_mode, "two combos while X is held")
+    assert(#sched == 0 and #log.sel == 0, "a combo opens nothing and does not repeat")
+    up(n, 11); up(n, 12); up(n, 2)
+    assert(not n._x_mode, "release ends the modifier")
+    down(n, 12); assert(log.sel[1] == "_open_walk:false", "D-pad without X = words again")
+    -- legacy key path: X is a latch, one combo spends it
+    n, log = epub()
+    n:onKPExtend(); assert(n._x_mode)
+    n:onKPUp2(); assert(log.events[1] == "ShowMenu" and not n._x_mode, "legacy latch spent")
+    -- a trigger acting as X never reports a release: a latch too
+    n, log = epub({ version = 1, layouts = { xbox = { ltrigger = "x" } } })
+    n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+    assert(n._x_mode and n._x_hold == nil, "trigger as X = latch")
+    down(n, 11); assert(log.events[1] == "ShowMenu" and not n._x_mode)
+    -- x_modifier on another role: held like X
+    n, log = epub({ version = 1, actions = { b = "x_modifier" } })
+    down(n, 1); assert(n._x_mode and n._x_hold == 1)
+    up(n, 1); assert(not n._x_mode, "role b released")
+
+    -- the release is remapped like the press: nintendo, physical east = role A
+    n, log = epub(nil)
+    n:set_padmap(P.build(nil, "nintendo"))
+    down(n, 1); up(n, 1)                -- role A: opens the sentences
+    down(n, 1); up(n, 1)                -- role A tapped: the menu
+    assert(log.sel[1] == "_open" and log.ov[1] == "menu()", "remapped A release")
+    down(n, 0); up(n, 0)                -- physical south = role B: closes, no menu
+    assert(log.sel[2] == "_close" and #log.ov == 1)
+
+    -- legacy key path in the selection: A = menu on the press, RB / LB = range steps
+    n, log = epub()
+    n:onKPConfirm(); assert(log.sel[1] == "_open")
+    n:onKPConfirm(); assert(log.ov[1] == "menu()", "legacy A = menu at once")
+    n:onKPPgFwd(); n:onKPPgBk()
+    assert(log.ov[2] == "step(1,true)" and log.ov[3] == "step(-1,true)" and #log.events == 0, "legacy RB / LB = range")
+
+    UIM.scheduleIn, UIM.unschedule = nil, nil
+    set_stack()
+    T.now = function() return 0 end
+end
+
 -- 15. Dictation routing (pluginaro integration B, diktonoti) in context
 -- "window": R3 toggles while a text field is focused (is_active) or a
 -- recording runs, B cancels only a running recording. Toggle off / no

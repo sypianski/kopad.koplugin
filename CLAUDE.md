@@ -132,10 +132,16 @@ main.lua, remapped through padmap like the press) ends three holds:
   `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
   step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
   other than `selection`, or `DPAD_REPEAT_MAX`. X combos are not repeated.
+  The interval shrinks after `DPAD_ACCEL_AFTER` repeats (`dpad_interval`,
+  TASK-25) down to `DPAD_REPEAT_MIN_S`.
 
 In the selection LB / RB close it and turn the page (`_turn_page`, in
 `_button_dispatch`); `onKPPgBk` / `onKPPgFwd` with an overlay are reached only
 from the legacy key path, where they step the range (`step(±1, true)`).
+LT / RT (`onKPPgBk2` / `onKPPgFwd2` -> `_trigger_page`) jump by paragraph in
+the selection (`Selector:para`, TASK-25) and turn the page otherwise; in
+context `selection` `_trigger_event` lets the stock trigger auto-repeat
+through (`held`), everywhere else it stays filtered.
 While reading, both sticks are consumed and do nothing (TASK-12 / TASK-15).
 
 ### `padmap.lua` — button remapping (pure, PC-011)
@@ -230,7 +236,10 @@ removed in TASK-15; the padmap id `crosshair` stays as an alias of
   every arrow steps between them (`_hl_step`, wrapping).
 
 Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
-document order, already RTL-flipped), `to_words()` / `to_sentences()` (the two
+document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:
+`_ww_para` = first word of the next / this or previous paragraph, a paragraph
+begun on the previous page is reached there; sentences = `_para_step`;
+highlights = `_hl_step`), `to_words()` / `to_sentences()` (the two
 levels, TASK-17), `action_menu()`. Without a range the moves cross the page edge
 in both directions (`_turn_page` + `_ww_land` / `_sent_land` / `_para_land`,
 TASK-18); a sentence running over the edge is skipped on the other side, so it

@@ -121,6 +121,7 @@ The selection has two levels: sentences (opened with **A**) and words (opened wi
 |---|---|---|
 | **D-pad** / **L-stick** ←/→ | previous / next word | previous / next sentence |
 | **D-pad** / **L-stick** ↑/↓ | line above / below | start of this or the previous paragraph / next paragraph |
+| **RT** / **LT** | first word of the next paragraph / of this paragraph (or the previous one when already there) | next paragraph / start of this or the previous paragraph (as ↓/↑) |
 | hold **A** + arrows | select a range from the word where you pressed A, in both directions (going back past it shrinks the range, then grows it on the other side) | the same with sentences |
 | tap **A** | action menu (dictionary, AI, copy, note), when you let go | same |
 | **R-stick** ↓ | — | go to the first word of this sentence (word level) |
@@ -128,10 +129,10 @@ The selection has two levels: sentences (opened with **A**) and words (opened wi
 | **Y** | Vortuyo lookup | same |
 | **X** | toggle highlight | same |
 | **B** | close the selection | same |
-| **RB** / **LB**, **RT** / **LT** | close the selection and turn the page | same |
+| **RB** / **LB** | close the selection and turn the page | same |
 | **Select** / **Start** | close the selection and open the top / bottom menu | same |
 
-The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the first word of the next one. A sentence that runs over the edge counts once. A range (A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second). The status line at the top shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters.
+The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the first word of the next one. A sentence that runs over the edge counts once. A range (A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second. **RT** / **LT** jump by paragraph at both levels, over the page edge too (a paragraph that began on the previous page is reached at its real start); held, they keep jumping, and with **A** held they grow the range by paragraphs. With the highlights (**Y**) they go to the next / previous one. The status line at the top shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters.
 
 While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
 
@@ -143,7 +144,7 @@ In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to
 
 On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and is mapped by id in `padnav.lua` (`onGamepadButtonDown` / `onGamepadAxisMotion`, relayed from `main.lua`). While kopad is enabled:
 
-- **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
+- **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out; in the selection it goes through, so a held trigger keeps jumping paragraphs). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
 - **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. In an EPUB kopad handles the D-pad itself (so that a held D-pad can repeat); elsewhere it is passed through to the original Up/Down/Left/Right keys.
 - Button releases (`GamepadButtonUp`) end holding **A** (range, or a tap for the menu), holding **X** and a D-pad repeat. They are remapped like the presses.

@@ -211,6 +211,32 @@ ov:step(1); assert(doc.page == 2 and text(ov) == "t7", "→ on the last word = n
 ov:line(-1); assert(doc.page == 1 and text(ov) == "t6", "↑ on the first line = previous page, last word")
 assert(ov:_status_text():match("^WORD ") and not ov:_status_text():find("%d"))
 sel:_close()
+
+-- 5b. LT / RT in words (TASK-25): the first word of the next / this or the
+-- previous paragraph, over page edges; a paragraph that began on the
+-- previous page is reached at its real start
+sel, doc = fresh()
+sel:_open_walk(false); ov = sel.overlay
+ov:para(1); assert(doc.page == 2 and text(ov) == "t9", "RT = next paragraph, over the edge: " .. tostring(text(ov)))
+ov:para(1); assert(doc.page == 3 and text(ov) == "t14", "RT again: paragraph 3 on page 3: " .. tostring(text(ov)))
+ov:step(1); assert(text(ov) == "t15")
+ov:para(-1); assert(doc.page == 3 and text(ov) == "t14", "LT inside a paragraph = its first word")
+ov:para(-1); assert(doc.page == 2 and text(ov) == "t9", "LT = previous paragraph, at its start on page 2: " .. tostring(text(ov)))
+ov:para(-1); assert(doc.page == 1 and text(ov) == "t1", "LT = paragraph 1: " .. tostring(text(ov)))
+ov:para(-1); assert(doc.page == 1 and text(ov) == "t1", "first paragraph of the book: stays")
+-- range (A held): paragraph by paragraph on the page only
+sel:_close()
+sel, doc = fresh(2)
+sel:_open_walk(false); ov = sel.overlay
+assert(text(ov) == "t7")
+ov:para(1, true); assert(doc.page == 2 and text(ov) == "t7 t8 t9", "range to the next paragraph: " .. tostring(text(ov)))
+ov:para(1, true); assert(doc.page == 2 and text(ov) == "t7 t8 t9", "a paragraph range stays on the page")
+-- sentences: LT / RT = ↓ / ↑; highlights: next / previous
+sel:_close()
+sel, doc = fresh()
+sel:_open(); ov = sel.overlay
+ov:para(1); assert(doc.page == 2 and text(ov) == "t9 t10", "RT in sentences = next paragraph")
+sel:_close()
 sel, doc = fresh()
 sel:_open_walk(true); ov = sel.overlay
 assert(text(ov) == "t6", "D-pad ↑/← opens on the last word")

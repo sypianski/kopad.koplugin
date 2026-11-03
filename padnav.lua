@@ -4,7 +4,7 @@ The on<Key> handlers below are the source of truth; keep this block, the
 header of main.lua, README.md and CHEAT_READING/CHEAT_SELECTION in sync with them.
 
 Reading:
-  RT / LT (triggers)     Next / previous page (always, also with overlay open)
+  RT / LT (triggers)     Next / previous page (in the selection: paragraph)
   RB / LB                Next / previous page (X+RB = bookmarks, X+LB = TOC)
   L4 / R4 (back paddles) Same as LB / RB -- ONLY on old builds with
                          sdl3_gamepad.patch (key_events ScrollLock/Pause).
@@ -93,7 +93,12 @@ plus the saved highlights "hl" opened by Y):
   D-pad / L-stick ↑/↓    Words: line          Sentences: paragraph
                          Highlights: previous / next one (all four)
                          Past the page edge: the next / previous page, both
-                         directions (TASK-18). Held D-pad repeats (TASK-16).
+                         directions (TASK-18). Held D-pad repeats (TASK-16)
+                         and speeds up after a few steps (TASK-25).
+  RT / LT                Next / previous paragraph (TASK-25): words = its first
+                         word, sentences = as ↓/↑, highlights = next / previous;
+                         back = start of this paragraph first. Over the page
+                         edge; held, it keeps jumping; with A held = range.
   A held + arrows        Range from where A was pressed, both directions
                          (moving back over the anchor shrinks it); never
                          leaves the page (Gamepad* path, TASK-16)
@@ -107,7 +112,7 @@ plus the saved highlights "hl" opened by Y):
   X                      Toggle highlight (highlights: remove; the last one
                          removed closes the overlay)
   B                      Close
-  RB / LB, RT / LT       Close and turn the page. Legacy key path: RB / LB
+  RB / LB                Close and turn the page. Legacy key path: RB / LB
                          grow / shrink the range at its moving end instead
                          (no button release there, so no A hold)
   Select / Start         Close and open top / bottom menu
@@ -273,7 +278,9 @@ local PAD_CONTEXTS = {
 -- button, and the repeat of a held D-pad in the selection (stock buttons do
 -- not auto-repeat): first step after DPAD_REPEAT_DELAY_S, then every
 -- DPAD_REPEAT_EVERY_S until the release, a context change or
--- DPAD_REPEAT_MAX steps (a lost release must not run forever).
+-- DPAD_REPEAT_MAX steps (a lost release must not run forever). After
+-- DPAD_ACCEL_AFTER repeats it speeds up (TASK-25): each interval is
+-- DPAD_ACCEL times the previous one, down to DPAD_REPEAT_MIN_S.
 local DPAD_HANDLERS = {
     [BTN_DPAD_UP] = "onKPUp2", [BTN_DPAD_DOWN] = "onKPDown2",
     [BTN_DPAD_LEFT] = "onKPLeft2", [BTN_DPAD_RIGHT] = "onKPRight2",
@@ -281,6 +288,16 @@ local DPAD_HANDLERS = {
 local DPAD_REPEAT_DELAY_S = 0.45
 local DPAD_REPEAT_EVERY_S = 0.15
 local DPAD_REPEAT_MAX     = 200
+local DPAD_ACCEL_AFTER    = 5
+local DPAD_ACCEL          = 0.8
+local DPAD_REPEAT_MIN_S   = 0.05
+
+-- Interval after repeat number `steps` (1 = the first repeat).
+local function dpad_interval(steps)
+    if steps < DPAD_ACCEL_AFTER then return DPAD_REPEAT_EVERY_S end
+    return math.max(DPAD_REPEAT_MIN_S,
+        DPAD_REPEAT_EVERY_S * DPAD_ACCEL ^ (steps - DPAD_ACCEL_AFTER + 1))
+end
 
 -- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
 -- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
@@ -723,23 +740,35 @@ function PadNav:onKPPgBk()
     self.ui:handleEvent(Event:new("GotoViewRel", -1)); return true
 end
 
--- LT/RT (and LB/RB in the selection on the Gamepad* path): page turn,
--- closing the selection. GotoViewRel +1 = next page (KOReader semantics, same
--- in RTL books: "next" is reading order, so no _is_rtl() flip here --
--- triggers are semantic, not spatial).
+-- LT/RT while reading (and LB/RB in the selection on the Gamepad* path): page
+-- turn, closing the selection. GotoViewRel +1 = next page (KOReader
+-- semantics, same in RTL books: "next" is reading order, so no _is_rtl() flip
+-- here -- triggers are semantic, not spatial).
 function PadNav:_turn_page(dir)
     local selector = self:_selector()
     if selector and selector.overlay then selector:_close() end
     self._x_mode = false
     self.ui:handleEvent(Event:new("GotoViewRel", dir)); return true
 end
+-- LT/RT in the selection (TASK-25): one paragraph back / forward at every
+-- level (Selector:para); with A held the range grows by paragraphs. Also
+-- reading order, no RTL flip.
+function PadNav:_trigger_page(dir)
+    local selector = self:_selector()
+    local ov = selector and selector.overlay
+    if not ov then return self:_turn_page(dir) end
+    local range = self._a_down or false
+    if range then self._a_moved = true end
+    ov:para(dir, range)
+    return true
+end
 function PadNav:onKPPgBk2()
     if not self:_is_enabled() then return false end
-    return self:_turn_page(-1)
+    return self:_trigger_page(-1)
 end
 function PadNav:onKPPgFwd2()
     if not self:_is_enabled() then return false end
-    return self:_turn_page(1)
+    return self:_trigger_page(1)
 end
 
 -- Select: top menu. Start: bottom menu (ReaderConfig's ConfigDialog: font,
@@ -875,7 +904,7 @@ function PadNav:_dpad_start(btn)
             self:_dpad_stop(); return
         end
         self[DPAD_HANDLERS[btn]](self)
-        UIManager:scheduleIn(DPAD_REPEAT_EVERY_S, tick)
+        UIManager:scheduleIn(dpad_interval(steps), tick)
     end
     self._dpad_held, self._dpad_tick = btn, tick
     UIManager:scheduleIn(DPAD_REPEAT_DELAY_S, tick)
@@ -1713,8 +1742,11 @@ function PadNav:_trigger_event(axis, value, from_button)
     end
     -- Triggers: 0..32767, only positive values are a press.
     local new_press = value > 0 and (from_button or self:_trigger_is_new_press(axis))
+    -- In the selection a held trigger keeps jumping by paragraph (TASK-25):
+    -- the stock auto-repeat goes through there (and only there).
+    local held = value > 0 and not new_press and ctx == "selection"
     local handler = "none"
-    if new_press then
+    if new_press or held then
         -- Role-level action override (PC-014); idle reading context only.
         local role = axis == AXIS_LT and "lt" or "rt"
         local override = self:_override_action(role)
@@ -1920,11 +1952,12 @@ local CHEAT_READING = _("Reading mode")
 local CHEAT_SELECTION = _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
     .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: line / paragraph"
+    .. "\nRT / LT: next / previous paragraph"
     .. "\nHold A + arrows: select a range"
     .. "\nA: action menu    Y: Vortuyo"
     .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"
     .. "\nX: toggle highlight    B: close"
-    .. "\nRB / LB, RT / LT: close and turn page"
+    .. "\nRB / LB: close and turn page"
     .. "\nSelect / Start: close and open menu"
     .. "\n\n" .. _("Highlights (Y)")
     .. "\nD-pad: previous / next    X: remove"

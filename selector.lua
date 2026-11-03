@@ -499,17 +499,21 @@ end
 -- so the page starts inside its paragraph); ↑ the start of the page's last
 -- paragraph.
 function SelectorOverlay:_para_land(dir, skip)
-    local n = #self.sentences
     self.sel_anchor = nil
-    if n == 0 then
+    local i = self:_para_land_index(dir, skip)
+    if not i then
         self.sel_cur, self.sel_sent, self.sel_tail = nil, nil, nil
         return
     end
-    if dir > 0 then
-        self:_set_sent(skip and self:_para_target(1, 1) or 1)
-    else
-        self:_set_sent(self:_para_start(n))
-    end
+    self:_set_sent(i)
+end
+
+-- The sentence _para_land lands on (nil on a page without sentences).
+function SelectorOverlay:_para_land_index(dir, skip)
+    local n = #self.sentences
+    if n == 0 then return nil end
+    if dir > 0 then return skip and self:_para_target(1, 1) or 1 end
+    return self:_para_start(n)
 end
 
 -- Sentences: paragraph down / up (see _para_target); past the page edge the
@@ -545,6 +549,62 @@ function SelectorOverlay:_sent_of_word(w)
     if not w.sbox or #self.words == 0 then return nil end
     local wi = self:_nearest_word(w.sbox.x + w.sbox.w / 2, w.sbox.y + w.sbox.h / 2)
     return self.word_to_sent[wi]
+end
+
+-- The walk word at the start of sentence i (nil when it cannot be built).
+function SelectorOverlay:_sent_first_word(i)
+    local s = self.sentences[i]
+    local w = s and s.word_list and s.word_list[1]
+    return w and self:_ww_word_from_xp(w.xp0) or nil
+end
+
+-- Words, LT / RT (TASK-25): the first word of the next paragraph; back = the
+-- first word of this paragraph, or of the previous one when the cursor is
+-- already there. Past the page edge the next / previous page, landing as
+-- _para_land does. range (A held) stays on the page.
+function SelectorOverlay:_ww_para(dir, range)
+    local w = self.ww_word
+    local cur = w and self:_sent_of_word(w)
+    if not cur then
+        if not range and self:_turn_page(dir) then
+            self.ww_anchor = nil
+            local i = self:_para_land_index(dir, false)
+            self.ww_word = i and self:_sent_first_word(i) or nil
+        end
+        return
+    end
+    if range then
+        self.ww_anchor = self.ww_anchor or w
+    else
+        self.ww_anchor = nil
+    end
+    local target
+    if dir > 0 then
+        target = self:_para_target(cur, 1)
+    else
+        local start = self:_para_start(cur)
+        local first = self:_sent_first_word(start)
+        if start < cur or (first and first.pos0 ~= w.pos0) then
+            target = start
+        else
+            target = self:_para_target(cur, -1)
+        end
+        -- the page's first sentence began on the previous page, so its
+        -- paragraph did too: the jump goes there, to the real start
+        if target == 1 and self.sentences[1]._extends_before then target = nil end
+    end
+    local tw = target and self:_sent_first_word(target)
+    if tw then
+        self.ww_word = tw
+        return
+    end
+    if range then return end
+    local split = dir > 0 and self.sentences[#self.sentences]._extends_after
+    if self:_turn_page(dir) then
+        self.ww_anchor = nil
+        local i = self:_para_land_index(dir, split)
+        self.ww_word = i and self:_sent_first_word(i) or nil
+    end
 end
 
 ----------------------------------------------------------------------
@@ -585,13 +645,25 @@ function SelectorOverlay:line(dir, range)
     self:_refresh()
 end
 
+-- LT / RT (TASK-25): one paragraph, at every level -- the first word of the
+-- next / this or previous paragraph, the same for sentences as ↑/↓, the
+-- next / previous highlight.
+function SelectorOverlay:para(dir, range)
+    if self.mode == "hl" then
+        self:_hl_step(dir)
+    elseif self.mode == "walk" then
+        self:_ww_para(dir, range)
+    else
+        self:_para_step(dir, range)
+    end
+    self:_refresh()
+end
+
 -- R-stick ↓ in sentences (TASK-17): the first word of the cursor's sentence,
 -- as a word walk. A range is dropped.
 function SelectorOverlay:to_words()
     if self.mode ~= "struct" then return end
-    local s = self.sel_cur and self.sentences[self.sel_cur]
-    local w = s and s.word_list and s.word_list[1]
-    local ww = w and self:_ww_word_from_xp(w.xp0)
+    local ww = self.sel_cur and self:_sent_first_word(self.sel_cur)
     if not ww then return end
     self.mode = "walk"
     self.ww_word, self.ww_anchor, self.sel_anchor = ww, nil, nil
