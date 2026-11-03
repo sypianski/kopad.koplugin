@@ -612,6 +612,8 @@ function SelectorOverlay:action_menu()
 
     local dlg
     dlg = ButtonDialog:new{
+        -- read only by wheel.lua: the wheel's title (TASK-20)
+        _kopad_snippet = sel.text,
         buttons = {
             {
                 {

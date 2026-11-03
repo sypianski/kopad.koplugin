@@ -89,6 +89,21 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | **Start** in the bottom menu | close it (**Start** opened it) |
 | everything else | stock KOReader keys (**Select**, **Start** and stick clicks are swallowed) |
 
+#### Dialogs as a wheel
+
+Dialogs that KOReader draws as a grid of buttons in the middle of the screen (`ButtonDialog`: kopad's own action menu, a highlight's menu, a file's long-press menu, …) open as a **wheel** while kopad is on, as in console games: the wheel is cut into as many sectors as there are buttons, each with a monochrome glyph; the selected sector is black and pops out of the rim, and its label is printed in the centre. The wheel has no frame: it sits on a white disc over the page, with the dialog's title in a pill above it (or, for kopad's action menu and KOReader's highlight menus, the text they are about) and the buttons A / B (X, LB / RB with the page number when they apply) in a pill below. Switch it off per device in *kopad → Dialogs as a wheel (this device)*.
+
+| Button | Action |
+|---|---|
+| **L-stick** / **R-stick** | point at a sector (8 directions, the nearest sector wins, a tie goes clockwise; the selection stays when the stick is let go) |
+| **D-pad** ←/↑, →/↓ | previous / next sector |
+| **A** | run the selected button |
+| **X** | its long-press action, when it has one |
+| **B** | close |
+| **LB** / **RB**, **LT** / **RT** | previous / next page (dialogs with more than 8 buttons; at most 16) |
+
+Touch works too: tap a sector to run it, the centre for the next page, the page around the disc and the pills to close. Dialogs with check boxes or input fields, and dialogs with more than 16 buttons, stay as they are. KOReader reports a stick only when it crosses the dead zone, not its angle, so the wheel has 8 directions (see the header of `wheel.lua`).
+
 #### File browser
 
 | Button | Action |
@@ -206,6 +221,7 @@ X + D-pad still opens the menus, and role overrides from koligilo still win over
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **selector.lua** — the selection overlay: sentence, word and highlight modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map").
+- **wheel.lua** — turns plain `ButtonDialog`s into a radial menu (wraps `ButtonDialog.init`, replaces only the dialog's content, so button callbacks keep working); glyphs come from KOReader's bundled Nerd Font symbols.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
@@ -237,10 +253,11 @@ Targets stock KOReader 2026.07+ (the `Gamepad*` event interface was taken from t
 
 ### Tests
 
-Two automated tests: the remapping layer (`padmap.lua`) with the pad wiring in `padnav.lua`, and the selection overlay (`selector.lua`):
+Three automated tests: the remapping layer (`padmap.lua`) with the pad wiring in `padnav.lua`, the wheel's sectors, pages, stick directions, titles, taps, glyphs and controller (`wheel.lua`), and the selection overlay (`selector.lua`):
 
 ```bash
 lua tests/padmap_test.lua
+lua tests/wheel_test.lua
 lua tests/selector_test.lua
 ```
 

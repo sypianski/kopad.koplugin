@@ -40,6 +40,14 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Y                        AI explain (selection from kopad)
     B                        Close the popup
 
+  Dialogs with a grid of buttons (ButtonDialog) as a wheel (wheel.lua;
+  menu > kopad > "Dialogs as a wheel", this device, default on):
+    L-stick / R-stick        Point at a sector (8 directions, nearest sector)
+    D-pad                    Previous / next sector
+    A / X                    Run the button / its long-press action
+    B                        Close
+    LB / RB, LT / RT         Previous / next page (more than 8 buttons)
+
 Input paths:
   KOReader >= 2026.07 (stock, no patch): the device broadcasts
   GamepadButtonDown / GamepadButtonUp / GamepadAxisMotion events;
@@ -141,6 +149,7 @@ function kopad:init()
     self:_default_page_view()
     self:_load_subs()
     self:_apply_padmap()
+    self:_install_wheel()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
         tostring(self.subs.selector ~= nil))
@@ -223,6 +232,21 @@ function kopad:_sync_key_hints()
     if not ok then
         logger.warn("kopad: key hints sync failed: " .. tostring(err))
     end
+end
+
+-- ButtonDialogs as a radial menu (wheel.lua). The patch of ButtonDialog.init
+-- is installed once per KOReader run; the state function is replaced by every
+-- kopad instance, so it follows the current reader / file browser. Not
+-- available without KOReader's Gamepad* events (wheel.install -> false).
+function kopad:_install_wheel()
+    local Wheel = safe_require("wheel")
+    if not Wheel then return end
+    local ok, res = pcall(Wheel.install, function()
+        return self.enabled and self.device_settings:nilOrTrue("wheel_dialogs")
+    end)
+    if not ok then logger.warn("kopad: wheel install failed: " .. tostring(res)) end
+    self.wheel_available = ok and res or false
+    Trace.log("wheel: available=%s", tostring(self.wheel_available))
 end
 
 function kopad:_ensure_selector()
@@ -352,6 +376,17 @@ function kopad:addToMainMenu(menu_items)
 
     local layout_item = self:_layout_menu()
     if layout_item then table.insert(sub_items, layout_item) end
+
+    if self.wheel_available then
+        table.insert(sub_items, {
+            text = _("Dialogs as a wheel (this device)"),
+            checked_func = function() return self.device_settings:nilOrTrue("wheel_dialogs") end,
+            callback = function()
+                self.device_settings:flipNilOrTrue("wheel_dialogs")
+                self.device_settings:flush()
+            end,
+        })
+    end
 
     for _, sub in pairs(self.subs) do
         if sub.getMenuItems then

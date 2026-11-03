@@ -69,6 +69,17 @@ Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
   Select / Guide / L3 / R3   Swallowed
   Everything else        Stock (the window navigates as without kopad)
 
+Wheel (a ButtonDialog that wheel.lua drew as a radial menu, context "wheel",
+checked before "foreign"):
+  L-stick / R-stick      Point at a sector (8 directions, nearest sector;
+                         wheel.lua polls the held axis directions)
+  D-pad ←/↑ , →/↓        Previous / next sector
+  A / X                  Run the selected button / its long-press action
+  B                      Close (dlg:onClose, like stock Back)
+  LB / RB, LT / RT       Previous / next page
+  Everything else        Swallowed (the dialog's hidden button table must not
+                         get stock keys)
+
 FileManager (nothing on top of the file list):
   D-pad / A / sticks     Stock list navigation
   B                      Parent folder (stock asks "Exit KOReader?")
@@ -252,7 +263,8 @@ local BUTTON_SWALLOW = {
 -- Contexts (PadNav:_context) in which PadNav's own handlers drive the pad.
 -- In the others ("top_menu", "window", "dict", "foreign", "off") the pad
 -- belongs to KOReader, apart from the few controls _menu_button /
--- _menu_trigger / _dict_button take.
+-- _menu_trigger / _dict_button take. "wheel" (a ButtonDialog drawn as a
+-- radial menu, wheel.lua) is driven entirely by _wheel_button / _wheel_*.
 local PAD_CONTEXTS = {
     reading = true, paged = true, selection = true, filemanager = true,
 }
@@ -1146,6 +1158,11 @@ function PadNav:_button_dispatch(ev)
         if tr then Trace.log("padnav btn=%s: context dict -> result=%s", tostring(btn), tostring(res)) end
         return res
     end
+    if ctx == "wheel" then
+        self:_wheel_button(btn)
+        if tr then Trace.log("padnav btn=%s: context wheel -> result=true", tostring(btn)) end
+        return true
+    end
     if not PAD_CONTEXTS[ctx] then
         if tr then Trace.log("padnav btn=%s: passthrough, context %s -> result=false", tostring(btn), ctx) end
         return false
@@ -1256,6 +1273,9 @@ local STICK_HANDLERS = {
 --   "top_menu"     the top menu (TouchMenu) on top, reader or FileManager
 --   "window"       anything else: TOC, bookmarks, history, config dialog,
 --                  dialogs, book map, ... -- the pad belongs to it
+--   "wheel"        a ButtonDialog that wheel.lua turned into a radial menu
+--                  (dlg._kopad_wheel). Checked before "foreign": the wheel
+--                  has no stock key navigation left, so it is always ours.
 local MENU_SEARCH_DEPTH = 3
 
 -- Depth-limited search of a window's widget tree (children = array part)
@@ -1322,10 +1342,17 @@ local function find_config_dialog()
     return top and find_in(top, is_config_dialog, MENU_SEARCH_DEPTH, {}) or nil
 end
 
+-- The wheel controller of a ButtonDialog converted by wheel.lua, else nil.
+local function wheel_of(w)
+    local c = type(w) == "table" and rawget(w, "_kopad_wheel")
+    return type(c) == "table" and c or nil
+end
+
 function PadNav:_context()
     if not (self.enabled_ref and self.enabled_ref.enabled) then return "off" end
-    if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign" end
     local top = top_window()
+    if wheel_of(top) then return "wheel" end
+    if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign" end
     -- No stack (bare Lua tests) counts as the reader / FileManager itself.
     if top == nil or top == self.ui then
         local ui = self.ui
@@ -1623,6 +1650,34 @@ function PadNav:_dict_button(btn)
     return BUTTON_SWALLOW[btn] or false
 end
 
+-- Call method `name` of the wheel on top (wheel.lua controller), guarded.
+function PadNav:_wheel_call(name, arg)
+    local c = wheel_of(top_window())
+    if not c then return false end
+    local ok, res = pcall(c[name], c, arg)
+    if not ok then logger.warn("kopad: wheel " .. name .. " failed: " .. tostring(res)) end
+    Trace.log("padnav wheel %s(%s) ok=%s res=%s", name, tostring(arg), tostring(ok), tostring(res))
+    return ok and res
+end
+
+-- Buttons (logical role id) while a wheel dialog is on top (ctx "wheel",
+-- wheel.lua). Every button is consumed: the dialog's stock focus navigation
+-- would move an invisible button table.
+--   A = run the selection, X = its long-press action, B = close,
+--   D-pad ←/↑ = previous sector, →/↓ = next sector, LB / RB = previous / next page.
+local WHEEL_BUTTONS = {
+    [BTN_A] = { "activate", false }, [BTN_X] = { "activate", true },
+    [BTN_B] = { "close" },
+    [BTN_DPAD_LEFT] = { "rotate", -1 }, [BTN_DPAD_UP] = { "rotate", -1 },
+    [BTN_DPAD_RIGHT] = { "rotate", 1 }, [BTN_DPAD_DOWN] = { "rotate", 1 },
+    [BTN_LB] = { "page_step", -1 }, [BTN_RB] = { "page_step", 1 },
+}
+function PadNav:_wheel_button(btn)
+    local w = WHEEL_BUTTONS[btn]
+    if w then self:_wheel_call(w[1], w[2]) end
+    return true
+end
+
 -- LOGICAL trigger (axis AXIS_LT / AXIS_RT after remapping), numeric value.
 -- from_button = true when a remapped BUTTON produced it: buttons fire once
 -- per press, so the auto-repeat filter is skipped.
@@ -1632,6 +1687,13 @@ function PadNav:_trigger_event(axis, value, from_button)
     self:_drop_x_mode(ctx)
     if ctx == "dict" then
         if tr then Trace.log("padnav axis=%s value=%s: context dict, swallowed -> result=true", tostring(axis), tostring(value)) end
+        return true
+    end
+    if ctx == "wheel" then
+        if value > 0 and (from_button or self:_trigger_is_new_press(axis)) then
+            self:_wheel_call("page_step", axis == AXIS_RT and 1 or -1)
+        end
+        if tr then Trace.log("padnav axis=%s value=%s: context wheel, page -> result=true", tostring(axis), tostring(value)) end
         return true
     end
     if ctx == "top_menu" or ctx == "window" or ctx == "filemanager" then
@@ -1701,6 +1763,17 @@ function PadNav:onGamepadAxisMotion(ax)
     end
     local ctx = self:_context()
     self:_drop_x_mode(ctx)
+    -- A wheel dialog: either stick points at a sector; nothing reaches stock.
+    if ctx == "wheel" then
+        local axis = type(ax) == "table" and ax.axis
+        if axis == AXIS_LX or axis == AXIS_LY then
+            self:_wheel_call("stick", "left")
+        elseif axis == AXIS_RX or axis == AXIS_RY then
+            self:_wheel_call("stick", "right")
+        end
+        if tr then Trace.log("padnav axis=%s: context wheel -> result=true", tostring(axis)) end
+        return true
+    end
     -- Menus, lists, dialogs, the dictionary popup and the FileManager: the
     -- sticks stay stock (L-stick = navigation, R-stick Y = page), minus
     -- release bounces (MENU_STICK_LOCK_S); on the top menu's tab bar the
@@ -1836,6 +1909,10 @@ local CHEAT_READING = _("Reading mode")
     .. "\n\n" .. _("Bottom menu open")
     .. "\nRB / LB: next / previous tab    Start: close"
     .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92 on the tabs: tab"
+    .. "\n\n" .. _("Dialog wheel")
+    .. "\nSticks: point    D-pad: previous / next"
+    .. "\nA: run    X: long press    B: close"
+    .. "\nLB / RB, LT / RT: page"
     .. "\n\n" .. _("File browser")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
     .. "\nB: parent folder"

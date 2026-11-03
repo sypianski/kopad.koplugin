@@ -948,6 +948,62 @@ do
     PL.overlay_active, PL.call_provided = saved_oa, saved_cp
 end
 
+-- 13. Wheel dialogs (wheel.lua, TASK-19): a ButtonDialog converted into a
+-- radial menu (dlg._kopad_wheel) on top is context "wheel" -- even over a
+-- foreign overlay -- and every pad event goes to its controller; nothing
+-- reaches stock or the document.
+do
+    local PadNav = require("padnav")
+    local stack = require("ui/uimanager")._window_stack
+    local T = package.loaded["ui/time"]
+    local clock = 5000
+    T.now = function() clock = clock + 1; return clock end
+    local PL = package.loaded.pluginaro
+    local saved_oa = PL.overlay_active
+    local calls = {}
+    local ctl = {}
+    for _, m in ipairs({ "activate", "close", "rotate", "page_step", "stick" }) do
+        ctl[m] = function(_, arg) calls[#calls + 1] = m .. ":" .. tostring(arg); return true end
+    end
+    local log = {}
+    local ui = { document = {}, rolling = {}, handleEvent = function(_, ev) log[#log + 1] = ev.name end }
+    local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = {} } }, { __index = PadNav })
+    n:set_padmap(nil)
+    stack[1] = { widget = ui }
+    stack[2] = { widget = { _kopad_wheel = ctl } }
+    assert(n:_context() == "wheel")
+    PL.overlay_active = function() return true end
+    assert(n:_context() == "wheel", "wheel before foreign")
+    local want = {
+        { 0, "activate:false" }, { 2, "activate:true" }, { 1, "close:nil" },
+        { 13, "rotate:-1" }, { 11, "rotate:-1" }, { 14, "rotate:1" }, { 12, "rotate:1" },
+        { 9, "page_step:-1" }, { 10, "page_step:1" },
+    }
+    for _, w in ipairs(want) do
+        calls = {}
+        assert(n:onGamepadButtonDown({ button = w[1] }) == true and calls[1] == w[2],
+            "wheel button " .. w[1] .. " -> " .. tostring(calls[1]))
+    end
+    calls = {}
+    for _, b in ipairs({ 3, 4, 5, 6, 7, 8 }) do
+        assert(n:onGamepadButtonDown({ button = b }) == true, "wheel swallows " .. b)
+    end
+    assert(#calls == 0, "Y / Select / Guide / Start / L3 / R3 do nothing")
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and calls[1] == "page_step:1", "RT = next page")
+    assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true and calls[2] == "page_step:-1", "LT = previous page")
+    assert(n:onGamepadAxisMotion({ axis = 0, value = 9000 }) == true and calls[3] == "stick:left")
+    assert(n:onGamepadAxisMotion({ axis = 1, value = -9000 }) == true and calls[4] == "stick:left")
+    assert(n:onGamepadAxisMotion({ axis = 2, value = 9000 }) == true and calls[5] == "stick:right")
+    assert(n:onGamepadAxisMotion({ axis = 3, value = 9000 }) == true and calls[6] == "stick:right")
+    assert(#log == 0, "the document is untouched")
+    -- a plain dialog (no wheel) is context "window" again
+    PL.overlay_active = saved_oa
+    stack[2] = { widget = {} }
+    assert(n:_context() == "window")
+    stack[1], stack[2] = nil, nil
+    T.now = function() return 0 end
+end
+
 -- 15. Dictation routing (pluginaro integration B, diktonoti) in context
 -- "window": R3 toggles while a text field is focused (is_active) or a
 -- recording runs, B cancels only a running recording. Toggle off / no

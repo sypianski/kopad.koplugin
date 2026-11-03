@@ -12,9 +12,10 @@ words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
-padnav wiring) and `lua tests/selector_test.lua` (selector.lua on a fake
-three-page document: moves, page crossing, ranges, levels, highlights); plain
-`assert`, KOReader stubbed.
+padnav wiring), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
+directions, glyphs, controller) and `lua tests/selector_test.lua` (selector.lua
+on a fake three-page document: moves, page crossing, ranges, levels,
+highlights); plain `assert`, KOReader stubbed.
 
 ## Runtime requirements
 
@@ -89,7 +90,8 @@ footer, highlight, bookmark, and every active widget) — saving them in
 `PadNav:_context()` classifies the topmost non-toast window of
 `UIManager._window_stack`: `off`, `foreign` (another family overlay owns
 `_kokb_overlay`), `reading` / `paged` / `filemanager` (the top window IS
-`self.ui`), `selection` (kopad's own overlay), `dict` (a DictQuickLookup, found
+`self.ui`), `selection` (kopad's own overlay), `wheel` (a ButtonDialog drawn by `wheel.lua`,
+checked before `foreign`), `dict` (a DictQuickLookup, found
 via `DictQuickLookup.window_list` — the class has no `name` field), `top_menu`
 (a TouchMenu in the top window) or `window` (anything else: TOC, bookmarks,
 history, ConfigDialog, dialogs, …). It is a positive rule on purpose:
@@ -169,6 +171,40 @@ warning, so deployment order across devices does not matter.
 The Deck back paddles (L4/L5/R4/R5, SDL ids 16+) are deliberately NOT in the
 physical vocabulary: KOReader >= 2026.07 does not deliver them (see the header
 of `padnav.lua`).
+
+### `wheel.lua` — ButtonDialogs as a radial menu (TASK-19)
+`main.lua:_install_wheel()` calls `Wheel.install(state_fn)`, which wraps
+`ButtonDialog.init` ONCE per KOReader run (only when `device/sdl/gamepad` loads,
+i.e. the >= 2026.07 path); `state_fn` (= kopad enabled + device setting
+`wheel_dialogs`, default on, in `kopad_device.lua`) is replaced by every kopad
+instance. After the stock init, `maybe_convert` turns an eligible dialog (exact
+class `ButtonDialog`, no `_added_widgets`, 2..`MAX_ITEMS` = 16 text buttons, one
+enabled) into a wheel: it replaces only `self[1]` and `self.movable` (a `Panel`
+widget whose `dimen` stock `onShow` / `onCloseWidget` / `getContentSize` use)
+and installs instance overrides (`onTapClose`, `onFocusMove`, `onPress`,
+`onHold`, `onShow`, `onCloseWidget`) that fall back to the class methods when
+the dialog is not a wheel (a reinit that added widgets). The dialog object stays
+the same, so callbacks doing `UIManager:close(dlg)` / `dlg:reinit()` work; a
+reinit keeps the selection (`prev`). The controller is `dlg._kopad_wheel`
+(`Ctl`: `point`, `rotate`, `page_step`, `activate(hold)`, `close`, `stick`,
+`tap`). As many sectors as buttons on the page (TASK-20: `angle_of`, 0 = up,
+clockwise; at most 8, more buttons → pages, `paginate`); the stick's 8
+directions, taps and painting all go through `nearest` / `page_items`. Look
+(TASK-20, chosen in the /ux selector): no frame, a white disc, the selected
+sector black and popped out by R/12, its label in the hub (r0 = R/2), the title
+and the A / B / X / LB RB buttons in pills (taps outside them and the disc
+close). No title → `M.snippet_title` of `dlg._kopad_snippet` (selector.lua's
+action menu) or of `M._pending_snippet`, set around ReaderHighlight's
+`onShowHighlightMenu` / `showHighlightDialog` (wrapped once in `install`). Sticks: KOReader broadcasts an axis only when it crosses the dead
+zone, never its angle or the release, so `Ctl:stick` polls
+`Gamepad.held_axis_directions` every `POLL_S` while the stick is pushed and a
+direction counts after `STABLE_S` (diagonal snap-back). Glyphs: `GLYPHS` maps
+KOReader msgids to Font Awesome 4 code points of the bundled
+`fonts/nerdfonts/symbols.ttf` (exact translated label first, then English words,
+else the label's first letter). The top half of the file is pure Lua (tested);
+KOReader modules are required lazily. padnav: context `"wheel"` (top window has
+`_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
+`_wheel_button` / `_wheel_call`; every pad event is consumed there.
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
