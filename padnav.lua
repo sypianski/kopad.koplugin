@@ -180,10 +180,11 @@ local BUTTON_SWALLOW = {
 }
 
 -- Contexts (PadNav:_context) in which PadNav's own handlers drive the pad.
--- In the others ("top_menu", "window", "foreign", "off") the pad belongs to
--- KOReader, apart from the few controls _menu_button / _menu_trigger take.
+-- In the others ("top_menu", "window", "dict", "foreign", "off") the pad
+-- belongs to KOReader, apart from the few controls _menu_button /
+-- _menu_trigger / _dict_button take.
 local PAD_CONTEXTS = {
-    reading = true, paged = true, selection = true, dict = true, filemanager = true,
+    reading = true, paged = true, selection = true, filemanager = true,
 }
 
 -- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
@@ -202,7 +203,15 @@ local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
 -- (R-stick Y zooms, see PadNav:_zoom_step)
 local PAGED_RSTICK_X = { { "SetZoomMode", "page" }, { "SetZoomMode", "contentwidth" } }
 -- One zoom step of the pad: KOReader's own Zoom event jumps ×1.33 / ×0.75.
-local ZOOM_STEP = 1.1
+local ZOOM_STEP = 1.03
+-- Stick release bounce: SDL reports an axis only when it crosses the dead zone
+-- (stock repeats carry ±5001), and a stick snapping back to centre often
+-- crosses it once more on the far side or on the other axis (trace
+-- 2026-11-03: zoom in, 8 ms later zoom out, then "whole page"). Each stick
+-- keeps the direction of its last accepted event; a different direction
+-- within STICK_LOCK_S of it is that bounce. 0.6 s covers the first stock
+-- auto-repeat (0.5 s) plus the snap back.
+local STICK_LOCK_S = 0.6
 
 -- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
 -- device.lua fires the first repeat 0.5 s after the press (delay) and then
@@ -286,8 +295,8 @@ function PadNav:init()
 end
 
 -- True when PadNav's own handlers may act: the current context (see
--- PadNav:_context) is reading, a paged document, kopad's selection overlay,
--- the dictionary popup or the FileManager. With a menu or any other window on
+-- PadNav:_context) is reading, a paged document, kopad's selection overlay or
+-- the FileManager. With a menu, the dictionary popup or any other window on
 -- top (or kopad off / a foreign overlay) they stand down and return false.
 function PadNav:_is_enabled()
     return PAD_CONTEXTS[self:_context()] or false
@@ -407,16 +416,6 @@ function PadNav:_is_rtl()
     local lang_raw = (props and props.language) or ""
     local lang_base = lang_raw:lower():match("^([a-z]+)") or ""
     return RTL_LANGS[lang_base] or false
-end
-
-function PadNav:_find_dict_widget()
-    local stack = UIManager._window_stack
-    if not stack then return nil end
-    for i = #stack, 1, -1 do
-        local w = stack[i].widget
-        if w and w.name == "DictQuickLookup" then return w end
-    end
-    return nil
 end
 
 
@@ -768,11 +767,6 @@ function PadNav:onKPPgFwd()
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowBookmark")) end)
         return true
     end
-    local dict_w = self:_find_dict_widget()
-    if dict_w then
-        dict_w:handleEvent(Event:new("Swipe", nil, {direction = "west"}))
-        return true
-    end
     local selector = self:_selector()
     if selector and selector.overlay
         and (selector.overlay.mode == "struct" or selector.overlay.mode == "walk") then
@@ -797,11 +791,6 @@ function PadNav:onKPPgBk()
         self:_x_combo(function() self.ui:handleEvent(Event:new("ShowToc")) end)
         return true
     end
-    local dict_w = self:_find_dict_widget()
-    if dict_w then
-        dict_w:handleEvent(Event:new("Swipe", nil, {direction = "east"}))
-        return true
-    end
     local selector = self:_selector()
     if selector and selector.overlay
         and (selector.overlay.mode == "struct" or selector.overlay.mode == "walk") then
@@ -822,7 +811,6 @@ end
 -- (KOReader semantics, same in RTL books: "next" is reading order, so no
 -- _is_rtl() flip here — triggers are semantic, not spatial).
 function PadNav:_turn_page(dir)
-    if self:_find_dict_widget() then return false end
     local selector = self:_selector()
     if selector and selector.overlay then selector:_close() end
     self._x_mode = false
@@ -847,14 +835,12 @@ function PadNav:_menu_action(fn)
 end
 function PadNav:onKPSelect()
     if not self:_is_enabled() then return false end
-    if self:_find_dict_widget() then return false end
     return self:_menu_action(function()
         self.ui:handleEvent(Event:new("ShowMenu"))
     end)
 end
 function PadNav:onKPStart()
     if not self:_is_enabled() then return false end
-    if self:_find_dict_widget() then return false end
     return self:_menu_action(function()
         local footer = self.ui.view and self.ui.view.footer
         if footer then footer:onToggleFooterMode() end
@@ -1040,14 +1026,14 @@ local ACTION_RUNNERS = {
 -- The action id `role` should perform NOW instead of its built-in handler, or
 -- nil (built-in runs). Idle reading context only: a document is open (the
 -- FileManager keeps the stock list navigation), no X-combo pending (combos
--- stay on the built-in handlers; only the modifier may be pressed again), no
--- dictionary popup and no selection overlay.
+-- stay on the built-in handlers; only the modifier may be pressed again) and
+-- no selection overlay. (Menus, other windows and the dictionary popup never
+-- reach it, see PadNav:_context.)
 function PadNav:_override_action(role)
     local act = role and self._actions and self._actions[role]
     if not act then return nil end
     if not (self.ui and self.ui.document) then return nil end
     if self._x_mode and act ~= "x_modifier" then return nil end
-    if self:_find_dict_widget() then return nil end
     local selector = self:_selector()
     if selector and selector.overlay then return nil end
     return act
@@ -1079,6 +1065,18 @@ function PadNav:_paged_pan(dx, dy)
         self.ui:handleEvent(Event:new("SetScrollMode", false))
     end
     self.ui:handleEvent(Event:new("Panning", { dx, dy }))
+end
+
+-- True for a release bounce of a stick in a paged document (STICK_LOCK_S).
+function PadNav:_stick_bounce(axis, neg)
+    local stick = (axis == AXIS_LX or axis == AXIS_LY) and "l" or "r"
+    local dir = axis * 2 + (neg and 1 or 0)
+    local now = time.to_s(time.now())
+    self._stick_dir = self._stick_dir or {}
+    local st = self._stick_dir[stick]
+    if st and st.dir ~= dir and now - st.t < STICK_LOCK_S then return true end
+    self._stick_dir[stick] = { dir = dir, t = now }
+    return false
 end
 
 -- Zoom by ZOOM_STEP (dir 1 = in, -1 = out) instead of KOReader's Zoom event,
@@ -1142,6 +1140,11 @@ function PadNav:_button_down(ev)
     if ctx == "top_menu" or ctx == "window" then
         local res = self:_menu_button(btn, ctx)
         if tr then Trace.log("padnav btn=%s: context %s -> result=%s", tostring(btn), ctx, tostring(res)) end
+        return res
+    end
+    if ctx == "dict" then
+        local res = self:_dict_button(btn)
+        if tr then Trace.log("padnav btn=%s: context dict -> result=%s", tostring(btn), tostring(res)) end
         return res
     end
     if not PAD_CONTEXTS[ctx] then
@@ -1410,12 +1413,36 @@ function PadNav:_menu_trigger(axis, value, from_button, ctx)
     end
 end
 
+-- Buttons (logical role id) while the dictionary popup is on top (ctx
+-- "dict"). The popup handles the stock keys itself: LB / RB (RPgBack /
+-- RPgFwd) = previous / next dictionary, B (Back) closes it, A / D-pad /
+-- L-stick as stock. kopad adds Y = AI explanation of the current selection
+-- when the popup was opened from kopad's selector (the overlay stays under
+-- it); otherwise Y passes. BUTTON_SWALLOW as in menus. Returns true = consumed.
+function PadNav:_dict_button(btn)
+    if btn == BTN_Y then
+        local selector = self:_selector()
+        local ov = selector and selector.overlay
+        local sel = ov and ov:_get_selection()
+        if not sel then return false end
+        local top = top_window()
+        if top then UIManager:close(top) end
+        ov:_do_ai(sel)
+        return true
+    end
+    return BUTTON_SWALLOW[btn] or false
+end
+
 -- LOGICAL trigger (axis AXIS_LT / AXIS_RT after remapping), numeric value.
 -- from_button = true when a remapped BUTTON produced it: buttons fire once
 -- per press, so the auto-repeat filter is skipped.
 function PadNav:_trigger_event(axis, value, from_button)
     local tr = Trace.active()
     local ctx = self:_context()
+    if ctx == "dict" then
+        if tr then Trace.log("padnav axis=%s value=%s: context dict, swallowed -> result=true", tostring(axis), tostring(value)) end
+        return true
+    end
     if ctx == "top_menu" or ctx == "window" then
         self:_menu_trigger(axis, value, from_button, ctx)
         if tr then
@@ -1521,6 +1548,10 @@ function PadNav:onGamepadAxisMotion(ax)
 
     if STICK_HANDLERS[axis] and self:_paged_idle() then
         local neg = value < 0
+        if self:_stick_bounce(axis, neg) then
+            if tr then Trace.log("padnav axis=%s value=%s: paged stick bounce, ignored", tostring(axis), tostring(value)) end
+            return true
+        end
         if axis == AXIS_LX or axis == AXIS_LY then
             local step = neg and -1 or 1
             if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end

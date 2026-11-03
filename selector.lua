@@ -921,12 +921,17 @@ end
 -- Inject gamepad handlers onto the DictQuickLookup widget after it is shown.
 -- This bypasses the modal-stack routing problem: the dict consumes key events
 -- before active_widgets (PadNav) see them, so we patch the widget directly.
+-- Needed on the LEGACY key path only: on KOReader >= 2026.07 PadNav handles Y
+-- itself (PadNav:_dict_button) and LB/RB are the popup's own stock keys.
+-- DictQuickLookup has no `name` field; open popups are listed in the
+-- class-level DictQuickLookup.window_list.
 function SelectorOverlay:_hook_dict_widget(sel)
-    local stack = UIManager._window_stack
-    if not stack then return end
-    for i = #stack, 1, -1 do
-        local w = stack[i].widget
-        if w and w.name == "DictQuickLookup" then
+    local ok, DQL = pcall(require, "ui/widget/dictquicklookup")
+    local list = ok and type(DQL) == "table" and DQL.window_list
+    if type(list) ~= "table" then return end
+    for i = #list, 1, -1 do
+        local w = list[i]
+        if type(w) == "table" then
             if not w.key_events then w.key_events = {} end
             local overlay = self
 

@@ -318,7 +318,7 @@ do
     Event.new = function(_, name, ...) return { name = name, args = { ... } } end
     local PadNav = require("padnav")
 
-    -- ctx: dict (open popup), overlay (selection overlay), doc (false = FileManager)
+    -- ctx: overlay (selection overlay), doc (false = FileManager)
     local function nav(padmap, ctx)
         ctx = ctx or {}
         local log = { events = {}, calls = {}, footer = 0, selector = {} }
@@ -338,7 +338,6 @@ do
         }, { __index = PadNav })
         o._is_enabled = function() return true end
         o._top_menu = function() return nil end
-        o._find_dict_widget = function() return ctx.dict end
         o._selector = function() return selector end
         o._open_sentence_select = function(_, i) log.calls[#log.calls + 1] = "sentence_select:" .. tostring(i) end
         o._open_highlights = function() log.calls[#log.calls + 1] = "highlights" end
@@ -438,8 +437,9 @@ do
     assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.calls == 0)
     assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.calls == 0)
 
-    -- outside idle reading the BUILT-IN runs: selection overlay, dictionary, FileManager
-    for name, ctx in pairs({ overlay = { overlay = true, selector = {} }, dict = { dict = {} }, filemanager = { doc = false } }) do
+    -- outside idle reading the BUILT-IN runs: selection overlay, FileManager
+    -- (the dictionary popup never reaches the overrides, see test 11)
+    for name, ctx in pairs({ overlay = { overlay = true, selector = {} }, filemanager = { doc = false } }) do
         n, log = nav(acts({ rb = "top_menu", a = "none" }), ctx)
         assert(n:onGamepadButtonDown({ button = 10 }) == true and log.calls[1] == "onKPPgFwd" and #log.events == 0,
             name .. ": RB keeps its built-in")
@@ -489,6 +489,7 @@ do
     local function paged(ctx)
         local p, plog = nav(nil, ctx)
         p.ui.paging = { current_page = 5 }
+        p._stick_bounce = function() return false end -- real filter tested below
         p.ui.zooming = { zoom = 1, onSetZoomMode = function(z, m) z.mode = m end }
         p.ui.view.onZoomUpdate = function(_, zoom) plog.events[#plog.events + 1] = ("zoom:%.3f"):format(zoom) end
         p.ui.handleEvent = function(_, ev)
@@ -507,7 +508,7 @@ do
     end
     for _, c in ipairs({ { 0, -20000, "Panning:-1,0" }, { 0, 20000, "Panning:1,0" },
                          { 1, -20000, "Panning:0,-1" }, { 1, 20000, "Panning:0,1" },
-                         { 3, -20000, "zoom:1.100" }, { 3, 20000, "zoom:1.000" },
+                         { 3, -20000, "zoom:1.030" }, { 3, 20000, "zoom:1.000" },
                          { 2, -20000, "SetZoomMode:page" }, { 2, 20000, "SetZoomMode:contentwidth" } }) do
         log.events = {}
         assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and log.events[1] == c[3],
@@ -518,9 +519,28 @@ do
     n, log = paged()
     n:set_padmap(P.build(acts({ b = "zoom_in", y = "zoom_out" }), "xbox"))
     n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonDown({ button = 3 })
-    assert(log.events[1] == "zoom:1.100" and log.events[2] == "zoom:1.210" and log.events[3] == "zoom:1.100", "zoom actions")
+    assert(log.events[1] == "zoom:1.030" and log.events[2] == "zoom:1.061" and log.events[3] == "zoom:1.030", "zoom actions")
     n, log = nav(acts({ b = "zoom_in" }))
     assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 0, "zoom_in in an EPUB does nothing")
+    -- release bounce: after zoom in, the stick snapping back (zoom out, then
+    -- R-stick left = whole page) within STICK_LOCK_S is ignored; the same
+    -- direction (auto-repeat) still zooms, and after the lock anything goes
+    local T = package.loaded["ui/time"]
+    local clock = 100
+    T.now = function() return clock end
+    n, log = paged()
+    n._stick_bounce = nil
+    n:onGamepadAxisMotion({ axis = 3, value = -6000 })      -- zoom in
+    clock = 100.01; n:onGamepadAxisMotion({ axis = 3, value = 6000 })   -- bounce
+    clock = 100.03; n:onGamepadAxisMotion({ axis = 2, value = -5300 })  -- bounce
+    clock = 100.5;  n:onGamepadAxisMotion({ axis = 3, value = -5001 })  -- repeat
+    assert(#log.events == 2 and log.events[2] == "zoom:1.061", "bounce ignored, repeat kept: " .. table.concat(log.events, " "))
+    clock = 101.2;  n:onGamepadAxisMotion({ axis = 3, value = 6000 })   -- real zoom out
+    assert(log.events[3] == "zoom:1.030", "after the lock")
+    -- the L-stick has its own lock: R-stick activity does not block a pan
+    clock = 101.25; n:onGamepadAxisMotion({ axis = 1, value = 6000 })
+    assert(log.events[4] == "Panning:0,1", "L-stick independent")
+    T.now = function() return 0 end
     n, log = paged()
     -- page turns: bumpers and triggers, whole page from the current one
     log.events = {}
@@ -548,7 +568,7 @@ do
     n.onKPUp2 = function() log.calls[#log.calls + 1] = "onKPUp2"; return true end
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "X + D-pad is not a pan")
     -- dictionary popup open: D-pad and sticks pass through
-    n, log = paged({ dict = {} })
+    n, log = paged()
     local wstack = require("ui/uimanager")._window_stack
     wstack[1] = { widget = { name = "DictQuickLookup" } }
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0)
@@ -679,6 +699,46 @@ do
     package.loaded.pluginaro.overlay_active = function(u, except) return u._kokb_overlay ~= nil and u._kokb_overlay ~= except end
     assert(n:_context() == "foreign")
     package.loaded.pluginaro.overlay_active = function() return false end
+    ui._kokb_overlay = nil
+
+    -- dictionary popup (TASK-8): stock keys reach it (LB/RB = dictionaries,
+    -- B closes, A / D-pad / sticks), nothing moves underneath, overrides
+    -- never run; Y = AI explanation of the selection, the popup is closed.
+    -- kind "pdf" = popup opened by KOReader itself, no kopad selection.
+    for _, kind in ipairs({ "epub", "pdf" }) do
+        local d, dlog, dui, dsel = reader(kind, { version = 1, actions = { a = "next_page", rb = "toc" } })
+        local ai, closed = {}, {}
+        local dpopup = {}
+        package.loaded["ui/widget/dictquicklookup"] = { window_list = { dpopup } }
+        local uim = require("ui/uimanager")
+        uim.close = function(_, w) closed[#closed + 1] = w end
+        if dsel then
+            dsel.overlay = { _get_selection = function() return { text = "verbum" } end,
+                             _do_ai = function(_, s) ai[#ai + 1] = s.text end }
+            set_stack(dui, dsel.overlay, dpopup)
+        else
+            set_stack(dui, dpopup)
+        end
+        assert(d:_context() == "dict", kind)
+        for _, b in ipairs({ 0, 1, 2, 9, 10, 11, 12, 13, 14 }) do
+            assert(d:onGamepadButtonDown({ button = b }) == false, kind .. " dict: button " .. b .. " goes to the popup")
+        end
+        for _, a in ipairs({ 0, 1, 2, 3 }) do
+            assert(d:onGamepadAxisMotion({ axis = a, value = 20000 }) == false, kind .. " dict: stick " .. a)
+        end
+        for _, b in ipairs({ 4, 6 }) do assert(d:onGamepadButtonDown({ button = b }) == true, "swallow " .. b) end
+        assert(d:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true, kind .. " dict: RT eaten")
+        nothing_moved(dlog, kind .. " dict")
+        if dsel then
+            assert(d:onGamepadButtonDown({ button = 3 }) == true and ai[1] == "verbum" and closed[1] == dpopup,
+                "Y = AI explain, popup closed")
+        else
+            assert(d:onGamepadButtonDown({ button = 3 }) == false and #ai == 0, "Y passes without a kopad selection")
+        end
+        uim.close = nil
+        package.loaded["ui/widget/dictquicklookup"] = nil
+    end
+
     n.enabled_ref.enabled = false
     assert(n:_context() == "off")
     set_stack()
