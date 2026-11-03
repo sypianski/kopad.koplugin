@@ -515,12 +515,20 @@ do
     end
     for _, c in ipairs({ { 0, -20000, "Panning:-1,0" }, { 0, 20000, "Panning:1,0" },
                          { 1, -20000, "Panning:0,-1" }, { 1, 20000, "Panning:0,1" },
-                         { 3, -20000, "zoom:1.030" }, { 3, 20000, "zoom:1.000" },
-                         { 2, -20000, "SetZoomMode:page" }, { 2, 20000, "SetZoomMode:contentwidth" } }) do
+                       }) do
         log.events = {}
         assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and log.events[1] == c[3],
             "paged stick " .. c[1] .. "/" .. c[2] .. " -> " .. c[3] .. ", got " .. tostring(log.events[1]))
     end
+    -- R-stick: consumed, no action (zoom moved to A + D-pad)
+    for _, c in ipairs({ { 3, -20000 }, { 3, 20000 }, { 2, -20000 }, { 2, 20000 } }) do
+        log.events = {}
+        assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and #log.events == 0,
+            "paged R-stick " .. c[1] .. "/" .. c[2] .. " is consumed and does nothing")
+    end
+    n.ui.zooming.zoom = 1
+    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonDown({ button = 11 })
+    n:onGamepadButtonUp({ button = 11 }); n:onGamepadButtonUp({ button = 0 })
     assert(n.ui.zooming.mode == "free", "small zoom step switches to free zoom")
     -- zoom_in / zoom_out actions: the same small step; nothing outside a paged document
     n, log = paged()
@@ -529,24 +537,22 @@ do
     assert(log.events[1] == "zoom:1.030" and log.events[2] == "zoom:1.061" and log.events[3] == "zoom:1.030", "zoom actions")
     n, log = nav(acts({ b = "zoom_in" }))
     assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 0, "zoom_in in an EPUB does nothing")
-    -- release bounce: after zoom in, the stick snapping back (zoom out, then
-    -- R-stick left = whole page) within STICK_LOCK_S is ignored; the same
-    -- direction (auto-repeat) still zooms, and after the lock anything goes
+    -- release bounce: after a pan to the right, the L-stick snapping back
+    -- (left, then down) within STICK_LOCK_S is ignored; the same direction
+    -- (auto-repeat) still pans, and after the lock anything goes
     local T = package.loaded["ui/time"]
     local clock = 100
     T.now = function() return clock end
     n, log = paged()
     n._stick_bounce = nil
-    n:onGamepadAxisMotion({ axis = 3, value = -6000 })      -- zoom in
-    clock = 100.01; n:onGamepadAxisMotion({ axis = 3, value = 6000 })   -- bounce
-    clock = 100.03; n:onGamepadAxisMotion({ axis = 2, value = -5300 })  -- bounce
-    clock = 100.5;  n:onGamepadAxisMotion({ axis = 3, value = -5001 })  -- repeat
-    assert(#log.events == 2 and log.events[2] == "zoom:1.061", "bounce ignored, repeat kept: " .. table.concat(log.events, " "))
-    clock = 101.2;  n:onGamepadAxisMotion({ axis = 3, value = 6000 })   -- real zoom out
-    assert(log.events[3] == "zoom:1.030", "after the lock")
-    -- the L-stick has its own lock: R-stick activity does not block a pan
-    clock = 101.25; n:onGamepadAxisMotion({ axis = 1, value = 6000 })
-    assert(log.events[4] == "Panning:0,1", "L-stick independent")
+    n:onGamepadAxisMotion({ axis = 0, value = 6000 })       -- pan right
+    clock = 100.01; n:onGamepadAxisMotion({ axis = 0, value = -6000 })  -- bounce
+    clock = 100.03; n:onGamepadAxisMotion({ axis = 1, value = 5300 })   -- bounce on the other axis
+    clock = 100.5;  n:onGamepadAxisMotion({ axis = 0, value = 5001 })   -- repeat
+    assert(#log.events == 2 and log.events[1] == "Panning:1,0" and log.events[2] == "Panning:1,0",
+        "bounce ignored, repeat kept: " .. table.concat(log.events, " "))
+    clock = 101.2;  n:onGamepadAxisMotion({ axis = 0, value = -6000 })  -- real pan left
+    assert(log.events[3] == "Panning:-1,0", "after the lock")
     T.now = function() return 0 end
     n, log = paged()
     -- page turns: bumpers and triggers, whole page from the current one
@@ -569,6 +575,24 @@ do
     n, log = paged()
     n:set_padmap(P.build(acts({ rb = "toc" }), "xbox"))
     assert(n:onGamepadButtonDown({ button = 10 }) == true and log.events[1] == "ShowToc", "override over paged RB")
+    -- A held + D-pad: zoom (↑/↓) and fit (←/→); A alone does nothing, a D-pad
+    -- without A still pans, and the release of A ends the modifier
+    n, log = paged()
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.events == 0, "A alone: consumed, no event")
+    for btn, want in pairs({ [11] = "zoom:1.030", [13] = "SetZoomMode:page", [14] = "SetZoomMode:contentwidth" }) do
+        log.events = {}
+        assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
+            "A + D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+        n:onGamepadButtonUp({ button = btn })
+    end
+    log.events = {}
+    n.ui.zooming.zoom = 1
+    n:onGamepadButtonDown({ button = 12 }); n:onGamepadButtonUp({ button = 12 })
+    assert(log.events[1] == "zoom:0.971", "A + D-pad down zooms out: " .. tostring(log.events[1]))
+    n:onGamepadButtonUp({ button = 0 })
+    log.events = {}
+    n:onGamepadButtonDown({ button = 11 })
+    assert(log.events[1] == "Panning:0,-0.2", "after A is released the D-pad pans again")
     -- X held: X + D-pad keeps its menu combo, no pan
     n, log = paged()
     n._x_mode = true

@@ -136,8 +136,10 @@ are suppressed and the selector-dependent handlers return false
 change the page, always by a whole page:
   D-pad                  Pan the page slowly (never turns it)
   L-stick                Pan the page fast (never turns it)
-  R-stick ↑ / ↓          Zoom in / out in small steps (ZOOM_STEP)
-  R-stick ← / →          Fit whole page / fit text width (margins cropped)
+  R-stick                Nothing (consumed)
+  A held + D-pad ↑ / ↓   Zoom in / out in small steps (ZOOM_STEP; a held D-pad
+                         keeps zooming)
+  A held + D-pad ← / →   Fit whole page / fit text width
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 
 Input paths (two, both end in the same on<Key> handlers):
@@ -306,8 +308,9 @@ end
 --   D-pad            pan slowly (PAGED_DPAD_PAN_STEP of the stock step)
 --   L-stick          pan fast (stock ReaderPanning step = half a screen; the
 --                    stick keeps moving while held); both bounded by the page
---   R-stick ↑ / ↓    zoom in / out in small steps (ZOOM_STEP; held, it keeps
---                    zooming);  ← / →  whole page / text width
+--   R-stick          nothing (consumed, so stock cannot turn pages with it)
+--   A held + D-pad   ↑ / ↓ zoom in / out in small steps (ZOOM_STEP; held, it
+--                    keeps zooming), ← / → whole page / text width (ZOOM_DPAD)
 -- ReaderPanning:onPanning moves dx/dy × half the visible area, so 0.2 = a
 -- tenth of the screen per D-pad press.
 local PAGED_DPAD_PAN_STEP = 0.2
@@ -316,9 +319,12 @@ local PAGED_PAN_DPAD = {
     [13] = { -PAGED_DPAD_PAN_STEP, 0 }, [14] = { PAGED_DPAD_PAN_STEP, 0 },
 }
 local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
--- R-stick X: { negative direction, positive direction } as event + arg
--- (R-stick Y zooms, see PadNav:_zoom_step)
-local PAGED_RSTICK_X = { { "SetZoomMode", "page" }, { "SetZoomMode", "contentwidth" } }
+-- A held + D-pad: ↑ / ↓ zoom in / out in small steps (a held D-pad keeps
+-- zooming, _dpad_start), ← / → whole page / text width (margins cropped).
+local ZOOM_DPAD = {
+    [BTN_DPAD_UP]    = { zoom = 1 },  [BTN_DPAD_DOWN]  = { zoom = -1 },
+    [BTN_DPAD_LEFT]  = { mode = "page" }, [BTN_DPAD_RIGHT] = { mode = "contentwidth" },
+}
 -- One zoom step of the pad: KOReader's own Zoom event jumps ×1.33 / ×0.75.
 local ZOOM_STEP = 1.03
 -- Stick release bounce: SDL reports an axis only when it crosses the dead zone
@@ -889,21 +895,25 @@ function PadNav:_open_highlights(selector)
     end
 end
 
--- Held D-pad in the selection (Gamepad* path): repeat the step of button
--- `btn` until its release (onGamepadButtonUp), a context change (menu,
--- dialog, overlay closed) or DPAD_REPEAT_MAX steps.
-function PadNav:_dpad_start(btn)
+-- Held D-pad (Gamepad* path): repeat the step of button `btn` until its
+-- release (onGamepadButtonUp), a context change (menu, dialog, overlay closed)
+-- or DPAD_REPEAT_MAX steps. Default: the selection's arrow handler in the
+-- context "selection"; `step` / `ctx` repeat something else elsewhere (A + D-pad
+-- zoom in a paged document, ctx "paged").
+function PadNav:_dpad_start(btn, step, ctx)
     self:_dpad_stop()
     if type(UIManager.scheduleIn) ~= "function" then return end
+    step = step or function() self[DPAD_HANDLERS[btn]](self) end
+    ctx = ctx or "selection"
     local steps = 0
     local tick
     tick = function()
         if self._dpad_tick ~= tick then return end
         steps = steps + 1
-        if steps > DPAD_REPEAT_MAX or self:_context() ~= "selection" then
+        if steps > DPAD_REPEAT_MAX or self:_context() ~= ctx then
             self:_dpad_stop(); return
         end
-        self[DPAD_HANDLERS[btn]](self)
+        step()
         UIManager:scheduleIn(dpad_interval(steps), tick)
     end
     self._dpad_held, self._dpad_tick = btn, tick
@@ -933,7 +943,10 @@ function PadNav:onGamepadButtonUp(ev)
     if self._x_hold == btn then
         self._x_hold, self._x_mode = nil, false
     end
-    if btn == BTN_A then self:_release_a() end
+    if btn == BTN_A then
+        self._a_zoom = false
+        self:_release_a()
+    end
     return false
 end
 
@@ -1206,6 +1219,27 @@ function PadNav:_button_dispatch(ev)
     if override then
         if tr then Trace.log("padnav btn=%s: role=%s override=%s", tostring(btn), role, override) end
         return self:_run_action(override, role)
+    end
+    -- Paged documents: A held + D-pad = zoom / fit (ZOOM_DPAD). A does nothing
+    -- else there (no selector), so it is consumed.
+    if btn == BTN_A and self:_paged_idle() then
+        self._a_zoom = true
+        if tr then Trace.log("padnav btn=A: paged, zoom modifier held") end
+        return true
+    end
+    if self._a_zoom and ZOOM_DPAD[btn] and self:_paged_idle() then
+        local z = ZOOM_DPAD[btn]
+        if tr then Trace.log("padnav btn=%s: paged A + D-pad -> %s", tostring(btn), tostring(z.zoom or z.mode)) end
+        if z.zoom then
+            self:_zoom_step(z.zoom)
+            self:_dpad_start(btn, function()
+                if not self._a_zoom then self:_dpad_stop(); return end
+                self:_zoom_step(z.zoom)
+            end, "paged")
+        else
+            self.ui:handleEvent(Event:new("SetZoomMode", z.mode))
+        end
+        return true
     end
     local pan, page = PAGED_PAN_DPAD[btn], PAGED_PAGE_BUTTONS[btn]
     if (pan or page) and self:_paged_idle() then
@@ -1872,13 +1906,10 @@ function PadNav:onGamepadAxisMotion(ax)
             local step = neg and -1 or 1
             if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
             if axis == AXIS_LX then self:_paged_pan(step, 0) else self:_paged_pan(0, step) end
-        elseif axis == AXIS_RY then
-            if tr then Trace.log("padnav axis=%s value=%s: paged zoom %s", tostring(axis), tostring(value), neg and "in" or "out") end
-            self:_zoom_step(neg and 1 or -1)
-        else
-            local ev = PAGED_RSTICK_X[neg and 1 or 2]
-            if tr then Trace.log("padnav axis=%s value=%s: paged %s:%s", tostring(axis), tostring(value), ev[1], ev[2]) end
-            self.ui:handleEvent(Event:new(ev[1], ev[2]))
+        elseif tr then
+            -- R-stick: no action in a paged document (zoom is A + D-pad), but
+            -- consumed: stock maps its Y to RPgBack/RPgFwd = page turning.
+            Trace.log("padnav axis=%s value=%s: paged R-stick, swallowed", tostring(axis), tostring(value))
         end
         return true
     end
@@ -1929,8 +1960,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\n\n" .. _("PDF / DjVu")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
-    .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
-    .. "\nR-stick \xE2\x86\x90/\xE2\x86\x92: whole page / text width"
+    .. "\nHold A + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"

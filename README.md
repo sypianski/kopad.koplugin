@@ -207,8 +207,9 @@ Paged documents get their own view controls instead (stock KOReader 2026.07+ `Ga
 |---|---|
 | **D-pad** | move around the page slowly (about a tenth of the screen per press); never turns the page |
 | **L-stick** | move around the page fast (half a screen per step, keeps moving while held); never turns the page |
-| **R-stick ↑ / ↓** | zoom in / out in small steps (3 % per push; hold to keep zooming; the snap back on release is ignored) |
-| **R-stick ← / →** | fit the whole page / fit the text width (margins cropped) |
+| **R-stick** | nothing (consumed, so KOReader cannot turn pages with it) |
+| **hold A + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
+| **hold A + D-pad ← / →** | fit the whole page / fit the text width |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
 Moving around needs page view, so the first time kopad runs enabled on a device it makes page view the default for new documents (`kopt_page_scroll = 0`; continuous view is KOReader's own default and scrolls into the next page). A document that still remembers continuous view switches to page view on the first D-pad or L-stick move, and KOReader remembers that per document. Turning continuous view back on in KOReader afterwards is respected. In page view at text width the page already fits sideways, so ← / → only move once you zoom in.
