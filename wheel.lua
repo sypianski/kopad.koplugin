@@ -36,6 +36,11 @@ stable for STABLE_S: when a diagonal stick snaps back its two axes cross the
 dead zone at slightly different times, and that brief straight direction must
 not move the selection. A released stick keeps the selection.
 
+kopad's quick-action wheel (padnav.lua, TASK-26) is a ButtonDialog too: it is
+always a wheel (`_kopad_force_wheel`, even with "Dialogs as a wheel" off),
+opens aimed at the R-stick's direction (`_kopad_stick`, Ctl:aim) and gives
+each button `kopad_glyph` and `kopad_hint` (a line under the label in the hub).
+
 Not converted (stay stock): subclasses of ButtonDialog, dialogs with added
 widgets (check boxes, inputs: addWidget), fewer than 2 or more than MAX_ITEMS
 buttons, and builds without device/sdl/gamepad.lua (no Gamepad* events).
@@ -220,8 +225,10 @@ local function call(fn)
 end
 
 -- ButtonDialog `buttons` (rows of button entries) -> wheel items in reading
--- order: { label, glyph, enabled, checked, entry }. Entries without a text
--- (separators, icon-only buttons) are left out.
+-- order: { label, glyph, hint, enabled, checked, entry }. Entries without a
+-- text (separators, icon-only buttons) are left out. kopad's own dialogs may
+-- give an entry `kopad_glyph` (instead of the guess from the label) and
+-- `kopad_hint` (a short line under the label in the hub, e.g. "X + LB").
 function M.items_from_buttons(buttons)
     local items = {}
     if type(buttons) ~= "table" then return items end
@@ -237,8 +244,11 @@ function M.items_from_buttons(buttons)
                             enabled = call(e.enabled_func) ~= false
                         end
                         local checked = type(e.checked_func) == "function" and call(e.checked_func) == true
+                        local glyph = e.kopad_glyph
+                        if type(glyph) ~= "string" or glyph == "" then glyph = M.glyph_for(text) end
+                        local hint = type(e.kopad_hint) == "string" and e.kopad_hint ~= "" and e.kopad_hint or nil
                         items[#items + 1] = {
-                            label = text, glyph = M.glyph_for(text),
+                            label = text, glyph = glyph, hint = hint,
                             enabled = enabled, checked = checked, entry = e,
                         }
                     end
@@ -411,6 +421,19 @@ function Ctl:stick(which)
     if not STICK_AXES[which] then return end
     if which ~= self._stick then self._stick, self._cand = which, nil end
     if not self._polling then self:_sample() end
+end
+
+-- Opened by a stick push (the quick-action wheel, TASK-26): select the sector
+-- of the direction stick `which` is held in right now, then follow it.
+function Ctl:aim(which)
+    local G = gamepad()
+    local axes = STICK_AXES[which]
+    local held = G and type(G.held_axis_directions) == "table" and G.held_axis_directions
+    if held and axes then
+        local dir = M.dir_from_axes(held[axes[1]], held[axes[2]])
+        if dir then self:point(dir) end
+    end
+    self:stick(which)
 end
 
 function Ctl:_sample()
@@ -627,19 +650,24 @@ local function panel_class()
                 bb:paintCircle(math.floor(cx + rd * math.sin(th)), math.floor(cy - rd * math.cos(th)), dr, fg, dr)
             end
         end
-        -- hub: the label of the selection, up to 3 lines
+        -- hub: the label of the selection, up to 3 lines (2 above a hint)
         local it = c.items[c.sel or 0]
         if it then
             local label = it.checked and (CHECK .. " " .. it.label) or it.label
             local w = math.floor(r0 * 1.5)
+            local max_lines = it.hint and 2 or 3
             local tb = self:_textbox(label, self.hub_face, true, w)
             local lh = tb.line_height_px or math.floor(tb:getSize().h)
-            if tb:getSize().h > 3 * lh then
+            if tb:getSize().h > max_lines * lh then
                 tb:free()
-                tb = self:_textbox(label, self.hub_face, true, w, 3 * lh)
+                tb = self:_textbox(label, self.hub_face, true, w, max_lines * lh)
             end
+            local hw = it.hint and TextWidget:new{ text = it.hint, face = self.key_face, max_width = w }
             local h = tb:getSize().h
-            put(tb, bb, cx - math.floor(w / 2), cy - math.floor(h / 2))
+            local hh = hw and hw:getSize().h or 0
+            local y0 = cy - math.floor((h + hh) / 2)
+            put(tb, bb, cx - math.floor(w / 2), y0)
+            if hw then put(hw, bb, cx - math.floor(hw:getSize().w / 2), y0 + h) end
         end
     end
 
@@ -771,9 +799,11 @@ local OVERRIDES = {
 
 -- After the stock ButtonDialog:init: turn `dlg` into a wheel when kopad wants
 -- it (M._state_fn) and the dialog is eligible. `prev` = the wheel before a
--- reinit (its selection is kept).
+-- reinit (its selection is kept). kopad's own quick-action wheel (TASK-26)
+-- sets `_kopad_force_wheel` (a wheel even with "Dialogs as a wheel" off) and
+-- `_kopad_stick` (the stick that opened it: aim at its direction).
 function M.maybe_convert(dlg, prev)
-    if not (M._state_fn and M._state_fn()) then return false end
+    if not (rawget(dlg, "_kopad_force_wheel") or (M._state_fn and M._state_fn())) then return false end
     if getmetatable(dlg) ~= M._ButtonDialog or dlg._added_widgets then return false end
     local items = M.items_from_buttons(dlg.buttons)
     if #items < 2 or #items > M.MAX_ITEMS then return false end
@@ -801,6 +831,8 @@ function M.maybe_convert(dlg, prev)
     dlg[1] = content
     dlg.movable = widget
     dlg._kopad_wheel = c
+    local stick = rawget(dlg, "_kopad_stick")
+    if stick and not prev then c:aim(stick) end
     return true
 end
 

@@ -520,11 +520,12 @@ do
         assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and log.events[1] == c[3],
             "paged stick " .. c[1] .. "/" .. c[2] .. " -> " .. c[3] .. ", got " .. tostring(log.events[1]))
     end
-    -- R-stick: consumed, no action (zoom moved to A + D-pad)
+    -- R-stick: consumed, never a page turn or a zoom (it opens the quick-action
+    -- wheel, section 16; zoom is A + D-pad)
     for _, c in ipairs({ { 3, -20000 }, { 3, 20000 }, { 2, -20000 }, { 2, 20000 } }) do
         log.events = {}
         assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and #log.events == 0,
-            "paged R-stick " .. c[1] .. "/" .. c[2] .. " is consumed and does nothing")
+            "paged R-stick " .. c[1] .. "/" .. c[2] .. " is consumed and does not move the page")
     end
     n.ui.zooming.zoom = 1
     n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonDown({ button = 11 })
@@ -828,8 +829,12 @@ do
         assert(n:onGamepadButtonDown({ button = b }) == false, "filemanager: button " .. b .. " is stock")
     end
     assert(not n._x_mode, "filemanager: X does not arm the modifier")
-    for _, a in ipairs({ 0, 1, 2, 3 }) do
+    for _, a in ipairs({ 0, 1 }) do
         assert(n:onGamepadAxisMotion({ axis = a, value = 20000 }) == false, "filemanager: stick " .. a .. " is stock")
+    end
+    -- the R-stick opens the quick-action wheel (TASK-26, section 16), never stock
+    for _, a in ipairs({ 2, 3 }) do
+        assert(n:onGamepadAxisMotion({ axis = a, value = 20000 }) == true, "filemanager: R-stick " .. a .. " is kopad's")
     end
     n:onGamepadAxisMotion({ axis = 5, value = 32767 }); n:onGamepadAxisMotion({ axis = 4, value = 32767 })
     assert(pages[1] == "next" and pages[2] == "prev", "filemanager: LT/RT = list page")
@@ -1327,6 +1332,155 @@ do
     assert(#calls == 0, "reading: R3 not routed")
     for i = #stack, 1, -1 do stack[i] = nil end
     PL.call_provided = saved_cp
+end
+
+-- 16. The quick-action wheel (TASK-26, PC-021): padmap `quick` and the R-stick.
+do
+    -- padmap: built-in sets, a set given replaces the built-in one whole, bad
+    -- entries are skipped with a warning, never raised
+    for _, set in ipairs(P.QUICK_SETS) do
+        for d, a in pairs(P.DEFAULT_QUICK[set]) do
+            assert(P.quick_allowed(set, a), set .. "." .. d .. " = " .. a .. " is allowed")
+        end
+    end
+    for _, a in ipairs(P.QUICK_FILES_ACTIONS) do assert(P.ACTIONS[a], a .. " is an action") end
+    assert(not P.quick_allowed("reading", "x_modifier") and not P.quick_allowed("files", "toc"))
+    local q = P.build_quick(nil)
+    assert(q.reading.up == "toc" and q.reading.up_left == "fulltext_search" and q.files.left == "top_menu")
+    assert(P.build(nil, "xbox").quick.reading.down == "footer_menu", "no padmap: built-in wheel")
+    assert(P.build({ version = 2 }, "xbox", function() end).quick.files.up == "history", "bad version: built-in wheel")
+    local warns = {}
+    local function w(m) warns[#warns + 1] = m end
+    q = P.build_quick({ version = 1, quick = {
+        reading = { up = "toc", down = "none", left = "x_modifier", north = "toc" },
+        files = { up = "toc" }, menu = {} } }, w)
+    assert(q.reading.up == "toc" and q.reading.down == nil and q.reading.left == nil and q.reading.right == nil,
+        "a set given replaces the built-in one; none / x_modifier / unknown direction = empty")
+    assert(next(q.files) == nil, "files: a book action is skipped, the set stays given (empty)")
+    assert(#warns == 4, "4 warnings, got " .. #warns .. ": " .. table.concat(warns, " | "))
+    warns = {}
+    q = P.build_quick({ version = 1, quick = "x" }, w)
+    assert(#warns == 1 and q.reading.up == "toc", "quick not a table: built-in")
+    q = P.build_quick({ version = 1, quick = { reading = 3 } }, w)
+    assert(#warns == 2 and q.reading.up == "toc", "set not a table: built-in")
+
+    -- padnav: R-stick in plain reading opens a forced, aimed wheel
+    local PadNav = require("padnav")
+    local UIM = require("ui/uimanager")
+    local stack = UIM._window_stack
+    local saved_sched, saved_unsched, saved_show, saved_close =
+        UIM.scheduleIn, UIM.unschedule, UIM.show, UIM.close
+    local sched, shown, closed = {}, {}, {}
+    UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = fn end
+    UIM.unschedule = function() end
+    UIM.show = function(_, d) shown[#shown + 1] = d end
+    UIM.close = function(_, d) closed[#closed + 1] = d; d:onCloseWidget() end
+    local BD = {}
+    function BD:new(o) setmetatable(o, { __index = self }); return o end
+    function BD:onCloseWidget() self.closed = true end
+    package.loaded["ui/widget/buttondialog"] = BD
+    local held = {}
+    local saved_gp = package.loaded["device/sdl/gamepad"]
+    package.loaded["device/sdl/gamepad"] = { held_axis_directions = held }
+    local saved_dev = package.loaded["device"]
+    package.loaded["device"] = { hasBattery = function() return true end,
+        getPowerDevice = function() return { getCapacity = function() return 81 end } end }
+
+    local function reader(kind, padmap)
+        local log = {}
+        local ui = { handleEvent = function(_, ev) log[#log + 1] = ev.name end }
+        if kind ~= "fm" then
+            ui.document = { getPageCount = function() return 10 end }
+            ui.getCurrentPage = function() return 3 end
+            ui.toc = { getTocTitleByPage = function(_, pg) return pg == 3 and "  Rozdzia\xC5\x82\n drugi  " or "" end }
+            if kind == "pdf" then ui.paging = { current_page = 3 } else ui.rolling = {} end
+        end
+        for i = #stack, 1, -1 do stack[i] = nil end
+        stack[1] = { widget = ui }
+        local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = {} } }, { __index = PadNav })
+        n:set_padmap(P.build(padmap, "xbox"))
+        shown, closed, sched = {}, {}, {}
+        for k in pairs(held) do held[k] = nil end
+        return n, log
+    end
+    local function labels(d)
+        local t = {}
+        for i, row in ipairs(d.buttons) do t[i] = row[1].text end
+        return table.concat(t, "|")
+    end
+
+    local n, log = reader("epub")
+    assert(n:_context() == "reading")
+    held[3] = "plus"
+    assert(n:onGamepadAxisMotion({ axis = 3, value = 20000 }) == true and #shown == 1, "R-stick opens the wheel")
+    local d = shown[1]
+    assert(d._kopad_force_wheel == true and d._kopad_stick == "right")
+    assert(labels(d) == "Table of contents|Toggle bookmark|Forward to next location|Book map|"
+        .. "Footer mode toggle|History|Back to previous location|Fulltext search", labels(d))
+    local b = d.buttons
+    assert(b[1][1].kopad_glyph == "\u{F03A}" and b[1][1].kopad_hint == "X + LB", "toc: glyph and X combo")
+    assert(b[7][1].kopad_hint == "B" and b[6][1].kopad_hint == "X + \xE2\x86\x90" and b[5][1].kopad_hint == "X + \xE2\x86\x93")
+    assert(b[2][1].kopad_hint == nil, "toggle_bookmark: no other way in")
+    assert(d.title:find("Rozdzia\xC5\x82 drugi", 1, true) and d.title:find("page 3 / 10", 1, true)
+        and d.title:find("81%", 1, true), d.title)
+    -- A on "Table of contents": the wheel closes first, then the action runs
+    b[1][1].callback()
+    assert(closed[1] == d and log[1] == "ShowToc", "closed, then ShowToc")
+    -- the stick is still pushed: its auto-repeat must not reopen the wheel
+    assert(n._quick_blocked == true and #sched == 1)
+    n:onGamepadAxisMotion({ axis = 3, value = 5001 })
+    assert(#shown == 1, "blocked until centred")
+    held[3] = nil
+    sched[1]()
+    assert(n._quick_blocked == nil, "centred: re-armed")
+    n:onGamepadAxisMotion({ axis = 2, value = -20000 })
+    assert(#shown == 2, "a new push opens it again")
+    -- closed without an action, stick already centred: no block
+    shown[2]:onCloseWidget()
+    assert(n._quick_blocked == nil)
+    -- X modifier armed: the R-stick does nothing
+    n._x_mode = true
+    n:onGamepadAxisMotion({ axis = 3, value = 20000 })
+    assert(#shown == 2, "X combo pending: no wheel")
+    n._x_mode = false
+
+    -- koligilo's overrides: the set from padmap, hints follow the role actions
+    n, log = reader("epub", { version = 1, actions = { b = "toc" },
+        quick = { reading = { up = "back_location", down = "toc", left = "none" } } })
+    n:onGamepadAxisMotion({ axis = 3, value = -20000 })
+    d = shown[1]
+    assert(labels(d) == "Back to previous location|Table of contents", labels(d))
+    assert(d.buttons[1][1].kopad_hint == nil and d.buttons[2][1].kopad_hint == "B", "B = toc now")
+
+    -- one action: run at once, no wheel; none: nothing (still consumed)
+    n, log = reader("epub", { version = 1, quick = { reading = { right = "night_mode" } } })
+    assert(n:onGamepadAxisMotion({ axis = 2, value = 20000 }) == true and #shown == 0 and log[1] == "ToggleNightMode")
+    n, log = reader("epub", { version = 1, quick = { reading = {} } })
+    assert(n:onGamepadAxisMotion({ axis = 2, value = 20000 }) == true and #shown == 0 and #log == 0)
+
+    -- PDF: the same reading set (the R-stick no longer zooms)
+    n, log = reader("pdf")
+    assert(n:_context() == "paged")
+    n:onGamepadAxisMotion({ axis = 3, value = -20000 })
+    assert(#shown == 1 and #shown[1].buttons == 8 and #log == 0, "PDF: reading wheel")
+
+    -- file browser: the files set, no hints, title without chapter / page
+    n, log = reader("fm")
+    assert(n:_context() == "filemanager")
+    n:onGamepadAxisMotion({ axis = 3, value = 20000 })
+    d = shown[1]
+    assert(labels(d) == "History|Favorites|Collections|Previous book|Top menu|File browser", labels(d))
+    for _, row in ipairs(d.buttons) do assert(row[1].kopad_hint == nil, "no hints in the file browser") end
+    assert(not d.title:find("page", 1, true) and d.title:find("81%", 1, true), d.title)
+    d.buttons[4][1].callback()
+    assert(log[1] == "OpenLastDoc")
+
+    -- the selection keeps the R-stick for its levels (section 14)
+    for i = #stack, 1, -1 do stack[i] = nil end
+    UIM.scheduleIn, UIM.unschedule, UIM.show, UIM.close = saved_sched, saved_unsched, saved_show, saved_close
+    package.loaded["ui/widget/buttondialog"] = nil
+    package.loaded["device/sdl/gamepad"] = saved_gp
+    package.loaded["device"] = saved_dev
 end
 
 print("padmap_test: all tests passed")

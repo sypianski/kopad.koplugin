@@ -20,7 +20,13 @@ Reading:
                          ↑/← from the last one
   Y                      The page's saved highlights (D-pad steps between
                          them); none on the page = a message
-  L-stick / R-stick      Nothing (consumed; TASK-12 / TASK-15)
+  L-stick                Nothing (consumed; TASK-12 / TASK-15)
+  R-stick                The quick-action wheel (TASK-26, PC-021): a
+                         ButtonDialog of padmap's `quick.reading` set, drawn
+                         by wheel.lua, aimed at the pushed direction; A runs,
+                         B closes. Ignored after it closes until the stick is
+                         centred (_quick_rearm). The same in PDF / DjVu and,
+                         with the `quick.files` set, in the file browser.
   X (held)               Modifier: X + D-pad = ↑menu ↓footer ←history →files,
                          X + LB / RB = TOC / bookmarks. Gamepad* path: only
                          while X is held (TASK-16); legacy key path and a
@@ -136,7 +142,7 @@ are suppressed and the selector-dependent handlers return false
 change the page, always by a whole page:
   D-pad                  Pan the page slowly (never turns it)
   L-stick                Pan the page fast (never turns it)
-  R-stick                Nothing (consumed)
+  R-stick                The quick-action wheel, as in reading (never zoom)
   A held + D-pad ↑ / ↓   Zoom in / out in small steps (ZOOM_STEP; a held D-pad
                          keeps zooming)
   A held + D-pad ← / →   Fit whole page / fit text width
@@ -181,8 +187,9 @@ Input paths (two, both end in the same on<Key> handlers):
        selection axes 2/3 are always consumed (axis 2 has no stock mapping);
        in an EPUB without a selection the L-stick is consumed as well (it
        does nothing there). In the selection both sticks drop release bounces
-       (MENU_STICK_LOCK_S). In menus, dialogs, the dictionary popup and the
-       FileManager both sticks are stock.
+       (MENU_STICK_LOCK_S). In plain reading (EPUB, PDF) and the FileManager
+       the R-stick opens the quick-action wheel. In menus, dialogs and the
+       dictionary popup both sticks are stock, in the FileManager the L-stick.
 
    Remapping (padmap.lua, PC-011): onGamepadButtonDown / onGamepadAxisMotion
      first translate the PHYSICAL control into its logical ROLE (the ids
@@ -308,7 +315,7 @@ end
 --   D-pad            pan slowly (PAGED_DPAD_PAN_STEP of the stock step)
 --   L-stick          pan fast (stock ReaderPanning step = half a screen; the
 --                    stick keeps moving while held); both bounded by the page
---   R-stick          nothing (consumed, so stock cannot turn pages with it)
+--   R-stick          the quick-action wheel (_quick_stick), never the page
 --   A held + D-pad   ↑ / ↓ zoom in / out in small steps (ZOOM_STEP; held, it
 --                    keeps zooming), ← / → whole page / text width (ZOOM_DPAD)
 -- ReaderPanning:onPanning moves dx/dy × half the visible area, so 0.2 = a
@@ -1840,6 +1847,17 @@ function PadNav:onGamepadAxisMotion(ax)
         if tr then Trace.log("padnav axis=%s: context wheel -> result=true", tostring(axis)) end
         return true
     end
+    -- The quick-action wheel (TASK-26, PC-021): the R-stick in plain reading
+    -- (EPUB and PDF) and in the file browser opens it, aimed at the pushed
+    -- direction (a ButtonDialog that wheel.lua draws as a wheel; from then on
+    -- the context is "wheel" and the stick points at its sectors).
+    if (ctx == "reading" or ctx == "paged" or ctx == "filemanager") and type(ax) == "table"
+            and (ax.axis == AXIS_RX or ax.axis == AXIS_RY) and type(ax.value) == "number" then
+        local opened = self:_quick_stick(ctx)
+        if tr then Trace.log("padnav axis=%s value=%s: context %s, quick wheel opened=%s -> result=true",
+            tostring(ax.axis), tostring(ax.value), ctx, tostring(opened)) end
+        return true
+    end
     -- Menus, lists, dialogs, the dictionary popup and the FileManager: the
     -- sticks stay stock (L-stick = navigation, R-stick Y = page), minus
     -- release bounces (MENU_STICK_LOCK_S); on the top menu's tab bar the
@@ -1902,15 +1920,10 @@ function PadNav:onGamepadAxisMotion(ax)
             if tr then Trace.log("padnav axis=%s value=%s: paged stick bounce, ignored", tostring(axis), tostring(value)) end
             return true
         end
-        if axis == AXIS_LX or axis == AXIS_LY then
-            local step = neg and -1 or 1
-            if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
-            if axis == AXIS_LX then self:_paged_pan(step, 0) else self:_paged_pan(0, step) end
-        elseif tr then
-            -- R-stick: no action in a paged document (zoom is A + D-pad), but
-            -- consumed: stock maps its Y to RPgBack/RPgFwd = page turning.
-            Trace.log("padnav axis=%s value=%s: paged R-stick, swallowed", tostring(axis), tostring(value))
-        end
+        -- (the R-stick never gets here: it opens the quick-action wheel above)
+        local step = neg and -1 or 1
+        if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
+        if axis == AXIS_LX then self:_paged_pan(step, 0) else self:_paged_pan(0, step) end
         return true
     end
     -- kopad's selection: a stick snapping back to centre must not undo the
@@ -1920,10 +1933,9 @@ function PadNav:onGamepadAxisMotion(ax)
         return true
     end
     if axis == AXIS_RX or axis == AXIS_RY then
-        -- Always consumed while kopad is active: stock maps R-stick Y to
-        -- RPgBack/RPgFwd and auto-repeats it -> endless page turning. The
-        -- handlers return false without a selector (FileManager / paged
-        -- docs); we still swallow the event there.
+        -- Only the selection gets here (reading opens the quick-action wheel
+        -- above). Always consumed: stock maps R-stick Y to RPgBack/RPgFwd and
+        -- auto-repeats it -> endless page turning.
         local handled = self[method](self)
         if tr then
             Trace.log("padnav axis=%s value=%s: handler=%s returned %s, swallowed -> result=true",
@@ -1958,6 +1970,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nY: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
+    .. "\nR-stick: quick actions (A run, B close)"
     .. "\n\n" .. _("PDF / DjVu")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
     .. "\nHold A + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
@@ -1977,7 +1990,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nLB / RB, LT / RT: page"
     .. "\n\n" .. _("File browser")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
-    .. "\nB: parent folder"
+    .. "\nB: parent folder    R-stick: quick actions"
 
 local CHEAT_SELECTION = _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
@@ -2077,6 +2090,183 @@ end
 
 -- For tests/padmap_test.lua: every id of padmap.lua's ACTION_ORDER must have
 -- a runner and a label.
+-- ---------------------------------------------------------------------------
+-- The quick-action wheel (TASK-26, PC-021). The R-stick in plain reading
+-- (context "reading" / "paged") and in the file browser ("filemanager") opens
+-- a ButtonDialog with the actions of padmap's `quick` set (`reading` /
+-- `files`) in stick-direction order, empty directions left out; wheel.lua
+-- draws it as a wheel (_kopad_force_wheel: also with "Dialogs as a wheel"
+-- off) and selects the pushed direction at once (_kopad_stick). A runs the
+-- action after closing the wheel, B closes it. Title = a status line; in
+-- reading each sector also names its other way in (button or X combo).
+-- ---------------------------------------------------------------------------
+
+-- Font Awesome 4 code points of the bundled Nerd Font symbols; actions not
+-- listed get wheel.lua's guess from the label.
+local ACTION_GLYPHS = {
+    toc = "\u{F03A}", toggle_bookmark = "\u{F02E}", bookmarks = "\u{F097}", book_map = "\u{F279}",
+    page_browser = "\u{F00A}", fulltext_search = "\u{F002}", reading_progress = "\u{F200}",
+    book_status = "\u{F046}", book_info = "\u{F05A}", highlights = "\u{F1FC}", dict_lookup = "\u{F02D}",
+    back_location = "\u{F112}", forward_location = "\u{F064}", goto_page = "\u{F18E}", skim = "\u{F07E}",
+    next_chapter = "\u{F051}", prev_chapter = "\u{F048}",
+    history = "\u{F1DA}", file_browser = "\u{F07C}", last_book = "\u{F0E2}", favorites = "\u{F005}",
+    collections = "\u{F02C}",
+    footer_menu = "\u{F2D1}", top_menu = "\u{F0C9}", config_menu = "\u{F1DE}", night_mode = "\u{F186}",
+    font_bigger = "\u{F0FE}", font_smaller = "\u{F146}", full_refresh = "\u{F021}", rotate = "\u{F01E}",
+    screenshot = "\u{F030}", cheat_sheet = "\u{F11B}",
+}
+
+-- The X combos of reading (onKPUp2.., onKPPgBk / onKPPgFwd with X held).
+local X_COMBO_HINTS = {
+    top_menu = "X + \xE2\x86\x91", footer_menu = "X + \xE2\x86\x93",
+    history = "X + \xE2\x86\x90", file_browser = "X + \xE2\x86\x92",
+    toc = "X + LB", bookmarks = "X + RB",
+}
+local ROLE_NAMES = {
+    a = "A", b = "B", x = "X", y = "Y", select = "Select", start = "Start",
+    lb = "LB", rb = "RB", lt = "LT", rt = "RT",
+}
+
+-- How else `action` is reached while reading: the first role whose action it
+-- is (koligilo's overrides on top of the defaults; B = back_location unless
+-- overridden), else its X combo, else nil.
+function PadNav:_quick_hint(action)
+    local defaults = Padmap and Padmap.DEFAULT_ACTIONS or {}
+    for _i, role in ipairs(ROLE_LABELS) do
+        local act = self._actions and self._actions[role] or defaults[role]
+        if role == "b" and act == nil then act = "back_location" end
+        if act == action then return ROLE_NAMES[role] end
+    end
+    return X_COMBO_HINTS[action]
+end
+
+-- Cut `s` to at most `n` characters (UTF-8), with an ellipsis.
+local function cut(s, n)
+    local count, i = 0, 1
+    while i <= #s do
+        count = count + 1
+        if count > n then return s:sub(1, i - 1):gsub("%s+$", "") .. "\xE2\x80\xA6" end
+        local c = s:byte(i)
+        i = i + (c >= 0xF0 and 4 or c >= 0xE0 and 3 or c >= 0xC0 and 2 or 1)
+    end
+    return s
+end
+
+-- The wheel's title: chapter · page n / m · time · battery (file browser:
+-- time · battery). Each part is optional; failures leave it out.
+function PadNav:_quick_title(set)
+    local parts = {}
+    local function add(fn)
+        local ok, v = pcall(fn)
+        if ok and type(v) == "string" and v ~= "" then parts[#parts + 1] = v end
+    end
+    local ui = self.ui
+    if set == "reading" then
+        local page
+        add(function()
+            page = ui:getCurrentPage()
+            local t = ui.toc:getTocTitleByPage(page)
+            return type(t) == "string" and cut(t:gsub("%s+", " "), 40) or nil
+        end)
+        add(function()
+            if type(page) ~= "number" then return nil end
+            return _("page") .. " " .. page .. " / " .. ui.document:getPageCount()
+        end)
+    end
+    add(function()
+        local datetime = require("datetime")
+        return datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock"))
+    end)
+    add(function()
+        local Device = require("device")
+        if not Device:hasBattery() then return nil end
+        return Device:getPowerDevice():getCapacity() .. "%"
+    end)
+    return table.concat(parts, " \xC2\xB7 ")
+end
+
+-- The actions of quick set `set` in direction order, empty ones left out.
+function PadNav:_quick_actions(set)
+    local q = type(self._padmap) == "table" and type(self._padmap.quick) == "table" and self._padmap.quick[set]
+    if type(q) ~= "table" then q = Padmap and Padmap.DEFAULT_QUICK[set] or {} end
+    local list = {}
+    for _i, d in ipairs(Padmap and Padmap.QUICK_DIRS or {}) do
+        local act = q[d]
+        if act and ACTION_RUNNERS[act] and act ~= "x_modifier" and act ~= "none" then list[#list + 1] = act end
+    end
+    return list
+end
+
+-- After the wheel closes with the R-stick still pushed, the stick's
+-- auto-repeat would open it again at once: ignore the R-stick until it has
+-- been centred (Gamepad.held_axis_directions, polled).
+local QUICK_REARM_POLL_S = 0.05
+function PadNav:_quick_rearm()
+    local ok, G = pcall(require, "device/sdl/gamepad")
+    local function held()
+        local h = ok and type(G) == "table" and G.held_axis_directions
+        return type(h) == "table" and (h[AXIS_RX] ~= nil or h[AXIS_RY] ~= nil)
+    end
+    if not held() or type(UIManager.scheduleIn) ~= "function" then
+        self._quick_blocked = nil
+        return
+    end
+    self._quick_blocked = true
+    local poll
+    poll = function()
+        if held() then UIManager:scheduleIn(QUICK_REARM_POLL_S, poll) else self._quick_blocked = nil end
+    end
+    UIManager:scheduleIn(QUICK_REARM_POLL_S, poll)
+end
+
+-- R-stick pushed in context `ctx` (reading / paged / filemanager). Returns
+-- true when a wheel was opened (or a single action run).
+function PadNav:_quick_stick(ctx)
+    if self._quick_blocked or self._x_mode then return false end
+    local set = ctx == "filemanager" and "files" or "reading"
+    local acts = self:_quick_actions(set)
+    if #acts == 0 then return false end
+    if #acts == 1 then
+        self:_run_action(acts[1], "quick")
+        self:_quick_rearm()
+        return true
+    end
+    local ok, err = pcall(self._quick_open, self, set, acts)
+    if not ok then logger.warn("kopad: quick wheel failed: " .. tostring(err)) end
+    return ok
+end
+
+function PadNav:_quick_open(set, acts)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local dlg
+    local buttons = {}
+    for i, act in ipairs(acts) do
+        local label = ACTION_LABELS[act] or act
+        buttons[i] = { {
+            text = label:gsub("^%l", string.upper),
+            kopad_glyph = ACTION_GLYPHS[act],
+            kopad_hint = set == "reading" and self:_quick_hint(act) or nil,
+            callback = function()
+                UIManager:close(dlg)
+                self:_run_action(act, "quick")
+            end,
+        } }
+    end
+    dlg = ButtonDialog:new{
+        title = self:_quick_title(set),
+        buttons = buttons,
+        _kopad_force_wheel = true,
+        _kopad_stick = "right",
+    }
+    -- however it closes (an action, B, a tap beside it): re-arm the R-stick
+    local close = dlg.onCloseWidget
+    dlg.onCloseWidget = function(d, ...)
+        self:_quick_rearm()
+        return close(d, ...)
+    end
+    UIManager:show(dlg)
+end
+
 PadNav._ACTION_RUNNERS = ACTION_RUNNERS
 PadNav._ACTION_LABELS = ACTION_LABELS
 

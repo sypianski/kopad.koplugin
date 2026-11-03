@@ -12,7 +12,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     A                        Select sentences
     D-pad                    Select words
     Y                        The page's highlights (none = a message)
-    L-stick / R-stick        Nothing
+    L-stick                  Nothing
+    R-stick                  Quick-action wheel (also PDF; library set in
+                             the file browser; padmap `quick`, TASK-26)
     X held + D-pad           Combo: ↑menu ↓footer ←history →files
 
   Menus versus reading (KOReader >= 2026.07, PadNav:_context): the reading
@@ -21,7 +23,8 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
   browser get stock KOReader keys plus:
     Top menu                 RB / LB category, RT / LT menu page, Select close
     Lists / dialogs          RT / LT list page (TOC, bookmarks, history, ...)
-    File browser             LB / RB, LT / RT list page, Select top menu
+    File browser             LB / RB, LT / RT list page, Select top menu,
+                             R-stick quick-action wheel
 
   Selection (sentences / words; highlights after Y):
     D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,

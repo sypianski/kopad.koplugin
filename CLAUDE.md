@@ -142,11 +142,29 @@ LT / RT (`onKPPgBk2` / `onKPPgFwd2` -> `_trigger_page`) jump by paragraph in
 the selection (`Selector:para`, TASK-25) and turn the page otherwise; in
 context `selection` `_trigger_event` lets the stock trigger auto-repeat
 through (`held`), everywhere else it stays filtered.
-While reading, both sticks are consumed and do nothing (TASK-12 / TASK-15).
+While reading, the L-stick is consumed and does nothing (TASK-12 / TASK-15).
+
+**Quick-action wheel (TASK-26, PC-021).** The R-stick in context `reading`,
+`paged` and `filemanager` (`onGamepadAxisMotion`, before the menu branch) calls
+`_quick_stick`: it opens a `ButtonDialog` of the `quick` set (`reading` /
+`files`, from `self._padmap.quick`, built by `padmap.build_quick`) in
+`QUICK_DIRS` order with empty directions left out, flagged
+`_kopad_force_wheel` + `_kopad_stick = "right"` so wheel.lua always converts it
+and aims at the pushed direction. Each button: label from `ACTION_LABELS`,
+`kopad_glyph` from `ACTION_GLYPHS`, `kopad_hint` (reading only) from
+`_quick_hint` (the role whose effective action it is, B = `back_location`,
+else `X_COMBO_HINTS`); its callback closes the dialog, then `_run_action`.
+Title = `_quick_title` (chapter · page n / m · time · battery; file browser:
+time · battery). One action = run at once, none = nothing; X modifier armed =
+nothing. The dialog's `onCloseWidget` is wrapped to call `_quick_rearm`: while
+`Gamepad.held_axis_directions` still holds axis 2 or 3, `_quick_blocked` eats
+the R-stick (the stock auto-repeat would reopen the wheel at once). This
+replaced the PDF R-stick zoom (zoom = A held + D-pad). Tests: section 16 of
+`tests/padmap_test.lua`.
 
 ### `padmap.lua` — button remapping (pure, PC-011)
 No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
-`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo|valve>={<physical>=<role>}}, actions={<role>=<action>}}`,
+`padmap` value (`{version=1, layouts={<xbox|playstation|nintendo|valve>={<physical>=<role>}}, actions={<role>=<action>}, quick={<reading|files>={<direction>=<action>}}}`,
 overrides on top of the layout's built-in default) plus the device's layout into
 a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
 the logical role id. **Role-level actions (PC-014):** `res.actions` (`build_actions`)
@@ -165,6 +183,12 @@ identity. `main.lua:_apply_padmap()` builds it (init, `onReaderReady`,
 `onResume`, layout menu) and calls `nav:set_padmap()`; `PadNav:onGamepadButtonDown`
 / `onGamepadAxisMotion` resolve first, then `_button_down` / `_trigger_event` /
 `_trigger_as_button` run on roles. Legacy `key_events` path is not remapped.
+**Quick-action wheel (PC-021):** `res.quick` (`build_quick`) always holds both
+sets (`M.QUICK_SETS`): a set in the data replaces `M.DEFAULT_QUICK[set]` whole
+(missing direction = empty, `none` dropped), a missing or broken set is the
+default. Directions `M.QUICK_DIRS` (clockwise from `up`); `x_modifier` never,
+`files` only `M.QUICK_FILES_ACTIONS` (`quick_allowed`). Contract with koligilo
+(`padmapQuick*` in `padmap.go`, `QUICK_*` in `web/padmap.js`).
 The vocabulary (physical names, roles, layouts, actions) is a contract with koligilo's
 panel editor (TASK-25 there) — change both sides together. Layout ids are a
 closed list kept in `M.LAYOUTS` / `M.LAYOUT_ORDER` (`xbox`, `playstation`,
@@ -193,7 +217,10 @@ the dialog is not a wheel (a reinit that added widgets). The dialog object stays
 the same, so callbacks doing `UIManager:close(dlg)` / `dlg:reinit()` work; a
 reinit keeps the selection (`prev`). The controller is `dlg._kopad_wheel`
 (`Ctl`: `point`, `rotate`, `page_step`, `activate(hold)`, `close`, `stick`,
-`tap`). As many sectors as buttons on the page (TASK-20: `angle_of`, 0 = up,
+`aim`, `tap`). Dialog fields kopad sets for its quick-action wheel (TASK-26):
+`_kopad_force_wheel` (convert even with `wheel_dialogs` off), `_kopad_stick`
+(`Ctl:aim`: select the held direction at once, then follow the stick); button
+entries may carry `kopad_glyph` and `kopad_hint` (a line under the hub label). As many sectors as buttons on the page (TASK-20: `angle_of`, 0 = up,
 clockwise; at most 8, more buttons → pages, `paginate`); the stick's 8
 directions, taps and painting all go through `nearest` / `page_items`. Look
 (TASK-20, chosen in the /ux selector): no frame, a white disc, the selected
@@ -397,8 +424,10 @@ Two input paths end in the same `on<Key>` handlers:
   are de-bounced (stock auto-repeats held axes and never reports release; own
   `time.now()` clock, not `ax.time`). Axes 2/3 (R-stick) are always consumed
   in the reading contexts (reading / paged / selection), because stock maps
-  R-stick Y to `RPgBack`/`RPgFwd`; in menus, dialogs, the dictionary popup and
-  the FileManager both sticks are stock.
+  R-stick Y to `RPgBack`/`RPgFwd`: in reading / paged (and the FileManager)
+  they open the quick-action wheel, in the selection they switch the level; in
+  menus, dialogs and the dictionary popup both sticks are stock, in the
+  FileManager the L-stick.
   **Menus (context `top_menu` / `window`):** `_menu_button` / `_menu_trigger`.
   Top menu (reader *and* FileManager): LB/RB = previous/next category (wrapping,
   action tabs with `remember == false`/callback skipped, via `bar:switchToTab`;

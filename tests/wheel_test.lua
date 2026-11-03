@@ -202,4 +202,37 @@ do
     c:tap(500, 900); assert(closed == 1, "the page: close")
 end
 
+-- 10. kopad's own entries (the quick-action wheel, TASK-26): kopad_glyph
+-- replaces the guess from the label, kopad_hint is kept; a blank one is none.
+do
+    local items = W.items_from_buttons({
+        { { text = "Table of contents", kopad_glyph = "\u{F03A}", kopad_hint = "X + LB", callback = function() end } },
+        { { text = "Copy", kopad_glyph = "", kopad_hint = "", callback = function() end } },
+    })
+    assert(items[1].glyph == "\u{F03A}" and items[1].hint == "X + LB")
+    assert(items[2].glyph == W.glyph_for("Copy") and items[2].hint == nil, "blank glyph / hint = none")
+end
+
+-- 11. aim: opened by a stick push, the held direction is selected at once
+-- (no STABLE_S wait), then the stick is followed; 6 sectors, down-left
+-- (225 degrees) -> the nearest sector, 240 degrees = item 5.
+do
+    local row = {}
+    for i = 1, 6 do row[i] = { text = "Item " .. i, callback = function() end } end
+    local c = W.new_ctl({}, W.items_from_buttons({ row }))
+    for k in pairs(held) do held[k] = nil end
+    held[2], held[3] = "minus", "plus"
+    clock = 30
+    c:aim("right")
+    assert(c.sel == 5, "aimed at once: " .. tostring(c.sel))
+    assert(c._stick == "right")
+    held[2], held[3] = nil, "minus" -- up
+    clock = 30.03; c:_sample(); clock = 30.09; c:_sample()
+    assert(c.sel == 1, "then follows the stick")
+    for k in pairs(held) do held[k] = nil end
+    local c2 = W.new_ctl({}, W.items_from_buttons({ row }))
+    c2:aim("right")
+    assert(c2.sel == 1, "centred stick: the first item stays")
+end
+
 print("wheel_test: all tests passed")

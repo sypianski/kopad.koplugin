@@ -22,6 +22,9 @@ Shared, synced data (settings/kopad.lua, top-level key `padmap`):
           xbox     = { ltrigger = "rt", rtrigger = "lt" },
       },
       actions = { rb = "top_menu", select = "next_page" },
+      quick = {
+          reading = { up = "toc", right = "forward_location", left = "back_location" },
+      },
   }
   A layout table holds overrides on top of that layout's built-in default;
   physical controls it does not mention keep the built-in default.
@@ -37,10 +40,22 @@ Shared, synced data (settings/kopad.lua, top-level key `padmap`):
   and still switches menu categories. An old kopad without this stage ignores
   the key and reads `layouts` as before.
 
+  `quick` (PC-021, optional, additive within version 1): the quick-action
+  wheel under the RIGHT stick (TASK-26). Two sets: `reading` (EPUB and
+  PDF/DjVu, idle reading) and `files` (the file browser). A set maps a stick
+  direction (QUICK_DIRS: up, up_right, right, down_right, down, down_left,
+  left, up_left) to an action id; a set that is present REPLACES the built-in
+  one (DEFAULT_QUICK) whole, so a direction it does not mention is empty (the
+  wheel has as many sectors as actions). `none` = empty as well.
+  `x_modifier` is never a quick action, and the `files` set takes only the
+  actions that work without a document (QUICK_FILES_ACTIONS). An old kopad
+  ignores the key.
+
 Device-local data (settings/kopad_device.lua, NOT synced by koligilo):
   padmap_layout = "nintendo"   -- which layout this device's pad uses
 
-Not covered: D-pad (stock passthrough), sticks, Guide/L3/R3, the legacy
+Not covered: D-pad (stock passthrough), sticks (beyond the R-stick quick
+wheel, `quick`), Guide/L3/R3, the legacy
 key_events path (old patched builds), and action remapping inside the
 selection overlay / dictionary popup / menus. The
 Steam Deck back paddles L4/L5/R4/R5 (SDL ids 16+) are not remappable either:
@@ -194,6 +209,32 @@ M.DEFAULT_ACTIONS = {
     select = "top_menu", start = "config_menu",
 }
 
+-- The quick-action wheel (PC-021): stick directions clockwise from up (the
+-- order of the wheel's sectors), the two sets, and their built-in contents.
+M.QUICK_DIRS = { "up", "up_right", "right", "down_right", "down", "down_left", "left", "up_left" }
+M.QUICK_SETS = { "reading", "files" }
+-- Actions that work in the file browser (no document): the library, the
+-- menu and the screen.
+M.QUICK_FILES_ACTIONS = {
+    "history", "favorites", "collections", "last_book", "top_menu", "file_browser",
+    "night_mode", "rotate", "full_refresh",
+    "frontlight_toggle", "frontlight_up", "frontlight_down",
+    "screenshot", "cheat_sheet",
+}
+local QUICK_FILES_OK = {}
+for _, id in ipairs(M.QUICK_FILES_ACTIONS) do QUICK_FILES_OK[id] = true end
+M.DEFAULT_QUICK = {
+    reading = {
+        up = "toc", up_right = "toggle_bookmark", right = "forward_location",
+        down_right = "book_map", down = "footer_menu", down_left = "history",
+        left = "back_location", up_left = "fulltext_search",
+    },
+    files = {
+        up = "history", up_right = "favorites", right = "collections",
+        down = "last_book", left = "top_menu", up_left = "file_browser",
+    },
+}
+
 -- Logical (kind, id) -> role name; nil for controls outside the vocabulary.
 local ROLE_BY_CONTROL = { button = {}, axis = {} }
 for name, r in pairs(M.ROLES) do ROLE_BY_CONTROL[r.kind][r.id] = name end
@@ -228,10 +269,65 @@ function M.build_actions(padmap, warn)
     return out
 end
 
+local QUICK_DIR_OK = {}
+for _, d in ipairs(M.QUICK_DIRS) do QUICK_DIR_OK[d] = true end
+
+-- Can action `id` sit in quick set `set`?
+function M.quick_allowed(set, id)
+    if not M.ACTIONS[id] or id == "x_modifier" then return false end
+    return set ~= "files" or QUICK_FILES_OK[id] == true or id == "none"
+end
+
+-- The quick-action sets from the shared `padmap` value (already known to be a
+-- table of the right version, or nil). Returns { reading = {[dir] = action},
+-- files = {...} }, always both sets: a set the data does not give (or gives
+-- broken) is DEFAULT_QUICK's. Bad entries are skipped with a warning; `none`
+-- is dropped (an empty direction).
+function M.build_quick(padmap, warn)
+    warn = warn or noop
+    local raw = type(padmap) == "table" and padmap.quick or nil
+    if raw ~= nil and type(raw) ~= "table" then
+        warn("padmap: quick is not a table, ignored")
+        raw = nil
+    end
+    if raw then
+        for name in pairs(raw) do
+            if name ~= "reading" and name ~= "files" then
+                warn("padmap: unknown quick set " .. tostring(name) .. ", ignored")
+            end
+        end
+    end
+    local out = {}
+    for _, set in ipairs(M.QUICK_SETS) do
+        local src = raw and raw[set]
+        if src ~= nil and type(src) ~= "table" then
+            warn("padmap: quick set " .. set .. " is not a table, ignored")
+            src = nil
+        end
+        local t = {}
+        if src == nil then
+            for d, a in pairs(M.DEFAULT_QUICK[set]) do t[d] = a end
+        else
+            for d, a in pairs(src) do
+                if type(d) ~= "string" or not QUICK_DIR_OK[d] then
+                    warn("padmap: unknown direction " .. tostring(d) .. " in quick." .. set .. ", ignored")
+                elseif type(a) ~= "string" or not M.quick_allowed(set, a) then
+                    warn("padmap: action " .. tostring(a) .. " not allowed in quick." .. set .. ", ignored")
+                elseif a ~= "none" then
+                    t[d] = a
+                end
+            end
+        end
+        out[set] = t
+    end
+    return out
+end
+
 -- Build the resolution tables for `layout` from the shared `padmap` value.
 -- `warn` (optional) receives one string per skipped entry.
 -- Returns { buttons = {[phys_id] = {kind,id}}, axes = {[phys_id] = {kind,id}},
---           layout = <name>, actions = {[role] = action} }.
+--           layout = <name>, actions = {[role] = action},
+--           quick = {reading = {[dir] = action}, files = {...}} }.
 function M.build(padmap, layout, warn)
     warn = warn or noop
     local map = {}
@@ -246,6 +342,7 @@ function M.build(padmap, layout, warn)
 
     local user
     local actions = {}
+    local quick
     if padmap ~= nil then
         if type(padmap) ~= "table" then
             warn("padmap: not a table, ignored")
@@ -255,6 +352,7 @@ function M.build(padmap, layout, warn)
             -- the two stages are independent: a broken `layouts` does not
             -- discard valid `actions` and vice versa
             actions = M.build_actions(padmap, warn)
+            quick = M.build_quick(padmap, warn)
             if padmap.layouts ~= nil and type(padmap.layouts) ~= "table" then
                 warn("padmap: layouts is not a table, ignored")
             elseif padmap.layouts then
@@ -283,7 +381,8 @@ function M.build(padmap, layout, warn)
         end
     end
 
-    local res = { buttons = {}, axes = {}, layout = layout, actions = actions }
+    local res = { buttons = {}, axes = {}, layout = layout, actions = actions,
+                  quick = quick or M.build_quick(nil, warn) }
     for phys, role in pairs(map) do
         local p = M.PHYSICAL[phys]
         local r = M.ROLES[role]

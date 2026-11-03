@@ -57,11 +57,29 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **A** | select sentences, starting at the first sentence of the page |
 | **D-pad** | select words: ↓ / → start at the first word of the page, ↑ / ← at the last one |
 | **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
-| **L-stick** / **R-stick** | nothing |
+| **R-stick** | the quick-action wheel (see below) |
+| **L-stick** | nothing |
 | hold **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 | **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
 
 **X** is a modifier you hold: the combos work while it is down and stop when you let go. On older patched builds (no button releases) and when a trigger is mapped to X, it is a latch instead: press X, then one combo. It is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
+
+### Quick-action wheel (R-stick)
+
+Push the **R-stick** while reading (EPUB or PDF) and a wheel of quick actions opens, already pointing at the direction you pushed: keep pointing with the stick, **A** runs the action (the wheel closes first), **B** closes the wheel. It looks and works like a dialog wheel (below); its title is a status line (chapter · page n / m · time · battery), and under each action's name the hub shows the other way to it, if there is one (**X** + LB for the table of contents, **B** for going back, …).
+
+| Direction | Reading (EPUB, PDF) | File browser |
+|---|---|---|
+| ↑ | table of contents | history |
+| ↗ | toggle bookmark | favorites |
+| → | forward to the next location | collections |
+| ↘ | book map | — |
+| ↓ | footer mode toggle | previous book |
+| ↙ | history | — |
+| ← | back to the previous location | top menu |
+| ↖ | fulltext search | home folder |
+
+Empty directions are left out, so the wheel has as many sectors as actions. Both sets can be changed in koligilo (`quick` in `padmap`, see Button remapping). After the wheel closes the R-stick does nothing until it is back in the centre, so a stick still held does not open it again. In a PDF the R-stick used to zoom; zoom is now **A** held + D-pad (and the bottom menu).
 
 ### Menus versus reading
 
@@ -112,6 +130,7 @@ Touch works too: tap a sector to run it, the centre for the next page, the page 
 | **B** | parent folder (KOReader's own Back would ask "Exit KOReader?"; quitting stays in the menu) |
 | **RB** / **LB**, **RT** / **LT** | next / previous page of the list |
 | **Select** | top menu |
+| **R-stick** | the quick-action wheel (library actions) |
 
 ### Selection mode (sentences and words)
 
@@ -188,6 +207,7 @@ Button names in this README are Xbox-style **roles** (A = bottom face button, et
         ["xbox"]     = { ["ltrigger"] = "rt", ["rtrigger"] = "lt" },
     },
     ["actions"] = { ["rb"] = "top_menu", ["select"] = "next_page" },   -- optional, see below
+    ["quick"] = { ["reading"] = { ["up"] = "toc", ["left"] = "back_location" } },   -- optional
 },
 ```
 
@@ -196,6 +216,8 @@ Keys are physical controls by position — `south east west north back start lsh
 **Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup` (`crosshair` is kept for older koligilo data and now opens the word level, like `word_walk`); display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `config_menu` (until kopad TASK-13: `footer_menu`; the footer mode toggle stays on **X** + D-pad ↓); B has no default action id; it goes back to the previous location, like `back_location`. Roles not listed keep their default.
 
 An override applies only in the idle reading context: the book itself is on top (no menu, list, dialog, dictionary popup or selection) and no X combo is pending. Everywhere else the role keeps what it does today (RB still closes a selection and turns the page, and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
+
+**The quick-action wheel.** `quick` (optional, PC-021) holds the two sets of the R-stick wheel: `reading` (EPUB and PDF) and `files` (the file browser). A set maps a stick direction — `up up_right right down_right down down_left left up_left` — to an action from the list above. A set you give **replaces** the built-in one whole: a direction it does not name is empty (`none` too), and an empty set means the R-stick does nothing there. `x_modifier` is never allowed, and `files` takes only actions that work without a book: `history favorites collections last_book top_menu file_browser night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down screenshot cheat_sheet`. Bad entries are skipped with a warning; a missing set is the built-in one. kopad versions without the wheel ignore the key. koligilo edits it in the same card, tab *Koło szybkich akcji*.
 
 ### Scope
 
@@ -207,7 +229,7 @@ Paged documents get their own view controls instead (stock KOReader 2026.07+ `Ga
 |---|---|
 | **D-pad** | move around the page slowly (about a tenth of the screen per press); never turns the page |
 | **L-stick** | move around the page fast (half a screen per step, keeps moving while held); never turns the page |
-| **R-stick** | nothing (consumed, so KOReader cannot turn pages with it) |
+| **R-stick** | the quick-action wheel, the same as in an EPUB (it never turns or zooms the page) |
 | **hold A + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
 | **hold A + D-pad ← / →** | fit the whole page / fit the text width |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
