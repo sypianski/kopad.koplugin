@@ -591,8 +591,10 @@ do
         sel._open_walk = rec("walk", opts and opts.ret, opts and opts.why)
         sel._open = rec("sent", opts and opts.ret, opts and opts.why)
         sel._open_point = rec("point", opts and opts.ret, opts and opts.why)
+        sel._open_highlights = rec("hl", opts and opts.hl, opts and opts.hl_why)
         p.enabled_ref.subs = { selector = sel }
         p._selector = PadNav._selector
+        p._open_highlights = PadNav._open_highlights
         p._show_text = function(_, t) plog.shown = t end
         return p, plog, sel
     end
@@ -610,11 +612,30 @@ do
     n:onGamepadButtonDown({ button = 3 }); n:onGamepadButtonDown({ button = 12 })
     assert(sel.calls[3] == "sent:false" and #log.events == 0, "Y + ↓ = sentences")
     n:onGamepadButtonUp({ button = 12 }); n:onGamepadButtonUp({ button = 3 })
-    -- A tapped = point from-to (context paged), Y tapped = nothing (TASK-31)
+    -- A tapped = point from-to (context paged), Y tapped = the page's
+    -- highlights (TASK-31), on the release only
     n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonUp({ button = 0 })
     assert(sel.calls[4] == "point:nil", "A tap = point from-to: " .. tostring(sel.calls[4]))
+    n:onGamepadButtonDown({ button = 3 })
+    assert(#sel.calls == 4, "nothing on the Y press")
+    n:onGamepadButtonUp({ button = 3 })
+    assert(#sel.calls == 5 and sel.calls[5] == "hl:nil" and #log.events == 0,
+        "Y tap in PDF = highlights: " .. tostring(sel.calls[5]))
+    assert(log.shown == nil, "highlights shown: no message")
+    -- Y + D-pad opened the sentences above (calls[3]): that release was no tap
+    -- none on the page = the EPUB message; reflow = why
+    n, log, sel = paged_sel({ ret = true, hl = false })
     n:onGamepadButtonDown({ button = 3 }); n:onGamepadButtonUp({ button = 3 })
-    assert(#sel.calls == 4 and #log.events == 0, "Y tap: nothing yet")
+    assert(sel.calls[1] == "hl:nil" and log.shown == "No highlights on this page",
+        "PDF without highlights: " .. tostring(log.shown))
+    n, log, sel = paged_sel({ ret = true, hl = false, hl_why = "reflow" })
+    n:onGamepadButtonDown({ button = 3 }); n:onGamepadButtonUp({ button = 3 })
+    assert(log.shown == "Not in reflow mode", "highlights in reflow: " .. tostring(log.shown))
+    -- the `highlights` action on a role (koligilo) reaches the hidden selector too
+    n, log, sel = paged_sel({ ret = true, hl = true })
+    n:set_padmap(P.build(acts({ lb = "highlights" }), "xbox"))
+    assert(n:onGamepadButtonDown({ button = 9 }) == true and sel.calls[1] == "hl:nil",
+        "highlights action in PDF: " .. tostring(sel.calls[1]))
     -- after the letters are released the D-pad pans again
     n:onGamepadButtonDown({ button = 11 })
     assert(log.events[1] == "Panning:0,-0.2", "D-pad alone pans")

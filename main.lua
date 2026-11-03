@@ -25,7 +25,8 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
 
   PDF / DjVu (TASK-30): D-pad pans, L-stick pans fast, B held + D-pad zoom /
   fit, A / Y held + D-pad and A tapped select as above (pages with a text
-  layer; not in reflow mode), LB / RB / LT / RT whole page.
+  layer; not in reflow mode), Y tapped = the page's highlights, X in the
+  selection highlights / removes (TASK-31), LB / RB / LT / RT whole page.
 
   Menus versus reading (KOReader >= 2026.07, PadNav:_context): the reading
   and selection controls apply only while the book (or kopad's selection) is

@@ -20,7 +20,10 @@ highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua
 placement, prefix filter, B, lines from word boxes, the pointer's two
 steps) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
-over page edges, sentences, point from-to, scan / reflow); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`,
+over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfhl_test.lua`
+(highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
+ReaderAnnotation, Y browses the page's highlights, boxes under zoom / pan,
+notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`,
 KOReader stubbed.
 
 ## Runtime requirements
@@ -169,8 +172,11 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   `_paged_select(btn)` (`Selector:_open_walk` / `_open`, from the first
   word on the screen for →/↓, the last for ←/↑; `false, "no_text" |
   "reflow"` -> `no_select_text` message). A tap -> `_release_a` ->
-  `_open_point_select` (both use `_any_selector`). Y tap: nothing until
-  TASK-31 (highlights). Once the overlay is open the context is `selection`
+  `_open_point_select` (both use `_any_selector`). Y tap -> `_release_y`
+  (context `paged` as well as `reading`, `_any_selector`) ->
+  `PadNav:_open_highlights` = the page's highlights (TASK-31; none = "No
+  highlights on this page", reflow = `no_select_text`). The `highlights`
+  action reaches the hidden paged selector too. Once the overlay is open the context is `selection`
   and everything is the EPUB path; `PadNav:_turn_page` (LB / RB in the
   selection) turns a whole page there (`_paged_page`).
 - **X**: `_button_down` wraps `_button_dispatch`; a press that arms `_x_mode`
@@ -383,7 +389,7 @@ pdfpara.lua in here). Also `has_text` (a scan's optical boxes have no
 the engine's line order), `line_boxes(words, i0, i1[, field])` (one box per
 line), `pos(w, view.state)` = `{page, x, y, zoom, rotation}` at the word's
 centre, which `getTextFromPositions` snaps to exactly that word (what
-TASK-31 passes to `saveHighlight` as pos0 / pos1).
+PagedOverlay passes to `saveHighlight` as pos0 / pos1, TASK-31).
 
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
@@ -403,9 +409,8 @@ page in continuous view; `_extends_before/after` decided with the
 neighbouring page's first / last word), `_ww_step` / `_ww_line` / `_ww_land`
 / `_ww_word_from_xp` / `_xp_before` (word index on the page), `_turn_page`
 (`GotoPage`), `_get_selection` (`getTextFromPositions`, pboxes native,
-sboxes screen), `_draw_walk` / `_draw_struct`, `_page_text`, and
-highlight / note / toggle = "not yet" (TASK-31; the action menu drops that
-row when `self.paged`, the status line drops "X hl"). Screen boxes
+sboxes screen), `_draw_walk` / `_draw_struct`, `_page_text`, and the
+highlights (TASK-31, below). Screen boxes
 (`word.sbox`, `{x, y, w, h}` or nil off the screen) come from
 `view:pageToScreenTransform` and are recomputed on every paint and every
 move (`_screen_boxes`), never cached; `_refresh` first pans an off-screen
@@ -413,6 +418,39 @@ cursor into view (`_reveal`: `PanningUpdate` in page view,
 `onScrollPanRel` in continuous view). Sentences, paragraphs, levels, point
 from-to and the dictionary / Vortuyo / AI / copy actions are the base
 class's. One page at a time; a range never leaves it:
+
+**Highlights in PDF / DjVu (TASK-31, PagedOverlay).** Saved the way a finger
+selection is: `_save_highlight` sets `ui.highlight.selected_text = {text,
+pos0, pos1, pboxes}` (pos = copies of `PdfWords.pos`, `{page, x, y, zoom,
+rotation}` native) and calls `saveHighlight()`, which builds the stock item
+(`page`, `pboxes`, the user's `saved_drawer` / `saved_color`, chapter),
+writes it into the PDF when "write highlights into PDF" is on, files it with
+`annotation:addItem` (the sidecar -> still there after reopening) and sends
+`AnnotationsModified`; the previous `selected_text` is put back.
+`_collect_highlights` walks `ui.annotation.annotations` (index = annotation
+index, what `deleteHighlight` takes): every item with a `drawer` (bookmarks
+have none) whose `pos0.page .. pos1.page` covers `self.page`; a multi-page one
+(`ext`) contributes its piece on the page (`getSavedExtendedHighlightPage`,
+else `ext[page]`). Native boxes from `doc:getPageBoxesFromPositions` (what
+ReaderView draws; else the stored `pboxes`), sorted top to bottom; screen
+boxes (`item.boxes`, `item.sbox` = top one or nil) are recomputed in
+`_screen_boxes` with the words'. Mode `hl`: `_get_selection` = the stored
+text / positions + `hl_index` / `hl_ann`; `_cursor_word` = the top box, so a
+step pans an off-screen highlight into view; `_draw_struct` inverts its
+boxes. **X** (`_do_toggle_highlight`): `_highlight_of(sel)` = the browsed one,
+or a single-page highlight on the page whose pos0 / pos1 snap (`_word_at`,
+nearest word box) to the selection's end words (finger highlights do not sit
+at word centres, so never compare positions with `==`); found -> 
+`rh:deleteHighlight(index)` (index re-checked by identity; deletes from the
+PDF, `index_modified` shifts the box cache), else save. Highlight in the menu
+on a browsed highlight does nothing (no duplicate). **Note**: base
+`_do_note` is split into `_note_target(sel)` (EPUB: a new highlight;
+PagedOverlay: the browsed highlight itself, else a new one) and
+`_note_saved(a, note)` (PagedOverlay: `writePdfAnnotation("content")`, as the
+stock note editor, then refresh); a note on a highlight that already had one
+counts 0 / 0 in `AnnotationsModified`. The EPUB `_do_toggle_highlight` still
+compares `a.pos0 == sel.pos0` (xpointer strings, which works there) and
+removes with `table.remove` (no `index_modified`) -- left as it was.
 
 - **`struct`** — sentences (`self.sentences[]` from `paginmapo`). Cursor
   `sel_cur`, optional `sel_anchor`; `_set_sent` derives the selected span

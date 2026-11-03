@@ -776,8 +776,7 @@ function SelectorOverlay:action_menu()
                     end,
                 },
             },
-            -- highlights in PDF / DjVu: TASK-31
-            not self.paged and {
+            {
                 {
                     text = _("Highlight"),
                     callback = function()
@@ -966,14 +965,24 @@ function SelectorOverlay:_do_toggle_highlight(sel)
     self:_refresh()
 end
 
-function SelectorOverlay:_do_note(sel)
+-- The annotation index a note goes to: a new highlight of the selection
+-- (PagedOverlay: the browsed highlight itself in mode "hl").
+function SelectorOverlay:_note_target(sel)
     local rh = self.ui.highlight
-    if not rh then return end
+    if not rh then return nil end
     rh.selected_text = sel
     local ok, index = pcall(rh.saveHighlight, rh, true)
     rh.selected_text = nil
-    if not ok or not index then return end
-    local ui = self.ui
+    if ok then return index end
+end
+
+-- After a note was saved (PagedOverlay: write it into the PDF, refresh).
+function SelectorOverlay:_note_saved() end
+
+function SelectorOverlay:_do_note(sel)
+    local index = self:_note_target(sel)
+    if not index then return end
+    local ui, overlay = self.ui, self
     local InputDialog = require("ui/widget/inputdialog")
     local dlg
     dlg = InputDialog:new{
@@ -994,9 +1003,13 @@ function SelectorOverlay:_do_note(sel)
                     if note == "" then return end
                     local a = ui.annotation.annotations[index]
                     if a then
+                        -- a highlight that already had a note stays one
+                        local had = a.note ~= nil and a.note ~= ""
                         a.note = note
                         ui:handleEvent(Event:new("AnnotationsModified",
-                            { a, nb_highlights_added = -1, nb_notes_added = 1 }))
+                            { a, nb_highlights_added = had and 0 or -1,
+                              nb_notes_added = had and 0 or 1 }))
+                        overlay:_note_saved(a, note)
                     end
                 end,
             },
@@ -1132,8 +1145,8 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     local cx = ox + page_right + math.floor(margin / 2)
 
     for i, item in ipairs(self.hl_items) do
-        local sbox = item.sbox
-        if sbox.y >= 0 and sbox.y < sh then
+        local sbox = item.sbox -- nil: off the screen (PDF zoomed in)
+        if sbox and sbox.y >= 0 and sbox.y < sh then
             local cy = oy + sbox.y + math.floor(sbox.h / 2)
             bb:paintCircle(cx, cy, r, Blitbuffer.COLOR_BLACK, r)
             if i ~= self.hl_cur then
@@ -1196,10 +1209,8 @@ end
 -- SENTENCE: the selection runs on past the top / bottom of the page. `short`
 -- = the shortened bar of statusbar.lua (mode + A / B, for a tight strip).
 function SelectorOverlay:_status_text(short)
-    -- PDF / DjVu: no X highlight toggle until TASK-31
     local keys = short and " \xC2\xB7 A menu \xC2\xB7 B close"
-        or (self.paged and "" or " \xC2\xB7 X hl")
-            .. " \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+        or " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
     if self.mode == "point" then
         local p = self.pointer
         if p and p.step == "end" then
@@ -1329,7 +1340,9 @@ end
 -- (view:pageToScreenTransform) on every paint and every move, never cached:
 -- zoom and pan change the mapping. nil = the word is not on the screen. A
 -- move onto a word outside the view pans the view to it (_reveal).
--- Highlights and notes are TASK-31, paragraphs TASK-32 (pdfwords.sentences).
+-- Highlights and notes (TASK-31) go through ReaderHighlight:saveHighlight /
+-- deleteHighlight, the stock path of a finger selection; paragraphs are
+-- TASK-32 (pdfwords.sentences).
 
 local PagedOverlay = SelectorOverlay:extend{
     name  = "kopad_selector_overlay",
@@ -1414,9 +1427,60 @@ function PagedOverlay:_collect()
     self:_screen_boxes()
 end
 
--- Saved highlights in PDF / DjVu: TASK-31.
+-- The positions (and stored boxes) of a saved highlight on `page`: its own
+-- pos0 / pos1, or for a multi-page one (ann.ext) the piece on that page.
+local function hl_positions(rh, ann, index, page)
+    if not ann.ext then return ann.pos0, ann.pos1, ann.pboxes end
+    if rh and rh.getSavedExtendedHighlightPage then
+        local ok, piece = pcall(rh.getSavedExtendedHighlightPage, rh, ann, page, index)
+        if ok and type(piece) == "table" and piece.pos0 then
+            return piece.pos0, piece.pos1, piece.pboxes
+        end
+    end
+    local e = type(ann.ext) == "table" and ann.ext[page]
+    if type(e) == "table" then return e.pos0, e.pos1, e.pboxes end
+end
+
+-- Saved highlights on the overlay's page (TASK-31): every annotation with a
+-- drawer (bookmarks have none) whose pos0.page .. pos1.page covers the page,
+-- as ReaderHighlight:getPageSavedHighlights selects them, but walking
+-- ui.annotation.annotations directly so `index` is the annotation index that
+-- deleteHighlight takes. Native boxes from getPageBoxesFromPositions (what
+-- ReaderView draws), else the stored pboxes; ordered top to bottom on the
+-- page. Screen boxes: _screen_boxes, recomputed like the words'.
 function PagedOverlay:_collect_highlights()
     self.hl_items, self.hl_cur = {}, 0
+    local anns = self.ui and self.ui.annotation and self.ui.annotation.annotations
+    if type(anns) ~= "table" then return end
+    local page, rh = self.page, self.ui.highlight
+    for i, ann in ipairs(anns) do
+        local p0, p1 = ann.pos0, ann.pos1
+        if ann.drawer and type(p0) == "table" and type(p1) == "table"
+                and type(p0.page) == "number" and type(p1.page) == "number"
+                and p0.page <= page and page <= p1.page then
+            local q0, q1, stored = hl_positions(rh, ann, i, page)
+            local pboxes
+            if q0 and q1 and self.doc.getPageBoxesFromPositions then
+                local ok, b = pcall(self.doc.getPageBoxesFromPositions, self.doc, page, q0, q1)
+                if ok and type(b) == "table" and #b > 0 then pboxes = b end
+            end
+            pboxes = pboxes or (type(stored) == "table" and #stored > 0 and stored) or nil
+            if pboxes then
+                local top = pboxes[1]
+                for _, b in ipairs(pboxes) do
+                    if b.y < top.y or (b.y == top.y and b.x < top.x) then top = b end
+                end
+                table.insert(self.hl_items, { ann = ann, index = i, pos0 = q0, pos1 = q1,
+                                              pboxes = pboxes, ptop = top, boxes = {} })
+            end
+        end
+    end
+    table.sort(self.hl_items, function(a, b)
+        if a.ptop.y ~= b.ptop.y then return a.ptop.y < b.ptop.y end
+        if a.ptop.x ~= b.ptop.x then return a.ptop.x < b.ptop.x end
+        return a.index < b.index
+    end)
+    self:_screen_boxes()
 end
 
 -- A native page box on the screen now, nil when it is not visible. In page
@@ -1435,6 +1499,18 @@ end
 
 function PagedOverlay:_screen_boxes()
     for _, w in ipairs(self.words or {}) do w.sbox = self:_to_screen(w.pbox) end
+    -- highlights: the boxes on the screen now, sbox = the top one (nil = none)
+    for _, it in ipairs(self.hl_items or {}) do
+        local boxes, top = {}, nil
+        for _, b in ipairs(it.pboxes) do
+            local r = self:_to_screen(b)
+            if r then
+                boxes[#boxes + 1] = r
+                if not top or r.y < top.y then top = r end
+            end
+        end
+        it.boxes, it.sbox = boxes, top
+    end
 end
 
 -- Pan the view so that word w is on the screen (no-op when it is). Page
@@ -1468,9 +1544,14 @@ function PagedOverlay:_reveal(w)
     if dx ~= 0 or dy ~= 0 then pcall(view.PanningUpdate, view, dx, dy) end
 end
 
--- The word the cursor is on (walk) / the cursor sentence's first word.
+-- The word the cursor is on (walk) / the cursor sentence's first word / the
+-- top box of the focused highlight (hl; only its pbox is used, by _reveal).
 function PagedOverlay:_cursor_word()
     if self.mode == "walk" then return self.ww_word end
+    if self.mode == "hl" then
+        local it = self.hl_items[self.hl_cur]
+        return it and { pbox = it.ptop } or nil
+    end
     if self.mode == "struct" and self.sel_cur then
         local s = self.sentences[self.sel_cur]
         return s and self.words[s.first]
@@ -1533,6 +1614,7 @@ function PagedOverlay:_turn_page(dir)
     self.ui:handleEvent(Event:new("GotoPage", target))
     self.page = target
     self:_collect()
+    self:_collect_highlights()
     return true
 end
 
@@ -1580,6 +1662,17 @@ end
 -- words (a later saveHighlight takes these, TASK-31), pboxes (native, one per
 -- line) and sboxes (screen, for the dictionary popup; nil when none shows).
 function PagedOverlay:_get_selection()
+    if self.mode == "hl" then
+        -- the focused saved highlight: its own text and positions, hl_index =
+        -- its annotation index (X removes it, Note edits it)
+        local it = self.hl_items[self.hl_cur]
+        if not it then return nil end
+        self:_screen_boxes()
+        local ann = it.ann
+        return { text = ann.text or "", pos0 = ann.pos0, pos1 = ann.pos1, page = self.page,
+                 pboxes = it.pboxes, sboxes = #it.boxes > 0 and it.boxes or nil,
+                 hl_index = it.index, hl_ann = ann }
+    end
     local i0, i1 = self:_span_idx()
     if not i0 then return nil end
     local w0, w1 = self.words[i0], self.words[i1]
@@ -1605,12 +1698,126 @@ function PagedOverlay:_page_text()
     return PdfWords.text(self.words, 1, #self.words)
 end
 
-local function not_yet()
-    UIManager:show(InfoMessage:new{ text = _("Highlights in PDF: not yet"), timeout = 2 })
+-- Highlights (TASK-31). Saved exactly like a finger selection: the
+-- selection becomes ReaderHighlight.selected_text ({text, pos0, pos1,
+-- pboxes}; pos = {page, x, y, zoom, rotation} at the end words' centres, in
+-- native page coordinates) and saveHighlight() files it: annotation:addItem
+-- (the sidecar, so it is there after reopening), AnnotationsModified, the
+-- user's highlight style and, with "write highlights into PDF", the PDF
+-- itself. Removed by deleteHighlight(index), which also deletes it from the
+-- PDF and shifts the drawn-box cache (index_modified).
+
+-- Save `sel` as a highlight; the annotation index, nil when it failed.
+function PagedOverlay:_save_highlight(sel)
+    local rh = self.ui.highlight
+    if not (rh and rh.saveHighlight and sel and type(sel.pos0) == "table"
+            and type(sel.pos1) == "table") then return nil end
+    local function copy(p)
+        return { page = p.page, x = p.x, y = p.y, zoom = p.zoom, rotation = p.rotation }
+    end
+    local prev = rh.selected_text
+    rh.selected_text = { text = sel.text, pos0 = copy(sel.pos0), pos1 = copy(sel.pos1),
+                         pboxes = sel.pboxes }
+    local ok, index = pcall(rh.saveHighlight, rh)
+    rh.selected_text = prev
+    if ok then return index end
 end
-function PagedOverlay:_do_highlight() not_yet() end
-function PagedOverlay:_do_toggle_highlight() not_yet() end
-function PagedOverlay:_do_note() not_yet() end
+
+-- The word index on the page nearest to a native position (0 inside a box).
+function PagedOverlay:_word_at(pos)
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then return nil end
+    local best, best_d
+    for i, w in ipairs(self.words) do
+        local b = w.pbox
+        local dx = math.max(b.x - pos.x, 0, pos.x - (b.x + b.w))
+        local dy = math.max(b.y - pos.y, 0, pos.y - (b.y + b.h))
+        local d = dx * dx + dy * dy
+        if not best_d or d < best_d then best, best_d = i, d end
+    end
+    return best
+end
+
+-- The saved highlight `sel` is (mode "hl"), or the single-page one on this
+-- page covering the same words (its pos0 / pos1 snap to the selection's end
+-- words; a finger highlight's positions are not the word centres): the
+-- hl_items entry, nil when none.
+function PagedOverlay:_highlight_of(sel)
+    if sel.hl_index then
+        for _, it in ipairs(self.hl_items) do
+            if it.ann == sel.hl_ann then return it end
+        end
+        return nil
+    end
+    local i0, i1 = self:_span_idx()
+    if not i0 then return nil end
+    for _, it in ipairs(self.hl_items) do
+        if not it.ann.ext then
+            local a, b = self:_word_at(it.pos0), self:_word_at(it.pos1)
+            if a and b and math.min(a, b) == i0 and math.max(a, b) == i1 then return it end
+        end
+    end
+end
+
+-- Recollect the page's highlights after a change; browsing them, the focus
+-- stays in place (0 = none left: padnav closes).
+function PagedOverlay:_highlights_changed()
+    local cur = self.hl_cur
+    self:_collect_highlights()
+    if self.mode == "hl" then self.hl_cur = math.min(cur, #self.hl_items) end
+    self:_refresh()
+end
+
+function PagedOverlay:_do_highlight(sel)
+    if not sel or sel.hl_index then return end -- already a highlight
+    if self:_save_highlight(sel) then self:_highlights_changed() end
+end
+
+-- X: remove the highlight the selection is, else highlight it.
+function PagedOverlay:_do_toggle_highlight(sel)
+    if not sel then return end
+    local it = self:_highlight_of(sel)
+    if it then
+        local rh = self.ui.highlight
+        local anns = self.ui.annotation and self.ui.annotation.annotations
+        local index = it.index
+        -- the index the list was collected with, re-checked by identity
+        if anns and anns[index] ~= it.ann then
+            index = nil
+            for i, a in ipairs(anns) do if a == it.ann then index = i; break end end
+        end
+        if index and rh and rh.deleteHighlight and pcall(rh.deleteHighlight, rh, index) then
+            UIManager:show(InfoMessage:new{ text = _("Highlight removed"), timeout = 1 })
+        end
+    else
+        self:_save_highlight(sel)
+    end
+    self:_highlights_changed()
+end
+
+-- Note: on the browsed highlight itself (mode "hl"), else on a new one.
+function PagedOverlay:_note_target(sel)
+    if not sel then return nil end
+    if sel.hl_index then
+        local it = self:_highlight_of(sel)
+        local anns = self.ui.annotation and self.ui.annotation.annotations
+        if it and anns then
+            for i, a in ipairs(anns) do if a == it.ann then return i end end
+        end
+        return nil
+    end
+    local index = self:_save_highlight(sel)
+    if index then self:_highlights_changed() end
+    return index
+end
+
+-- The note also goes into the PDF's annotation (as the stock note editor
+-- does; a no-op unless "write highlights into PDF" is on), then the status
+-- line shows [note].
+function PagedOverlay:_note_saved(a, note)
+    local rh = self.ui.highlight
+    if rh and rh.writePdfAnnotation then pcall(rh.writePdfAnnotation, rh, "content", a, note) end
+    self:_highlights_changed()
+end
 
 -- Point from-to: the labels go at the lines on the screen now.
 function PagedOverlay:_point_begin()
@@ -1633,6 +1840,11 @@ function PagedOverlay:_draw_walk(bb, ox, oy)
 end
 
 function PagedOverlay:_draw_struct(bb, ox, oy)
+    if self.mode == "hl" then
+        local it = self.hl_items[self.hl_cur]
+        if it then invert_boxes(bb, ox, oy, it.boxes) end
+        return
+    end
     if self.mode ~= "struct" then return end
     local i0, i1 = self:_span_idx()
     if i0 then invert_boxes(bb, ox, oy, PdfWords.line_boxes(self.words, i0, i1)) end
@@ -1755,14 +1967,18 @@ end
 
 -- The page's saved highlights, the first one focused (Y while reading).
 -- False, with nothing shown, when the page has none.
+-- PDF / DjVu (TASK-31): the highlights of the whole page (top page in
+-- continuous view), the view pans to the focused one; reflow = false,
+-- "reflow".
 function Selector:_open_highlights()
-    local ov = self:_new_overlay()
-    if not ov then return nil end
+    local ov, why = self:_new_overlay()
+    if not ov then return Selector._refused(why) end
     if #ov.hl_items == 0 then
         Pluginaro.release_overlay(self.ui, "kopad")
         return false
     end
     ov.mode, ov.hl_cur = "hl", 1
+    if ov.paged then ov:_reveal(ov:_cursor_word()) end
     self:_show(ov)
     return true
 end

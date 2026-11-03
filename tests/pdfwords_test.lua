@@ -194,17 +194,18 @@ assert(ov.page == 1 and cur(ov) == "zeta", "page edge ←: the last word of the 
 -- ↓ on the last line = the next page's first word, ↑ on the first line = back
 ov:line(1); assert(ov.page == 2 and cur(ov) == "eta", "line past the page")
 ov:line(-1); assert(ov.page == 1 and cur(ov) == "zeta", "line up past the page: its last word")
--- the dictionary gets the selection with SCREEN boxes; Highlight is TASK-31
+-- the dictionary gets the selection with SCREEN boxes (highlights: tests/pdfhl_test.lua)
 ov:_do_dict(ov:_get_selection())
 assert(lookups[1][1] == "T:zeta" and lookups[1][2][1].w == 200, "dictionary with screen boxes")
 shown = {}
 ov:_do_toggle_highlight(ov:_get_selection())
-assert(shown[1] and shown[1].text == "Highlights in PDF: not yet", "X: not yet")
+assert(#shown == 0, "X without ReaderHighlight: nothing, no error")
 menus = {}
 ov:action_menu()
-assert(#menus[1].buttons == 2 and menus[1].buttons[1][1].text == "Dictionary"
-    and menus[1].buttons[2][2].text == "Vortuyo", "action menu without Highlight / Note")
-assert(ov:_status_text() == "WORD \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text())
+assert(#menus[1].buttons == 3 and menus[1].buttons[1][1].text == "Dictionary"
+    and menus[1].buttons[2][1].text == "Highlight" and menus[1].buttons[2][2].text == "Note"
+    and menus[1].buttons[3][2].text == "Vortuyo", "action menu with Highlight / Note (TASK-31)")
+assert(ov:_status_text() == "WORD \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text())
 -- A held: a range from the anchor, never off the page
 ov:step(-1, true); ov:step(-1, true)
 assert(text(ov) == "T:Delta eps zeta", "range: " .. tostring(text(ov)))

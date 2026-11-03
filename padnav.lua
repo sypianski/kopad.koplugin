@@ -180,11 +180,14 @@ LB/RB and LT/RT change the page, always by a whole page:
                          word on the screen, ←/↑ from the last
   Y held + D-pad         Sentences (the same)
   A tapped               Point from-to (labels at the lines on the screen)
-  Y tapped               Nothing yet (highlights in PDF: TASK-31)
+  Y tapped               The page's highlights (TASK-31; as in an EPUB: the
+                         D-pad steps between them, the view pans to each,
+                         X removes one); none = a message
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 The selection itself (context "selection") is the EPUB one on the page's
 text boxes (selector.lua PagedOverlay): the same keys, LB / RB close it and
-turn a whole page, no highlights / notes yet (TASK-31), ↑/↓ in sentences and
+turn a whole page, X toggles a highlight / Note adds one through the stock
+ReaderHighlight path (saveHighlight / deleteHighlight, TASK-31), ↑/↓ in sentences and
 LT / RT step by sentence until paragraphs come (TASK-32). Pages without a
 text layer (scans) and reflow mode: a message, nothing opens.
 
@@ -1008,8 +1011,9 @@ function PadNav:_release_y()
     if not self._y_down then return end
     local tap = not self._y_used
     self._y_down, self._y_used = false, false
-    local selector = self:_selector()
-    if tap and selector and not selector.overlay and self:_context() == "reading" then
+    local selector = self:_any_selector() -- also an idle PDF / DjVu (TASK-31)
+    local ctx = self:_context()
+    if tap and selector and not selector.overlay and (ctx == "reading" or ctx == "paged") then
         self:_open_highlights(selector)
     end
 end
@@ -1126,8 +1130,9 @@ end
 -- first one, the D-pad steps between them; none on the page = a short
 -- message. Y in reading, and the `highlights` action (ACTION_RUNNERS).
 function PadNav:_open_highlights(selector)
-    if selector:_open_highlights() == false then
-        self:_show_text(_("No highlights on this page"), 2)
+    local ok, why = selector:_open_highlights()
+    if ok == false then
+        self:_show_text(why and no_select_text(why) or _("No highlights on this page"), 2)
     end
 end
 
@@ -1266,7 +1271,12 @@ local ACTION_RUNNERS = {
     collections       = ui_event("ShowCollList"),
     -- selection and dictionary
     sentence_select   = with_selector(function(self) self:_open_sentence_select() end),
-    highlights        = with_selector(function(self, selector) self:_open_highlights(selector) end),
+    -- also in an idle PDF / DjVu, whose selector _selector() hides (TASK-31)
+    highlights        = function(self)
+        local selector = self:_selector() or self:_any_selector()
+        if not selector or selector.overlay then return false end
+        self:_open_highlights(selector)
+    end,
     word_walk         = with_selector(function(self, selector) selector:_open_walk(false) end),
     -- The crosshair is gone (TASK-15); the id stays in the vocabulary (the
     -- koligilo contract) and opens the word level.
@@ -1476,7 +1486,7 @@ function PadNav:_button_dispatch(ev)
     -- Paged documents (TASK-30): A / Y are holds as in an EPUB. Nothing on
     -- the press; A / Y held + D-pad open the words / sentences
     -- (_paged_select), A tapped = point from-to (_release_a), Y tapped =
-    -- nothing yet (highlights in PDF: TASK-31). The D-pad alone pans (below).
+    -- the page's highlights (_release_y, TASK-31). The D-pad alone pans (below).
     if (btn == BTN_A or btn == BTN_Y) and self:_paged_idle() then
         if btn == BTN_A then
             self._a_down, self._a_moved, self._a_opened, self._a_reading = true, false, false, true
@@ -2341,6 +2351,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
     .. "\nHold A + D-pad: words    Hold Y + D-pad: sentences    A: point from-to"
+    .. "\nY: highlights on the page    X in a selection: highlight / remove"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
