@@ -97,7 +97,7 @@ overrides on top of the layout's built-in default) plus the device's layout into
 a lookup table; `resolve(tbl, kind, id)` maps a physical SDL button/trigger to
 the logical role id. **Role-level actions (PC-014):** `res.actions` (`build_actions`)
 is a second stage AFTER the layout — role → reading action from the closed list
-`M.ACTION_ORDER` (48 ids: `next_page`, `next_chapter`, `top_menu`, `toc`,
+`M.ACTION_ORDER` (52 ids: `next_page`, `next_chapter`, `top_menu`, `toc`, `zoom_in`,
 `sentence_select`, `night_mode`, `x_modifier`, `none`, …; each needs a runner in
 `ACTION_RUNNERS` and a label in `ACTION_LABELS`, checked by the test), keyed by role so it is shared by every layout; values equal to
 `M.DEFAULT_ACTIONS` are dropped so the built-in handler (and its pass-through in

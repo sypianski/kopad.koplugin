@@ -58,7 +58,12 @@ Scope: the selector (word walk / struct / crosshair) only exists for
 crengine (rolling) documents. In paged documents (PDF/DjVu) and in the
 FileManager no reader keys are suppressed and the selector-dependent
 handlers return false (pass-through) — only LB/RB page turns and X-combos
-remain active there.
+remain active there. Paged documents get their own view controls instead
+(PAGED_DPAD, _paged_idle; Gamepad* path only):
+  D-pad ↑ / ↓            Zoom in / out
+  D-pad ← / →            Fit whole page / fit text width (margins cropped)
+  R-stick                Pan the page
+The FileManager keeps the stock list navigation.
 
 Input paths (two, both end in the same on<Key> handlers):
 
@@ -170,6 +175,18 @@ local BUTTON_HANDLERS = {
 local BUTTON_SWALLOW = {
     [BTN_SELECT] = true, [BTN_GUIDE] = true, [BTN_START] = true,
     [BTN_L3] = true, [BTN_R3] = true,
+}
+
+-- Paged documents (PDF/DjVu) have no selector, so there the D-pad and the
+-- R-stick steer the view instead (see PadNav:_paged_idle): D-pad up/down =
+-- zoom in/out, left = whole page, right = text width (margins cropped);
+-- R-stick = pan the page (stock ReaderPanning, half a screen per step, the
+-- stock axis auto-repeat keeps it moving while held).
+local PAGED_DPAD = {
+    [11] = { "Zoom", "in" },
+    [12] = { "Zoom", "out" },
+    [13] = { "SetZoomMode", "page" },
+    [14] = { "SetZoomMode", "contentwidth" },
 }
 
 -- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
@@ -1001,6 +1018,10 @@ local ACTION_RUNNERS = {
     -- display
     font_bigger       = ui_event("IncreaseFontSize", 1),
     font_smaller      = ui_event("DecreaseFontSize", 1),
+    zoom_in           = ui_event("Zoom", "in"),
+    zoom_out          = ui_event("Zoom", "out"),
+    zoom_fit_width    = ui_event("SetZoomMode", "contentwidth"),
+    zoom_fit_page     = ui_event("SetZoomMode", "page"),
     night_mode        = ui_event("ToggleNightMode"),
     rotate            = ui_event("IterateRotation"),
     full_refresh      = ui_event("FullRefresh"),
@@ -1028,6 +1049,17 @@ function PadNav:_override_action(role)
     local selector = self:_selector()
     if selector and selector.overlay then return nil end
     return act
+end
+
+-- True when the D-pad and the R-stick should steer a paged document's view
+-- (PAGED_DPAD): a PDF/DjVu is open (the FileManager has no ui.paging, so its
+-- list navigation stays stock), no X-combo pending (X + D-pad keeps its
+-- menus) and no dictionary popup.
+function PadNav:_paged_idle()
+    if not (self.ui and self.ui.document and self.ui.paging) or self.ui.rolling then return false end
+    if self._x_mode then return false end
+    if self:_find_dict_widget() then return false end
+    return true
 end
 
 -- Run an override. Always consumes the press (true): the user chose this
@@ -1096,6 +1128,12 @@ function PadNav:_button_down(ev)
     if override then
         if tr then Trace.log("padnav btn=%s: role=%s override=%s", tostring(btn), role, override) end
         return self:_run_action(override, role)
+    end
+    local paged = PAGED_DPAD[btn]
+    if paged and self:_paged_idle() then
+        if tr then Trace.log("padnav btn=%s: paged view %s:%s", tostring(btn), paged[1], paged[2]) end
+        self.ui:handleEvent(Event:new(paged[1], paged[2]))
+        return true
     end
     local method = BUTTON_HANDLERS[btn]
     local handled = method and self[method](self) or false
@@ -1379,6 +1417,12 @@ function PadNav:onGamepadAxisMotion(ax)
     end
     local method = pair[value < 0 and 1 or 2]
 
+    if (axis == AXIS_RX or axis == AXIS_RY) and self:_paged_idle() then
+        local step = value < 0 and -1 or 1
+        if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
+        self.ui:handleEvent(Event:new("Panning", axis == AXIS_RX and { step, 0 } or { 0, step }))
+        return true
+    end
     if axis == AXIS_RX or axis == AXIS_RY then
         -- Always consumed while kopad is active: stock maps R-stick Y to
         -- RPgBack/RPgFwd and auto-repeats it -> endless page turning. The
@@ -1418,6 +1462,10 @@ local CHEAT_READING = _("Reading mode")
     .. "\nD-pad: word walk    R-stick: crosshair"
     .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nX + LB: TOC    X + RB: bookmarks"
+    .. "\n\n" .. _("PDF / DjVu")
+    .. "\nD-pad \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
+    .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92: whole page / text width"
+    .. "\nR-stick: pan the page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
     .. "\nRT / LT: next / previous page"
@@ -1483,6 +1531,10 @@ local ACTION_LABELS = {
     dict_lookup       = _("dictionary lookup"),
     font_bigger       = _("bigger font"),
     font_smaller      = _("smaller font"),
+    zoom_in           = _("zoom in"),
+    zoom_out          = _("zoom out"),
+    zoom_fit_width    = _("fit text width"),
+    zoom_fit_page     = _("fit whole page"),
     night_mode        = _("night mode"),
     rotate            = _("rotate screen"),
     full_refresh      = _("full screen refresh"),

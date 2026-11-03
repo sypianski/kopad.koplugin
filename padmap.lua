@@ -149,6 +149,10 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --  Display
 --   font_bigger / font_smaller
 --                           one step (reflowable documents only)
+--   zoom_in / zoom_out      one zoom step (paged documents only: PDF/DjVu)
+--   zoom_fit_width / zoom_fit_page
+--                           fit the text width (margins cropped) / the whole
+--                           page (paged documents only)
 --   night_mode / rotate / full_refresh
 --   frontlight_toggle / frontlight_up / frontlight_down
 --                           no-ops on devices without a frontlight
@@ -168,7 +172,9 @@ M.ACTION_ORDER = {
     "reading_progress",
     "history", "file_browser", "last_book", "favorites", "collections",
     "sentence_select", "highlights", "word_walk", "crosshair", "dict_lookup",
-    "font_bigger", "font_smaller", "night_mode", "rotate", "full_refresh",
+    "font_bigger", "font_smaller",
+    "zoom_in", "zoom_out", "zoom_fit_width", "zoom_fit_page",
+    "night_mode", "rotate", "full_refresh",
     "frontlight_toggle", "frontlight_up", "frontlight_down",
     "screenshot", "cheat_sheet", "x_modifier", "none",
 }

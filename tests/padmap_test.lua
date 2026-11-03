@@ -392,6 +392,8 @@ do
         favorites = "ShowColl", collections = "ShowCollList",
         dict_lookup = "ShowDictionaryLookup",
         font_bigger = "IncreaseFontSize:1", font_smaller = "DecreaseFontSize:1",
+        zoom_in = "Zoom:in", zoom_out = "Zoom:out",
+        zoom_fit_width = "SetZoomMode:contentwidth", zoom_fit_page = "SetZoomMode:page",
         night_mode = "ToggleNightMode", rotate = "IterateRotation", full_refresh = "FullRefresh",
         frontlight_toggle = "ToggleFrontlight",
         frontlight_up = "IncreaseFlIntensity:1", frontlight_down = "DecreaseFlIntensity:1",
@@ -479,6 +481,40 @@ do
     n, log = nav({ version = 1, layouts = { xbox = { south = "b", east = "a" } }, actions = { b = "toc", a = "next_page" } })
     n:onGamepadButtonDown({ button = 0 }); assert(log.events[1] == "ShowToc", "south -> role b -> toc")
     n:onGamepadButtonDown({ button = 1 }); assert(log.events[2] == "GotoViewRel:1", "east -> role a -> next page")
+
+    -- Paged documents (PDF/DjVu): D-pad = zoom / fit, R-stick = pan
+    local function paged(ctx)
+        local p, plog = nav(nil, ctx)
+        p.ui.paging = {}
+        return p, plog
+    end
+    n, log = paged()
+    for btn, want in pairs({ [11] = "Zoom:in", [12] = "Zoom:out",
+                             [13] = "SetZoomMode:page", [14] = "SetZoomMode:contentwidth" }) do
+        log.events = {}
+        assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
+            "paged D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+    end
+    local pans = {}
+    n.ui.handleEvent = function(_, ev) pans[#pans + 1] = ev.name .. ":" .. ev.args[1][1] .. "," .. ev.args[1][2] end
+    assert(n:onGamepadAxisMotion({ axis = 3, value = 20000 }) == true and pans[1] == "Panning:0,1", "R-stick down")
+    assert(n:onGamepadAxisMotion({ axis = 2, value = -20000 }) == true and pans[2] == "Panning:-1,0", "R-stick left")
+    -- L-stick stays stock in a paged document (passthrough)
+    assert(n:onGamepadAxisMotion({ axis = 1, value = 20000 }) == false and #pans == 2)
+    -- X held: X + D-pad keeps its menu combo, no zoom
+    n, log = paged()
+    n._x_mode = true
+    n.onKPUp2 = function() log.calls[#log.calls + 1] = "onKPUp2"; return true end
+    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "X + D-pad is not a zoom")
+    -- dictionary popup open: D-pad passes through
+    n, log = paged({ dict = {} })
+    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0)
+    -- FileManager (no document) and reflowable documents: D-pad unchanged
+    n, log = paged({ doc = false })
+    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "FileManager list navigation")
+    n, log = paged()
+    n.ui.rolling = {}
+    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "EPUB keeps word walk")
 end
 
 print("padmap_test: all tests passed")
