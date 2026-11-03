@@ -1361,6 +1361,7 @@ end
 
 function PagedOverlay:init()
     self._boxes = {}
+    self._pinfo = {}      -- [page] = pdfpara info (paragraphs), cached with _boxes
     self.page = self.page or self:_view_page()
     SelectorOverlay.init(self)
 end
@@ -1401,7 +1402,15 @@ end
 
 function PagedOverlay:_collect()
     local boxes = self:_page_boxes(self.page)
-    self.words = boxes and PdfWords.words_from_boxes(boxes, self.page) or {}
+    -- paragraphs are guessed from the page's line geometry once per page
+    -- (TASK-32: pdfpara.lua through pdfwords); the words come out in reading order
+    local info
+    self.words, info = {}, nil
+    if boxes then
+        self.words, info = PdfWords.words_from_boxes(boxes, self.page,
+            { rtl = self.is_rtl, info = self._pinfo[self.page] })
+        self._pinfo[self.page] = info or nil
+    end
     self.sentences = PdfWords.sentences(self.words)
     local n = #self.words
     -- a sentence over the page edge (as paginmapo's find_sentence_start/end

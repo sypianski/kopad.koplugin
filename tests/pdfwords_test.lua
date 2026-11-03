@@ -16,7 +16,9 @@ local TEXT = {
     { { "Alpha", "beta", "gamma." }, { "Delta", "eps", "zeta" } },
     { { "eta", "theta." }, { "Iota", "kappa", "lam!" } },
 }
+local custom -- a table of fake pages (section 3 below) replaces the three above
 local function page_boxes(page)
+    if custom then return custom[page] end
     if page == 3 then -- optical fallback: boxes, no `word`
         return { { x0 = 100, y0 = 100, x1 = 300, y1 = 130, { x0 = 100, y0 = 100, x1 = 300, y1 = 130 } } }
     end
@@ -90,7 +92,8 @@ assert(W[1].cx == 150 and W[1].cy == 115, "centre of the word box")
 assert(W[3].sent_end and not W[6].sent_end and not W[5].sent_end, "sent_end")
 local S = PdfWords.sentences(W)
 assert(#S == 2 and S[1].first == 1 and S[1].last == 3 and S[2].first == 4 and S[2].last == 6, "sentences")
-assert(S[1].para == 1 and S[2].para == 2, "until TASK-32 every sentence is a paragraph")
+assert(S[1].para == 1 and S[2].para == 1 and W[1].para == 1 and W[6].para == 1,
+    "TASK-32: two evenly spaced lines are one paragraph")
 assert(PdfWords.line_target(W, 2, 1) == 5 and PdfWords.line_target(W, 6, -1) == 3, "line by x")
 assert(PdfWords.line_target(W, 2, -1) == nil and PdfWords.line_target(W, 5, 1) == nil, "no line beyond")
 local lb = PdfWords.line_boxes(W, 2, 5, "pbox")
@@ -108,7 +111,7 @@ assert(PdfWords.words_from_boxes(nil, 1)[1] == nil and #PdfWords.sentences({}) =
 local Doc = {}
 Doc.__index = Doc
 function Doc:getTextBoxes(page) return page_boxes(page) end
-function Doc:getPageCount() return 3 end
+function Doc:getPageCount() return custom and #custom or 3 end
 function Doc:getProps() return { language = "en" } end
 -- the words whose boxes contain pos0 .. pos1, in order (KoptInterface snaps
 -- the positions to the words)
@@ -145,7 +148,7 @@ local function fresh(opts)
     end
     local doc = setmetatable({ configurable = { text_wrap = opts.reflow and 1 or 0 } }, Doc)
     local lookups = {}
-    local ui = { document = doc, paging = { number_of_pages = 3 }, view = view,
+    local ui = { document = doc, paging = { number_of_pages = custom and #custom or 3 }, view = view,
                  dictionary = { onLookupWord = function(_, word, _, boxes) lookups[#lookups + 1] = { word, boxes } end },
                  handleEvent = function(_, ev)
                      events[#events + 1] = ev.name .. ":" .. tostring(ev.args[1])
@@ -235,10 +238,11 @@ assert(text(ov) == "T:eta theta." and ov.sentences[1]._extends_before, "← to t
 -- ← back over the edge: the sentence over the edge counts once (as in an
 -- EPUB), so the previous page's last one (its first half) is skipped
 ov:step(-1); assert(ov.page == 1 and text(ov) == "T:Alpha beta gamma.", "← back over the edge: " .. tostring(text(ov)))
--- ↓ / ↑ and LT / RT: by sentence until paragraphs (TASK-32)
+-- ↓ / ↑ go by paragraph (TASK-32): page 1 is one paragraph, so ↓ leaves the
+-- page and ↑ comes back to its start
 ov:line(-1); assert(ov.page == 1 and text(ov) == "T:Alpha beta gamma.", "first page: ↑ stays")
-ov:line(1); assert(text(ov) == "T:Delta eps zeta", "↓ = next sentence")
-ov:para(-1); assert(text(ov) == "T:Alpha beta gamma.", "LT = previous sentence")
+ov:line(1); assert(ov.page == 2 and text(ov) == "T:eta theta.", "↓ = next page's paragraph")
+ov:line(-1); assert(ov.page == 1 and text(ov) == "T:Alpha beta gamma.", "↑ = back to the start")
 -- AI passage: the page's words
 assert(ov:_page_text() == "Alpha beta gamma. Delta eps zeta")
 sel:_close()
@@ -296,6 +300,116 @@ sel:_close()
 sel = fresh({ vy = 290 })
 assert(sel:_open_point() == true and #sel.overlay.pointer.lines == 1, "only visible lines")
 sel:_close()
+assert(claims == 0)
+
+----------------------------------------------------------------------
+-- 3. Paragraphs (TASK-32): pdfpara.lua wired into the words and sentences
+----------------------------------------------------------------------
+-- a line of `words` spread evenly over x0..x1, at y
+local function mkline(y, x0, x1, words)
+    local pitch = (x1 - x0 + 10) / #words
+    local ln = { x0 = x0, y0 = y, x1 = x1, y1 = y + 12 }
+    for j, w in ipairs(words) do
+        local a = x0 + (j - 1) * pitch
+        ln[j] = { word = w, x0 = a, y0 = y, x1 = a + pitch - 10, y1 = y + 12 }
+    end
+    return ln
+end
+local function split(str)
+    local t = {}
+    for w in str:gmatch("%S+") do t[#t + 1] = w end
+    return t
+end
+
+-- one column, two paragraphs: the second begins with an indent after a short
+-- last line. Page 2 is one more paragraph (continued across the edge).
+local P1 = {
+    mkline(100, 100, 580, split("The quick brown fox jumps")),
+    mkline(115, 100, 580, split("over the lazy dog today.")),
+    mkline(130, 100, 380, split("Then it ran.")),
+    mkline(145, 120, 580, split("Next morning came again quietly")),
+    mkline(160, 100, 580, split("and so on we go forever.")),
+}
+local P2 = {
+    mkline(100, 100, 580, split("Still more text arrives here")),
+    mkline(115, 100, 580, split("and ends in the end.")),
+}
+custom = { P1, P2 }
+local Wp = PdfWords.words_from_boxes(P1, 1)
+assert(Wp[1].para == 1 and Wp[#Wp].para == 2 and Wp[13].para == 1 and Wp[14].para == 2, "word paragraphs")
+local Sp = PdfWords.sentences(Wp)
+assert(#Sp == 3 and Sp[1].para == 1 and Sp[2].para == 1 and Sp[3].para == 2, "sentence paragraphs")
+-- a broken page never raises: without paragraph data everything is paragraph 1
+assert(PdfWords.words_from_boxes({ { { word = "a", x0 = 0, x1 = 5, y0 = 0, y1 = 5 } } }, 1)[1].para == 1)
+
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+assert(sel:_open(false) == true)
+ov = sel.overlay
+assert(text(ov) == "T:The quick brown fox jumps over the lazy dog today.", "S1")
+ov:line(1); assert(ov.page == 1 and text(ov) == "T:Next morning came again quietly and so on we go forever.",
+    "↓ in sentences skips to the next paragraph: " .. tostring(text(ov)))
+ov:line(-1); assert(text(ov):match("^T:The quick"), "↑ = the previous paragraph")
+ov:para(1); assert(text(ov):match("^T:Next morning"), "LT / RT in sentences = ↓ / ↑")
+ov:para(-1); assert(text(ov):match("^T:The quick"))
+sel:_close()
+
+-- words: LT / RT = the first word of the next / this or previous paragraph
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+assert(sel:_open_walk(false) == true)
+ov = sel.overlay
+assert(cur(ov) == "The")
+ov:step(1); ov:step(1)
+ov:para(1); assert(cur(ov) == "Next", "RT: next paragraph: " .. tostring(cur(ov)))
+ov:step(1); ov:step(1)
+assert(cur(ov) == "came")
+ov:para(-1); assert(cur(ov) == "Next", "LT: start of this paragraph")
+ov:para(-1); assert(cur(ov) == "The", "LT again: the previous paragraph")
+ov:para(1); ov:para(1)
+assert(ov.page == 2 and cur(ov) == "Still", "RT past the last paragraph: next page")
+sel:_close()
+
+-- two columns, the engine delivers the lines row by row (left, right, left, ...)
+-- but a paragraph runs from the bottom of the left column to the top of the
+-- right one: P1 = l1-l3, P2 = l4-l6 + r1-r2, P3 = r3-r6
+local L = {
+    mkline(100, 100, 290, split("Aaa bbb ccc ddd")), mkline(115, 100, 290, split("eee fff ggg hhh")),
+    mkline(130, 100, 190, split("iii jjj.")), mkline(145, 120, 290, split("Kkk lll mmm nnn")),
+    mkline(160, 100, 290, split("ooo ppp qqq rrr")), mkline(175, 100, 290, split("sss ttt uuu vvv")),
+}
+local R = {
+    mkline(100, 340, 530, split("www xxx yyy zzz")), mkline(115, 340, 440, split("abc def.")),
+    mkline(130, 360, 530, split("Ghi jkl mno pqr")), mkline(145, 340, 530, split("stu vwx yza bcd")),
+    mkline(160, 340, 530, split("efg hij klm nop")), mkline(175, 340, 440, split("qrs tuv.")),
+}
+local C = {}
+for k = 1, 6 do C[#C + 1] = L[k]; C[#C + 1] = R[k] end
+custom = { C }
+local info = PdfWords.paragraph_info(C)
+assert(info and info.ncols == 2, "two columns found: " .. tostring(info and info.ncols))
+local Wc = PdfWords.words_from_boxes(C, 1)
+assert(Wc[1].text == "Aaa" and Wc[11].text == "Kkk" and Wc[23].text == "www" and Wc[28].text == "def.", "reading order")
+assert(Wc[1].para == 1 and Wc[11].para == 2 and Wc[23].para == 2 and Wc[29].para == 3 and Wc[#Wc].para == 3,
+    "a paragraph crosses to the right column")
+local Sc = PdfWords.sentences(Wc)
+assert(#Sc == 3 and Sc[1].para == 1 and Sc[2].para == 2 and Sc[3].para == 3, "sentences of two columns")
+
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+assert(sel:_open(false) == true)
+ov = sel.overlay
+assert(text(ov) == "T:Aaa bbb ccc ddd eee fff ggg hhh iii jjj.")
+ov:line(1)
+assert(text(ov) == "T:Kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz abc def.",
+    "the left column runs on into the right one: " .. tostring(text(ov)))
+ov:line(1); assert(text(ov):match("^T:Ghi jkl") and text(ov):match("qrs tuv%.$"), "third paragraph")
+sel:_close()
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+assert(sel:_open_walk(false) == true)
+ov = sel.overlay
+ov:para(1); assert(cur(ov) == "Kkk")
+ov:para(1); assert(cur(ov) == "Ghi", "RT over the column break: " .. tostring(cur(ov)))
+ov:para(-1); assert(cur(ov) == "Kkk", "LT: the previous paragraph")
+sel:_close()
+custom = nil
 assert(claims == 0)
 
 print("pdfwords_test: all tests passed")

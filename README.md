@@ -270,7 +270,7 @@ Moving around needs page view, so the first time kopad runs enabled on a device 
 
 X + D-pad still opens the menus, and role overrides from koligilo still win over these defaults.
 
-The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Until paragraphs are detected, ↑ / ↓ in sentences and **LT / RT** step by sentence. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
+The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Paragraphs are guessed from the layout (line spacing, indent, short last line, two columns), so ↑ / ↓ in sentences and **LT / RT** jump by paragraph as in an EPUB; on an unusual layout the guess can be off. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
 
 ## Technical notes
 
@@ -280,7 +280,8 @@ The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, range
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position, the lines of a page from word boxes, and the two-step pointer (start labels, end labels, B). Knows no document type, so the PDF selection can use it as it is.
 - **selector.lua** — the selection overlay: sentence, word, highlight and point from-to modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map"); in PDF / DjVu its `PagedOverlay` takes them from `pdfwords.lua`.
-- **pdfwords.lua** — pure word source for PDF / DjVu: KOReader's `getTextBoxes` lines turned into the overlay's word list (page boxes, sentence ends, lines), sentences grouped by `paginmapo.lua`.
+- **pdfwords.lua** — pure word source for PDF / DjVu: KOReader's `getTextBoxes` lines turned into the overlay's word list (page boxes, sentence ends, lines), sentences grouped by `paginmapo.lua`, words in reading order.
+- **pdfpara.lua** — pure paragraph detection for PDF / DjVu pages from the text-line rectangles (one or two columns; line pitch, first-line indent, short last line, list markers). Gives the paragraph numbers behind **LT / RT** and ↑ / ↓ in a PDF.
 - **wheel.lua** — turns plain `ButtonDialog`s into a radial menu (wraps `ButtonDialog.init`, replaces only the dialog's content, so button callbacks keep working); glyphs come from KOReader's bundled Nerd Font symbols.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **padconfirm.lua** — puts the pad letters on the buttons of confirmation and value dialogs (wraps the dialogs' `init` once, prefixes `ok_text` / `cancel_text` / `choice*_text`; circled letters when a bundled font has them) and presses the labelled button for **A** / **B** / **X** / **Y**.
@@ -322,6 +323,8 @@ lua tests/padconfirm_test.lua
 lua tests/wheel_test.lua
 lua tests/selector_test.lua
 lua tests/kopad_hints_test.lua
+lua tests/pdfwords_test.lua
+lua tests/pdfpara_test.lua
 ```
 
 `selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and line moves, page crossing, ranges, level switches, highlights and point from-to. `kopad_hints_test.lua` checks the labels of point from-to (`kopad_hints.lua`): placement by position, two symbols, unique, at most 56, the prefix filter, **B**, the lines from word boxes and the pointer's two steps.

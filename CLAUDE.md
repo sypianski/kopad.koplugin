@@ -20,7 +20,7 @@ highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua
 placement, prefix filter, B, lines from word boxes, the pointer's two
 steps) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
-over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfhl_test.lua`
+over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
 ReaderAnnotation, Y browses the page's highlights, boxes under zoom / pan,
 notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`,
@@ -373,6 +373,23 @@ ButtonDialog (wheel.lua). diktonoti's label line describes only RT and X
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
 
+### `pdfpara.lua` — paragraphs of a PDF / DjVu page (pure, TASK-32)
+No KOReader dependency; tested by `tests/pdfpara_test.lua`. PDF knows no
+paragraphs, so they are guessed from the line rectangles of
+`document:getTextBoxes(page)`. `paragraphs(lines, {rtl}) -> paras, info`
+(`paras[n] = {first, last, lines}`; `info.order` = input line indices in
+reading order, `info.para_of[line]`, `info.col_of`, `info.ncols`, `info.gap`);
+`columns(lines, opts)` finds one or two columns (a gutter, full-width lines
+such as titles stay between the bands). A new paragraph starts at a line
+after: a different line height, a list marker, a larger line pitch than the
+typical one, a first-line indent, or a short previous line that ends a
+sentence; thresholds are fractions of the median line height / column width
+(`M.OPTS`). Between two columns the pitch rule is off, so a paragraph may run
+from the bottom of the left column to the top of the right one. Wired in by
+`pdfwords.lua` (below): `sentences[].para` is what selector.lua's
+`_para_target` / `_para_start` compare, so ↑/↓ in sentences and LT / RT (words
+and sentences) use it unchanged.
+
 ### `pdfwords.lua` — word source for PDF / DjVu (pure, TASK-30)
 No KOReader dependency (paginmapo only); tested by `tests/pdfwords_test.lua`.
 `words_from_boxes(document:getTextBoxes(page), page)` -> word items `{text,
@@ -383,8 +400,13 @@ is paginmapo's rule on the word's own end (`!?؟۔` always, `.` before an
 uppercase word) -- a COPY, because paginmapo's `is_sent_boundary` is local;
 keep the two in step. `sentences(words)` groups through paginmapo's
 `collect_sentences_from_words` (vendored, unchanged) and adds `first` /
-`last` word indices and `para` (= sentence index until TASK-32 wires
-pdfpara.lua in here). Also `has_text` (a scan's optical boxes have no
+`last` word indices and `para` (= the paragraph of the sentence's first
+word, TASK-32). `words_from_boxes(boxes, page[, {rtl, info}])` returns
+`words, info`: the words come out in READING order (a two-column page: the
+left column before the right one, `info.order`) and carry `para`;
+`paragraph_info(boxes, rtl)` is the pcall-guarded pdfpara call (PagedOverlay
+caches it per page in `_pinfo`, next to `_boxes`, and passes `is_rtl`).
+Also `has_text` (a scan's optical boxes have no
 `word`), `line_target` (↑/↓: nearest word by centre x on the next line of
 the engine's line order), `line_boxes(words, i0, i1[, field])` (one box per
 line), `pos(w, view.state)` = `{page, x, y, zoom, rotation}` at the word's

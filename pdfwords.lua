@@ -24,12 +24,15 @@ Word item (the contract with selector.lua; TASK-31 / TASK-32 build on it):
                         --   LINE's y / h (as KOReader's own pboxes)
     cx, cy,             -- centre of the word's own box (native): a position
                         --   for getTextFromPositions / getWordFromPosition
+    para,               -- paragraph number on the page (pdfpara.lua, TASK-32;
+                        --   non-decreasing along the words)
     sent_end,           -- the word ends a sentence (M.ends_sentence)
     sbox }              -- screen box {x, y, w, h}, set by the overlay from
                         --   the current view (nil = not on the screen)
 ]]
 
 local WordSource = require("paginmapo")
+local Para = require("pdfpara")
 
 local M = {}
 
@@ -74,30 +77,55 @@ end
 
 function M.key(page, idx) return "pdf/" .. tostring(page) .. "/" .. tostring(idx) end
 
--- The page's words in reading order (the engine's line order). The last
--- word's sent_end looks only at itself; the overlay decides about the page
--- edge with the neighbouring page (M.first_text / M.last_text).
-function M.words_from_boxes(boxes, page)
+-- Paragraph geometry of a page (pdfpara.paragraphs on the raw boxes), nil when
+-- it cannot be computed (pcall-guarded: an odd page never breaks the overlay).
+-- Callers cache it per page together with the boxes.
+function M.paragraph_info(boxes, rtl)
+    if type(boxes) ~= "table" then return nil end
+    local ok, _, info = pcall(Para.paragraphs, boxes, { rtl = rtl })
+    return ok and type(info) == "table" and info or nil
+end
+
+-- The page's words in READING order: the engine's line order, except that
+-- pdfpara puts a two-column page's left column before the right one (info.order);
+-- lines pdfpara does not know are appended in their own order. Every word
+-- gets the paragraph number of its line (`para`; a line without one takes the
+-- previous word's). opts (optional): { rtl = bool, info = a cached
+-- M.paragraph_info of these boxes }. Returns words, info. The last word's
+-- sent_end looks only at itself; the overlay decides about the page edge with
+-- the neighbouring page (M.first_text / M.last_text).
+function M.words_from_boxes(boxes, page, opts)
     local words = {}
     if type(boxes) ~= "table" then return words end
-    local line_no = 0
-    for _, line in ipairs(boxes) do
-        if type(line) == "table" then
-            local counted = false
-            for _, b in ipairs(line) do
-                if usable(b) then
-                    if not counted then line_no, counted = line_no + 1, true end
-                    local i = #words + 1
-                    local ly0 = type(line.y0) == "number" and line.y0 or b.y0
-                    local ly1 = type(line.y1) == "number" and line.y1 or b.y1
-                    local k = M.key(page, i)
-                    words[i] = {
-                        text = b.word, page = page, idx = i, line = line_no,
-                        pos0 = k, pos1 = k, xp0 = k, xp1 = k,
-                        pbox = { x = b.x0, y = ly0, w = b.x1 - b.x0, h = ly1 - ly0 },
-                        cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2,
-                    }
-                end
+    opts = opts or {}
+    local info = opts.info or M.paragraph_info(boxes, opts.rtl)
+    local seq, seen = {}, {}
+    if info and type(info.order) == "table" then
+        for _, li in ipairs(info.order) do
+            if type(boxes[li]) == "table" and not seen[li] then seq[#seq + 1], seen[li] = li, true end
+        end
+    end
+    for li, line in ipairs(boxes) do
+        if type(line) == "table" and not seen[li] then seq[#seq + 1], seen[li] = li, true end
+    end
+    local line_no, para = 0, 1
+    for _, li in ipairs(seq) do
+        local line = boxes[li]
+        local counted = false
+        para = info and info.para_of and info.para_of[li] or para
+        for _, b in ipairs(line) do
+            if usable(b) then
+                if not counted then line_no, counted = line_no + 1, true end
+                local i = #words + 1
+                local ly0 = type(line.y0) == "number" and line.y0 or b.y0
+                local ly1 = type(line.y1) == "number" and line.y1 or b.y1
+                local k = M.key(page, i)
+                words[i] = {
+                    text = b.word, page = page, idx = i, line = line_no, para = para,
+                    pos0 = k, pos1 = k, xp0 = k, xp1 = k,
+                    pbox = { x = b.x0, y = ly0, w = b.x1 - b.x0, h = ly1 - ly0 },
+                    cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2,
+                }
             end
         end
     end
@@ -105,7 +133,7 @@ function M.words_from_boxes(boxes, page)
         local nxt = words[i + 1]
         w.sent_end = M.ends_sentence(w.text, nxt and nxt.text)
     end
-    return words
+    return words, info
 end
 
 -- Text of the first / last word of a page's boxes (nil when none).
@@ -129,9 +157,10 @@ end
 
 -- Sentences of the page through paginmapo's grouping (collect_sentences_from_
 -- words, on the sent_end flags above). Each gets first / last = word indices
--- and `para`. Paragraphs are TASK-32 (pdfpara.lua): until then every
--- sentence is its own paragraph, so ↑/↓ in sentences and LT / RT step by
--- sentence.
+-- and `para` = the paragraph of its first word (TASK-32, from pdfpara.lua via
+-- the words' `para`; a sentence running on into the next paragraph still
+-- belongs to the one it began in). selector.lua's ↑/↓ in sentences and LT / RT
+-- compare these numbers.
 function M.sentences(words)
     if #words == 0 then return {} end
     local ok, sents = pcall(WordSource.collect_sentences_from_words, words)
@@ -146,7 +175,7 @@ function M.sentences(words)
             out[#out + 1] = s
         end
     end
-    for si, s in ipairs(out) do s.para = si end
+    for si, s in ipairs(out) do s.para = words[s.first].para or si end
     return out
 end
 
