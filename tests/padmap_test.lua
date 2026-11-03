@@ -594,6 +594,21 @@ do
     log.events = {}
     n:onGamepadButtonDown({ button = 11 })
     assert(log.events[1] == "Panning:0,-0.2", "after A is released the D-pad pans again")
+    -- B held + D-pad (TASK-33): the same zoom / fit; B tapped = back on the
+    -- release, never after a B combo
+    n, log = paged()
+    n.onKPBack = function() log.calls[#log.calls + 1] = "onKPBack"; return true end
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.events == 0 and #log.calls == 0, "B press: nothing yet")
+    for btn, want in pairs({ [11] = "zoom:1.030", [13] = "SetZoomMode:page", [14] = "SetZoomMode:contentwidth" }) do
+        log.events = {}
+        assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
+            "B + D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+        n:onGamepadButtonUp({ button = btn })
+    end
+    n:onGamepadButtonUp({ button = 1 })
+    assert(#log.calls == 0, "no back after B + D-pad")
+    n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonUp({ button = 1 })
+    assert(log.calls[1] == "onKPBack", "B tap = back")
     -- X held: X + D-pad keeps its menu combo, no pan
     n, log = paged()
     n._x_mode = true
@@ -845,14 +860,17 @@ do
     -- B = parent folder, never the stock "Exit KOReader?" (TASK-11)
     assert(n:onGamepadButtonDown({ button = 1 }) == true and pages[3] == "up", "filemanager: B = folder up")
     -- B while reading (EPUB and PDF, no selection): back to the previous
-    -- location only, never the stock Back that ends in "Exit KOReader?"
+    -- location only, never the stock Back that ends in "Exit KOReader?";
+    -- a tap, so on the release (TASK-33)
     for _, kind in ipairs({ "epub", "pdf" }) do
         local r, rlog, rui = reader(kind)
         set_stack(rui)
         local back = 0
         rui.link = { onGoBackLink = function(_, notify) assert(notify == true); back = back + 1; return false end }
-        assert(r:onGamepadButtonDown({ button = 1 }) == true and r:onGamepadButtonDown({ button = 1 }) == true
-            and back == 2, kind .. ": B = previous location, consumed even when the history is empty")
+        assert(r:onGamepadButtonDown({ button = 1 }) == true and back == 0, kind .. ": nothing on the B press")
+        r:onGamepadButtonUp({ button = 1 })
+        r:onGamepadButtonDown({ button = 1 }); r:onGamepadButtonUp({ button = 1 })
+        assert(back == 2, kind .. ": B tapped = previous location, consumed even when the history is empty")
         nothing_moved(rlog, kind .. " B")
     end
     -- X modifier is dropped as soon as the pad is used outside plain reading
@@ -1240,14 +1258,18 @@ do
         up(n, btn)
     end
     -- A held + D-pad = the words, →/↓ from the first word, ←/↑ from the last;
-    -- the release of that A is no tap, A still held + D-pad = a range
+    -- the release of that A is no tap; while the entry A is still held the
+    -- arrows only move the cursor (the start point), a range needs a new A hold
     log.events = {}
     down(n, 0); down(n, 14)
     assert(log.sel[1] == "_open_walk:false" and #log.ov == 0 and #log.events == 0, "A + → = words, first")
     assert(#sched == 0, "the press that opened the words does not repeat")
     up(n, 14); down(n, 14); up(n, 14)
-    assert(log.ov[1] == "step(1,true)", "A still held: a range")
+    assert(log.ov[1] == "step(1,false)", "entry A still held: the cursor moves, no range")
     up(n, 0); assert(#log.ov == 1, "no menu after A + D-pad")
+    down(n, 0); down(n, 14); up(n, 14)
+    assert(log.ov[2] == "step(1,true)", "a new A hold + D-pad = a range")
+    up(n, 0); assert(#log.ov == 2, "no menu after a range")
     sel:_close()
     down(n, 0); down(n, 13); up(n, 13); up(n, 0)
     assert(log.sel[3] == "_open_walk:true", "A + ← = words, last")
@@ -1312,6 +1334,30 @@ do
     assert(log.sel[1] == "_open" and log.ov[1] == "menu()", "remapped A release")
     down(n, 0); up(n, 0)                -- physical south = role B: closes, no menu
     assert(log.sel[2] == "_close" and #log.ov == 1)
+
+    -- B held + D-pad in an EPUB (TASK-33): ↑/↓ font size, ←/→ margins (both
+    -- sides, clamped), repeated while held; B tapped = back on the release
+    n, log = epub()
+    n.ui.document.configurable = { h_page_margins = { 10, 10 } }
+    n.onKPBack = function() log.ov[#log.ov + 1] = "back" return true end
+    assert(down(n, 1) == true and #log.ov == 0 and #log.events == 0, "B press: nothing yet")
+    down(n, 11); assert(log.events[1] == "IncreaseFontSize:1", "B + ↑ = bigger font")
+    assert(#sched == 1 and math.abs(sched[1].s - 0.45) < 1e-9, "font repeats after the delay")
+    sched[1].fn(); table.remove(sched, 1)
+    assert(log.events[2] == "IncreaseFontSize:1" and #sched == 1 and math.abs(sched[1].s - 0.4) < 1e-9,
+        "font repeat at VIEW_REPEAT_S")
+    up(n, 11); assert(#sched == 0, "release stops the repeat")
+    down(n, 12); up(n, 12); assert(log.events[3] == "DecreaseFontSize:1", "B + ↓ = smaller font")
+    down(n, 14); up(n, 14)
+    local m = n.ui.document.configurable.h_page_margins
+    assert(log.events[4]:match("^SetPageHorizMargins") and m[1] == 15 and m[2] == 15, "B + → = wider margins")
+    for _ = 1, 5 do down(n, 13); up(n, 13) end
+    m = n.ui.document.configurable.h_page_margins
+    assert(m[1] == 0 and m[2] == 0, "B + ← = narrower, never below 0")
+    up(n, 1); assert(#log.ov == 0 and #log.sel == 0, "no back, no selection after B + D-pad")
+    down(n, 1); up(n, 1); assert(log.ov[1] == "back", "B tap = back")
+    down(n, 12); assert(log.events[#log.events] == "GotoViewRel:1", "D-pad without B = page again")
+    up(n, 12)
 
     -- legacy key path in the selection: A = menu on the press, RB / LB = range steps
     n, log = epub()

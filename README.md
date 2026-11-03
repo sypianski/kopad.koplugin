@@ -62,9 +62,10 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **R-stick** | the quick-action wheel (see below) |
 | **L-stick** | nothing |
 | hold **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
-| **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
+| hold **B** + D-pad | ↑ / ↓ font size one step bigger / smaller, ← / → margins narrower / wider (both sides, 5 at a time); hold the D-pad to keep going |
+| tap **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
 
-The letters follow one rule: a letter held with the D-pad is a mode, a tapped letter is its action, so **A** and **Y** act when you let go, and only if no arrow was pressed meanwhile. On older patched builds (no button releases) **A** and **Y** act on the press and the D-pad only turns pages.
+The letters follow one rule: a letter held with the D-pad is a mode, a tapped letter is its action, so **A**, **Y** and **B** act when you let go, and only if no arrow was pressed meanwhile. On older patched builds (no button releases) **A**, **Y** and **B** act on the press and the D-pad only turns pages.
 
 **X** is a modifier you hold: the combos work while it is down and stop when you let go. On older patched builds (no button releases) and when a trigger is mapped to X, it is a latch instead: press X, then one combo. It is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
 
@@ -155,6 +156,8 @@ The selection has two levels: sentences (opened with a tap on **A** or with **Y*
 | **RB** / **LB** | close the selection and turn the page | same |
 | **Select** / **Start** | close the selection and open the top / bottom menu | same |
 
+The **A** you hold to open the words is not a range yet: while it is still down the arrows only move the cursor, so you can pick the word where the range starts (or a single word). Let go, then hold **A** again and move to select from there.
+
 The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the first word of the next one. A sentence that runs over the edge counts once. A range (A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second. **RT** / **LT** jump by paragraph at both levels, over the page edge too (a paragraph that began on the previous page is reached at its real start); held, they keep jumping, and with **A** held they grow the range by paragraphs. With the highlights (**Y**) they go to the next / previous one. The status line at the top shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters.
 
 While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
@@ -240,6 +243,7 @@ Paged documents get their own view controls instead (stock KOReader 2026.07+ `Ga
 | **R-stick** | the quick-action wheel, the same as in an EPUB (it never turns or zooms the page) |
 | **hold A + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
 | **hold A + D-pad ← / →** | fit the whole page / fit the text width |
+| **hold B + D-pad** | the same zoom / fit as A (A + D-pad will select text once PDF selection exists); tap **B** = back |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
 Moving around needs page view, so the first time kopad runs enabled on a device it makes page view the default for new documents (`kopt_page_scroll = 0`; continuous view is KOReader's own default and scrolls into the next page). A document that still remembers continuous view switches to page view on the first D-pad or L-stick move, and KOReader remembers that per document. Turning continuous view back on in KOReader afterwards is respected. In page view at text width the page already fits sideways, so ← / → only move once you zoom in.

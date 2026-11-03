@@ -117,19 +117,31 @@ delegate to overlay methods (`step` / `line` for the arrows, `to_words` /
 flip horizontal directions via `_is_rtl()` (in `_sel_move`, once).
 
 **Holds (TASK-16, Gamepad* path only).** `onGamepadButtonUp` (relayed by
-main.lua, remapped through padmap like the press) ends four holds. The rule
+main.lua, remapped through padmap like the press) ends five holds. The rule
 (TASK-28): a letter held + D-pad = a mode, a tapped letter = its action, so
-A and Y act on the RELEASE, and only when no D-pad came in between.
+A, Y and B act on the RELEASE, and only when no D-pad came in between.
 - **A**: `_press_a` sets `_a_down` (and `_a_reading` when pressed while
   reading); nothing happens on the press. While it is set, `_dpad` opens the
-  words (reading; `_a_opened`) and `_sel_move` passes `range = true` (the
-  overlay keeps an anchor) and marks `_a_moved`. `_release_a` acts only for a
+  words (reading; `_a_opened`) and `_sel_move` / `_trigger_page` pass
+  `range = true` (the overlay keeps an anchor) and mark `_a_moved` -- but
+  NOT for the A hold that opened the words (`_a_opened`): while that one is
+  held the arrows only move the cursor, so the start point (or a single word)
+  can be picked; a range needs the next A hold. `_release_a` acts only for a
   tap: reading = sentences (until TASK-29), selection = action menu. The
   legacy `Press` key goes to `onKPConfirm` (sentences / menu on the press).
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
   `onKPMenu` on the press.
+- **B** (TASK-33): `_press_b` closes the selection at once; while reading
+  (EPUB, or `_paged_idle()`) it sets `_b_down`, and B + D-pad
+  (`_view_dpad`, branch in `_button_dispatch` before the paged pan and the
+  EPUB page turn) changes the view: PDF / DjVu zoom ↑/↓ (`_zoom_step`) and fit
+  ←/→ (`ZOOM_DPAD`), EPUB font ↑/↓ (`IncreaseFontSize` / `DecreaseFontSize`
+  with 1) and margins ←/→ (`_margins_step`: `configurable.h_page_margins`
+  ±`MARGIN_STEP`, clamped 0..`MARGIN_MAX`, `SetPageHorizMargins`). Repeated by
+  `_dpad_start` (EPUB at the fixed `VIEW_REPEAT_S`). `_release_b` goes back
+  (`onKPBack`) only for a tap. A + D-pad zoom in PDF stays until TASK-30.
 - **X**: `_button_down` wraps `_button_dispatch`; a press that arms `_x_mode`
   records its role in `_x_hold`, and its release clears the modifier.
   `_x_combo` keeps the modifier armed while `_x_hold` is set. A trigger acting

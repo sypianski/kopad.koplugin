@@ -13,9 +13,12 @@ Reading:
                          not expose them), so nothing arrives.
   Select                 Top menu          Start   Bottom menu (font,
                          margins, contrast, ...: ShowConfigMenu)
-  B                      Back to the previous location (TOC entry, link, ...);
-                         never KOReader's "Exit KOReader?" (Gamepad* path)
-  D-pad                  Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
+  B tapped               Back to the previous location (TOC entry, link, ...),
+                         on the release; never KOReader's "Exit KOReader?"
+                         (Gamepad* path; legacy key path: on the press)
+  B held + D-pad         ↑/↓ font size +/-1, ←/→ margins narrower / wider
+                         (both sides, MARGIN_STEP); held = repeated (TASK-33)
+  D-pad                 Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
                          books; TASK-28). Letter + D-pad = a mode, a tapped
                          letter = its action (Gamepad* path; the legacy key
                          path has no release, so there A / Y act on the
@@ -115,7 +118,10 @@ plus the saved highlights "hl" opened by Y):
                          edge; held, it keeps jumping; with A held = range.
   A held + arrows        Range from where A was pressed, both directions
                          (moving back over the anchor shrinks it); never
-                         leaves the page (Gamepad* path, TASK-16)
+                         leaves the page (Gamepad* path, TASK-16). Not the A
+                         hold that opened the words: while it is held the
+                         arrows only move the cursor (pick the start point
+                         or a single word), a range needs the next A hold
   A tapped               Action menu (dict, AI, copy, note) -- on the release;
                          the A press that opened the selection does not
                          count. Legacy key path: on the press.
@@ -154,6 +160,8 @@ change the page, always by a whole page:
   A held + D-pad ↑ / ↓   Zoom in / out in small steps (ZOOM_STEP; a held D-pad
                          keeps zooming)
   A held + D-pad ← / →   Fit whole page / fit text width
+  B held + D-pad         The same zoom / fit (TASK-33; A + D-pad moves to the
+                         PDF selection with TASK-30); B tapped = back
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 
 Input paths (two, both end in the same on<Key> handlers):
@@ -266,7 +274,7 @@ local AXIS_LT, AXIS_RT = 4, 5
 -- button id -> on<Key> handler (return value true = consumed).
 local BUTTON_HANDLERS = {
     [BTN_A]      = "_press_a", -- a hold control (TASK-16); legacy Press = onKPConfirm
-    [BTN_B]      = "onKPBack",
+    [BTN_B]      = "_press_b", -- a hold control too (TASK-33); legacy = onKPBack
     [BTN_X]      = "onKPExtend",
     [BTN_Y]      = "_press_y", -- a hold control too (TASK-28); legacy = onKPMenu
     [BTN_SELECT] = "onKPSelect",
@@ -342,6 +350,12 @@ local ZOOM_DPAD = {
 }
 -- One zoom step of the pad: KOReader's own Zoom event jumps ×1.33 / ×0.75.
 local ZOOM_STEP = 1.03
+-- B held + D-pad = the size of the view (TASK-33): in PDF / DjVu ZOOM_DPAD,
+-- in an EPUB ↑ / ↓ font size ±1, ← / → horizontal margins -/+ MARGIN_STEP
+-- (narrower / wider). A held D-pad repeats every VIEW_REPEAT_S, without the
+-- acceleration: every step there re-lays out the whole book.
+local MARGIN_STEP, MARGIN_MAX = 5, 100
+local VIEW_REPEAT_S = 0.4
 -- Stick release bounce: SDL reports an axis only when it crosses the dead zone
 -- (stock repeats carry ±5001), and a stick snapping back to centre often
 -- crosses it once more on the far side or on the other axis (trace
@@ -587,7 +601,9 @@ function PadNav:_sel_move(dx, dy)
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if not ov then return end
-    local range = self._a_down or false
+    -- the A hold that opened the words only moves the cursor (to the start
+    -- point, or to the single word); a range needs the next A hold
+    local range = (self._a_down and not self._a_opened) or false
     if range then self._a_moved = true end
     if self:_is_rtl() then dx = -dx end
     if dx ~= 0 then ov:step(dx, range) else ov:line(dy, range) end
@@ -786,7 +802,7 @@ function PadNav:_trigger_page(dir)
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if not ov then return self:_turn_page(dir) end
-    local range = self._a_down or false
+    local range = (self._a_down and not self._a_opened) or false
     if range then self._a_moved = true end
     ov:para(dir, range)
     return true
@@ -896,6 +912,72 @@ function PadNav:_release_y()
     end
 end
 
+-- B pressed (Gamepad* path, TASK-33). In the selection it closes at once.
+-- While reading (EPUB or PDF / DjVu) nothing on the press: B + D-pad changes
+-- the size of the view (_view_dpad), a tap goes back on the release.
+function PadNav:_press_b()
+    if not self:_is_enabled() then return false end
+    local selector = self:_selector()
+    local reading = selector and not selector.overlay and self:_context() == "reading"
+    if reading or self:_paged_idle() then
+        self._b_down, self._b_used = true, false
+        return true
+    end
+    return self:onKPBack()
+end
+
+function PadNav:_release_b()
+    if not self._b_down then return end
+    local tap = not self._b_used
+    self._b_down, self._b_used = false, false
+    local ctx = self:_context()
+    if tap and (ctx == "reading" or ctx == "paged") then self:onKPBack() end
+end
+
+-- B held + D-pad `btn`: PDF / DjVu zoom (↑/↓) and fit (←/→, ZOOM_DPAD); EPUB
+-- font size (↑/↓) and margins (←/→). Zoom, font and margins repeat while held.
+function PadNav:_view_dpad(btn)
+    self._b_used = true
+    local up_down = btn == BTN_DPAD_UP or btn == BTN_DPAD_DOWN
+    local dir = (btn == BTN_DPAD_UP or btn == BTN_DPAD_RIGHT) and 1 or -1
+    local step, ctx, every
+    if self:_paged_idle() then
+        if not up_down then
+            self.ui:handleEvent(Event:new("SetZoomMode", ZOOM_DPAD[btn].mode))
+            return
+        end
+        step, ctx = function() self:_zoom_step(dir) end, "paged"
+    elseif up_down then
+        step = function()
+            self.ui:handleEvent(Event:new(dir > 0 and "IncreaseFontSize" or "DecreaseFontSize", 1))
+        end
+        ctx, every = "reading", VIEW_REPEAT_S
+    else
+        step, ctx, every = function() self:_margins_step(dir) end, "reading", VIEW_REPEAT_S
+    end
+    step()
+    self:_dpad_start(btn, function()
+        if not self._b_down then self:_dpad_stop(); return end
+        step()
+    end, ctx, every)
+end
+
+-- EPUB horizontal margins by MARGIN_STEP (dir -1 = narrower, +1 = wider),
+-- both sides alike, saved like the bottom menu's own setting.
+function PadNav:_margins_step(dir)
+    local cfg = self.ui.document and self.ui.document.configurable
+    local m = cfg and cfg.h_page_margins
+    if type(m) ~= "table" then return end
+    local function clamp(v) return math.max(0, math.min(MARGIN_MAX, (tonumber(v) or 0) + dir * MARGIN_STEP)) end
+    local margins = { clamp(m[1]), clamp(m[2]) }
+    cfg.h_page_margins = margins
+    self.ui:handleEvent(Event:new("SetPageHorizMargins", margins))
+    local ok, Notification = pcall(require, "ui/widget/notification")
+    if ok and Notification and Notification.notify then
+        pcall(Notification.notify, Notification, _("Margins") .. ": " .. margins[1] .. " / " .. margins[2])
+    end
+end
+
 -- B: close the overlay
 function PadNav:onKPBack()
     if self:_visel_route("close") then return true end
@@ -950,9 +1032,10 @@ end
 -- Held D-pad (Gamepad* path): repeat the step of button `btn` until its
 -- release (onGamepadButtonUp), a context change (menu, dialog, overlay closed)
 -- or DPAD_REPEAT_MAX steps. Default: the selection's arrow handler in the
--- context "selection"; `step` / `ctx` repeat something else elsewhere (A + D-pad
--- zoom in a paged document, ctx "paged").
-function PadNav:_dpad_start(btn, step, ctx)
+-- context "selection"; `step` / `ctx` repeat something else elsewhere (A or
+-- B + D-pad zoom in a paged document, ctx "paged"); `every` = a fixed
+-- interval instead of the accelerating one (B + D-pad in an EPUB).
+function PadNav:_dpad_start(btn, step, ctx, every)
     self:_dpad_stop()
     if type(UIManager.scheduleIn) ~= "function" then return end
     step = step or function() self[DPAD_HANDLERS[btn]](self) end
@@ -966,10 +1049,10 @@ function PadNav:_dpad_start(btn, step, ctx)
             self:_dpad_stop(); return
         end
         step()
-        UIManager:scheduleIn(dpad_interval(steps), tick)
+        UIManager:scheduleIn(every or dpad_interval(steps), tick)
     end
     self._dpad_held, self._dpad_tick = btn, tick
-    UIManager:scheduleIn(DPAD_REPEAT_DELAY_S, tick)
+    UIManager:scheduleIn(math.max(DPAD_REPEAT_DELAY_S, every or 0), tick)
 end
 
 function PadNav:_dpad_stop()
@@ -1000,6 +1083,7 @@ function PadNav:onGamepadButtonUp(ev)
         self:_release_a()
     end
     if btn == BTN_Y then self:_release_y() end
+    if btn == BTN_B then self:_release_b() end
     return false
 end
 
@@ -1272,6 +1356,14 @@ function PadNav:_button_dispatch(ev)
     if override then
         if tr then Trace.log("padnav btn=%s: role=%s override=%s", tostring(btn), role, override) end
         return self:_run_action(override, role)
+    end
+    -- B held + D-pad = the size of the view (TASK-33): EPUB font / margins,
+    -- PDF zoom / fit. Before the paged D-pad pan and the EPUB page turn.
+    if self._b_down and DPAD_HANDLERS[btn] and not self._x_mode
+            and (self:_paged_idle() or (ctx == "reading" and self:_selector())) then
+        if tr then Trace.log("padnav btn=%s: B + D-pad, view size", tostring(btn)) end
+        self:_view_dpad(btn)
+        return true
     end
     -- Paged documents: A held + D-pad = zoom / fit (ZOOM_DPAD). A does nothing
     -- else there (no selector), so it is consumed.
@@ -2110,6 +2202,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nD-pad, RT / LT, RB / LB: next / previous page"
     .. "\nSelect: top menu    Start: bottom menu"
     .. "\nB: back to the previous location"
+    .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 font size  \xE2\x86\x90/\xE2\x86\x92 margins"
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
     .. "\nA: select sentences    Y: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
@@ -2117,7 +2210,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nR-stick: quick actions (A run, B close)"
     .. "\n\n" .. _("PDF / DjVu")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
-    .. "\nHold A + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
+    .. "\nHold A or B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
@@ -2140,7 +2233,7 @@ local CHEAT_SELECTION = _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
     .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: line / paragraph"
     .. "\nRT / LT: next / previous paragraph"
-    .. "\nHold A + arrows: select a range"
+    .. "\nHold A + arrows: select a range (not the hold that opened it)"
     .. "\nA: action menu    Y: Vortuyo"
     .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"
     .. "\nX: toggle highlight    B: close"

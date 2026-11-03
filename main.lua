@@ -14,6 +14,8 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Y held + D-pad           Select sentences (the same)
     A tapped                 Select sentences
     Y tapped                 The page's highlights (none = a message)
+    B held + D-pad           ↑/↓ font size, ←/→ margins (PDF: zoom / fit)
+    B tapped                 Back to the previous location
     L-stick                  Nothing
     R-stick                  Quick-action wheel (also PDF; library set in
                              the file browser; padmap `quick`, TASK-26)
@@ -32,7 +34,8 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,
                              across page edges; held D-pad repeats, faster
     RT / LT                  Next / previous paragraph (held: keeps jumping)
-    A held + arrows          Range from where A was pressed
+    A held + arrows          Range from where A was pressed (not the A hold
+                             that opened the words: that one moves the cursor)
     A tapped                 Action menu (dict, AI, copy, note)
     R-stick ↓ / ↑            Sentence -> its first word / word -> its sentence
     Y                        Vortuyo lookup
