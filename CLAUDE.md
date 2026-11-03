@@ -63,6 +63,13 @@ by koligilo) and `kopad_device.lua` (`padmap_layout`, device-local, never
 synced). Debug via KOReader's `logger` output (`logger.warn`
 calls in `main.lua`, `logger.dbg` elsewhere).
 
+**Version.** `version` in `_meta.lua` (KOReader shows it in the plugin list) is
+the only place the plugin keeps one; the family does the same (`keyreader`,
+`vortpaf`). Bump it FIRST on every deploy to the devices (patch for ordinary
+changes, minor for bigger ones), commit, push, then pull in
+`~/modi/koreader/koplugins/kopad.koplugin`. The `version = 1` of the `padmap`
+data is a different thing: the data contract with koligilo.
+
 ## Architecture
 
 Three-layer design. Understanding the split is the fastest way to be productive.
