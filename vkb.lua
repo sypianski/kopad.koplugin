@@ -11,6 +11,14 @@ a physical keyboard with "virtual_keyboard_enabled" off: keyboard_visible =
 false + skip_first_show_keyboard, so the caller's onShowKeyboard() is
 skipped. Tapping the field or the dialog's keyboard toggle still opens it.
 
+The second way in is the focus: on a D-pad device InputText:onFocus (sent by
+FocusManager whenever the D-pad / L-stick brings the focus back onto the
+field, or kopad does before dictating) calls onShowKeyboard() itself, and in
+a MultiInputDialog it goes through onSwitchFocus, which does the same. While
+the keyboard is hidden, the wrapped onFocus only focuses the field (the
+physical-keyboard branch of stock). InputText.initInputEvents() redefines
+onFocus, so the wrapper is checked again on every InputDialog init.
+
 `state_fn` (kopad enabled) is replaced by every kopad instance, like
 wheel.install. The pad check asks SDL directly (SDL_GetJoysticks +
 SDL_IsGamepad): ffi/SDL3's own `S.controller` keeps a stale handle after the
@@ -54,6 +62,44 @@ function M.should_hide(dlg)
     return M._state_fn ~= nil and M._state_fn() and M.pad_connected() or false
 end
 
+-- A focus coming to `input` (InputText) should not open the keyboard: the
+-- dialog qualifies and the keyboard is not up already (opened by a tap or
+-- the toggle: then stock keeps it, also when the focus moves between fields).
+function M.quiet_focus(input)
+    if type(input) ~= "table" or input.readonly then return false end
+    if type(input.isKeyboardVisible) == "function" and input:isKeyboardVisible() then return false end
+    return M.should_hide(input.parent)
+end
+
+local function focus_wrapper(self, ...)
+    local ok, quiet = pcall(M.quiet_focus, self)
+    if not (ok and quiet) then return M._stock_focus(self, ...) end
+    local parent = self.parent
+    if type(parent) == "table" and type(parent.onSwitchFocus) == "function" then
+        -- MultiInputDialog: switch the field, its closing onShowKeyboard is
+        -- eaten by the startup skip flag, cleared again right after.
+        parent.skip_first_show_keyboard = true
+        local ok2, err = pcall(parent.onSwitchFocus, parent, self)
+        parent.skip_first_show_keyboard = nil
+        if not ok2 then error(err) end
+    else
+        self:focus()
+    end
+    return true
+end
+
+-- (Re)wrap InputText.onFocus; it exists only on D-pad / touch devices.
+function M.wrap_focus()
+    local ok, IT = pcall(require, "ui/widget/inputtext")
+    if not ok or type(IT) ~= "table" then return false end
+    local cur = rawget(IT, "onFocus")
+    if cur == focus_wrapper then return true end
+    if type(cur) ~= "function" then return false end
+    M._stock_focus = cur
+    IT.onFocus = focus_wrapper
+    return true
+end
+
 function M.install(state_fn)
     M._state_fn = state_fn
     if M._installed then return true end
@@ -69,8 +115,10 @@ function M.install(state_fn)
                 self.skip_first_show_keyboard = true
             end
         end
+        pcall(M.wrap_focus)
         return stock_init(self, reinit, ...)
     end
+    pcall(M.wrap_focus)
     M._installed = true
     return true
 end

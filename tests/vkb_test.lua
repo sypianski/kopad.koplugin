@@ -45,7 +45,47 @@ assert(V.install(function() return false end) == true and ID.init == wrapped, "i
 new_dlg():init()
 assert(inits[6].kv == true, "new state function used")
 
--- 5. pad check on a non-SDL device: false without touching SDL
+-- 5. the focus coming back to the field (D-pad) does not open the keyboard
+V.install(function() return enabled end)
+local shown = 0
+local IT = {}
+function IT.onFocus(self)
+    shown = shown + 1 -- stock: onShowKeyboard + focus
+    self.focused = true
+    return true
+end
+function IT.focus(self) self.focused = true end
+function IT.isKeyboardVisible(self) return self.kb == true end
+package.preload["ui/widget/inputtext"] = function() return IT end
+local stock_focus = IT.onFocus
+assert(V.wrap_focus() == true and IT.onFocus ~= stock_focus, "onFocus wrapped")
+local function new_input(o) return setmetatable(o, { __index = IT }) end
+local box = new_input({ parent = new_dlg() })
+assert(box:onFocus() == true and box.focused == true and shown == 0, "focus without keyboard")
+box.kb = true
+box:onFocus()
+assert(shown == 1, "keyboard already up (tap / toggle): stock")
+pad = false
+new_input({ parent = new_dlg() }):onFocus()
+assert(shown == 2, "no pad: stock")
+pad = true
+-- MultiInputDialog: onSwitchFocus runs, its onShowKeyboard is skipped once
+local switched
+local multi = new_dlg({ onSwitchFocus = function(self, ib)
+    switched = { skip = self.skip_first_show_keyboard, ib = ib }
+end })
+local field2 = new_input({ parent = multi })
+field2:onFocus()
+assert(switched and switched.skip == true and switched.ib == field2, "switch with the skip flag")
+assert(multi.skip_first_show_keyboard == nil and shown == 2, "flag cleared, no keyboard")
+-- initInputEvents() redefines onFocus: the next dialog init wraps it again
+IT.onFocus = stock_focus
+new_dlg():init()
+assert(IT.onFocus ~= stock_focus, "re-wrapped on init")
+new_input({ parent = new_dlg() }):onFocus()
+assert(shown == 2, "still quiet after re-wrap")
+
+-- 6. pad check on a non-SDL device: false without touching SDL
 package.loaded.vkb = nil
 package.preload["device"] = function() return { isSDL = function() return false end } end
 local V2 = require("vkb")

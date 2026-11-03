@@ -1494,7 +1494,8 @@ do
     local PL = package.loaded.pluginaro
     local UIM = require("ui/uimanager")
     local stack = UIM._window_stack
-    local saved_cp, saved_sched = PL.call_provided, UIM.scheduleIn
+    local saved_cp, saved_sched, saved_en = PL.call_provided, UIM.scheduleIn, PL.is_enabled
+    local saved_ov = PL.overlay_active
     local saved_gp = package.loaded["device/sdl/gamepad"]
     local held = {}
     package.loaded["device/sdl/gamepad"] = { held_axis_directions = held }
@@ -1513,6 +1514,7 @@ do
         calls[#calls + 1] = method
         return true
     end
+    PL.is_enabled = function() return toggle end
     local log = {}
     local input = { focused = true, charlist = {}, delChar = function() log[#log + 1] = "del" end }
     local dlg = { _input_widget = input, buttons = { {
@@ -1561,18 +1563,77 @@ do
     held[5] = nil
     assert(n:onGamepadButtonDown({ button = 2 }) == true and log[3] == "del", "toggle off: X still backspace")
 
-    -- a dialog without a focused text field: X / A stock, RT no dictation
+    -- the D-pad focus on a button row: X / A stock, RT puts the focus back on
+    -- the field (FocusManager, forced) and dictates -- dictation comes first
     toggle = true
     input.focused = false
+    input.focus = function(self) self.focused = true end
+    local moved
+    dlg.getFocusableWidgetXY = function(_, w) if w == input then return 1, 1 end end
+    dlg.moveFocusTo = function(_, x, y, flags) moved = { x, y, flags }; input.focused = true end
     calls = {}
-    assert(n:onGamepadButtonDown({ button = 2 }) == false and n:onGamepadButtonDown({ button = 0 }) == false, "no field: stock")
+    assert(n:onGamepadButtonDown({ button = 2 }) == false and n:onGamepadButtonDown({ button = 0 }) == false, "focus off the field: stock")
+    held[5] = "plus"
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true, "RT consumed")
+    assert(moved and moved[1] == 1 and moved[2] == 1 and calls[1] == "start", "RT refocuses the field and starts")
+    held[5] = nil; run_sched()
+    -- toggle off: the focus is left where it is
+    toggle, moved, calls = false, nil, {}
+    input.focused = false
+    held[5] = "plus"
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(moved == nil and #calls == 0, "toggle off: no refocus, no dictation")
+    held[5] = nil
+    toggle, input.focused = true, true
+
+    -- the on-screen keyboard on top (a window of its own, `inputbox` = the
+    -- field): RT dictates, X = backspace, A types the keyboard's key (stock)
+    local kb = { inputbox = input }
+    input.parent = dlg
+    stack[3] = { widget = kb }
+    assert(n:_context() == "window", "keyboard on top: window")
+    calls, log = {}, {}
+    held[5] = "plus"
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and calls[1] == "start", "keyboard: RT dictates")
+    held[5] = nil; run_sched()
+    assert(n:onGamepadButtonDown({ button = 2 }) == true and log[1] == "del", "keyboard: X = backspace")
+    assert(n:onGamepadButtonDown({ button = 0 }) == false and #log == 1, "keyboard: A stock (types the key)")
+    stack[3] = nil
+
+    -- while recording every other control is eaten (B cancels, see above):
+    -- A / Start / D-pad / X, LT, the sticks
+    recording, calls, log = true, {}, {}
+    for _, b in ipairs({ 0, 6, 11, 12, 2 }) do
+        assert(n:onGamepadButtonDown({ button = b }) == true, "recording: button " .. b .. " eaten")
+    end
+    assert(#log == 0, "recording: no save, no backspace")
+    assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true, "recording: LT eaten")
+    assert(n:onGamepadAxisMotion({ axis = 1, value = 32767 }) == true, "recording: L-stick eaten")
+    recording = false
+
+    -- a text dialog over a FOREIGN overlay (a note opened from visel): still
+    -- kopad's window, so RT dictates
+    PL.overlay_active = function() return true end
+    assert(n:_context() == "window", "text dialog over a foreign overlay: window")
+    calls = {}
+    held[5] = "plus"
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(calls[1] == "start", "foreign overlay: RT dictates")
+    held[5] = nil; run_sched()
+    stack[2] = { widget = { buttons = {} } }
+    assert(n:_context() == "foreign", "other dialogs over a foreign overlay: foreign")
+    PL.overlay_active = saved_ov
+
+    -- a dialog without a text field: RT not routed
+    calls = {}
+    assert(n:_context() == "window")
     held[5] = "plus"
     n:onGamepadAxisMotion({ axis = 5, value = 32767 })
     assert(#calls == 0, "no field: RT not routed")
     held[5] = nil
 
     for i = #stack, 1, -1 do stack[i] = nil end
-    PL.call_provided, UIM.scheduleIn = saved_cp, saved_sched
+    PL.call_provided, UIM.scheduleIn, PL.is_enabled = saved_cp, saved_sched, saved_en
     package.loaded["device/sdl/gamepad"] = saved_gp
 end
 

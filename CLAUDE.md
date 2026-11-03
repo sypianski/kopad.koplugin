@@ -106,7 +106,8 @@ footer, highlight, bookmark, and every active widget) — saving them in
 **Context is the core rule (TASK-7): menus and reading have separate controls.**
 `PadNav:_context()` classifies the topmost non-toast window of
 `UIManager._window_stack`: `off`, `foreign` (another family overlay owns
-`_kokb_overlay`), `reading` / `paged` / `filemanager` (the top window IS
+`_kokb_overlay`; a text dialog on top -- `text_dialog(true)`, also found under
+the on-screen keyboard -- is `window` even then, for dictation), `reading` / `paged` / `filemanager` (the top window IS
 `self.ui`), `selection` (kopad's own overlay), `wheel` (a ButtonDialog drawn by `wheel.lua`,
 checked before `foreign`), `dict` (a DictQuickLookup, found
 via `DictQuickLookup.window_list` — the class has no `name` field), `top_menu`
@@ -355,7 +356,14 @@ enabled), which wraps `InputDialog.init` ONCE per run (`ID._kopad_stock_init`;
 editable dialog, when kopad is enabled and SDL reports a connected gamepad, it
 sets what stock sets for a physical keyboard with `virtual_keyboard_enabled`
 off: `keyboard_visible = false`, `skip_first_show_keyboard = true`. Tapping the
-field or the dialog's ⌨ toggle still opens the keyboard. Pad check:
+field or the dialog's ⌨ toggle still opens the keyboard. The focus is the
+second way in: on a D-pad device stock `InputText:onFocus` (FocusManager, the
+D-pad / L-stick back onto the field) calls `onShowKeyboard()`, in a
+MultiInputDialog through `onSwitchFocus`. `M.wrap_focus` replaces
+`InputText.onFocus`: while `quiet_focus` (dialog qualifies, keyboard not up
+already) it only focuses the field (`onSwitchFocus` with
+`skip_first_show_keyboard` set for the call). `InputText.initInputEvents()`
+redefines `onFocus`, so the wrapper is re-checked on every `InputDialog.init`. Pad check:
 `SDL_GetJoysticks` + `SDL_IsGamepad` through `require("ffi/SDL3").SDL`, only
 when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
 the last pad is unplugged. Text input with a pad: RT held = dictation, X =
@@ -599,7 +607,13 @@ dialog (context `window`) **RT held** = dictation into the focused field —
 start on the press, stop on the release, which is polled from
 `Gamepad.held_axis_directions` because KOReader reports no trigger release
 (`PadNav:_dictate_hold`, before `_menu_trigger`); B during a recording =
-cancel (`_diktonoti_route`). Not a stick click: on the Deck Steam Input never
+cancel, every other button, LT and the sticks are eaten while it runs
+(`_diktonoti_route`, `_recording`). Dictation comes first in a text dialog:
+it is found under the on-screen keyboard (`text_dialog`: the keyboard's
+`inputbox.parent`; there A stays stock = types the key) and over a foreign
+overlay (context `window`), and with the D-pad focus on a button row RT
+first moves it back to the field (`focus_field`, FocusManager
+`FORCED_FOCUS`; vkb.lua keeps that from opening the keyboard). Not a stick click: on the Deck Steam Input never
 passes L3 / R3 to KOReader. kopad's own text-field controls, with or without
 diktonoti (`_text_field_button`): X = backspace, A = the dialog's
 `is_enter_default` button (Save / Search) while the focus is on the field,

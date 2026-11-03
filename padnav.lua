@@ -637,16 +637,26 @@ end
 -- Integration B (pluginaro): dictation into the focused text field through
 -- diktonoti (`diktonoti.ext.kopad.gamepad_dictate`). Context "window" only
 -- (the note InputDialog, any dialog with a text field): RT HELD = recording
--- (push-to-talk, PadNav:_dictate_hold), B cancels a running one. With the
--- toggle off, diktonoti absent, or no focused text field (is_active nil/false)
--- nothing is routed and the controls keep their non-dictation meaning.
--- Returns true when B cancelled a recording.
+-- (push-to-talk, PadNav:_dictate_hold), B cancels a running one, every other
+-- control is eaten while it runs. A text dialog is context "window" even under
+-- the on-screen keyboard and over a foreign overlay (_context), so nothing
+-- else gets RT there. With the toggle off, diktonoti absent, or no text field
+-- (is_active nil/false) nothing is routed and the controls keep their
+-- non-dictation meaning.
+function PadNav:_recording()
+    return Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording") and true or false
+end
+
+-- A button while a recording runs: B cancels it, every other button is eaten
+-- (dictation comes first: A / Start would save or close the dialog, the D-pad
+-- would take the focus off the field the text goes to). Returns true =
+-- consumed; nothing recording = false, the button keeps its meaning.
 function PadNav:_diktonoti_route(btn)
-    if btn ~= BTN_B then return false end
-    if not Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording") then
-        return false
+    if not self:_recording() then return false end
+    if btn == BTN_B then
+        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "cancel")
     end
-    Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "cancel")
+    Trace.log("padnav btn=%s: recording, %s", tostring(btn), btn == BTN_B and "cancel" or "eaten")
     return true
 end
 
@@ -1666,6 +1676,26 @@ local function top_window()
     return nil
 end
 
+-- The text-input dialog on top (InputDialog / MultiInputDialog, duck-typed:
+-- `_input_widget` + `buttons`) and its focused field, else nil. The on-screen
+-- keyboard is a window of its own above the dialog; it knows its field
+-- (`inputbox`, whose `parent` is the dialog), so the dialog is found under it
+-- too (third value true). any_focus: the field may have lost the focus to
+-- the button rows (D-pad); otherwise it must hold it.
+local function text_dialog(any_focus)
+    local top = top_window()
+    if type(top) ~= "table" then return nil end
+    local under_kb = false
+    local box = rawget(top, "inputbox")
+    if type(box) == "table" and type(box.parent) == "table" then
+        top, under_kb = box.parent, true
+    end
+    local input = rawget(top, "_input_widget")
+    if type(input) ~= "table" or type(top.buttons) ~= "table" then return nil end
+    if input.focused ~= true and not any_focus then return nil end
+    return top, input, under_kb
+end
+
 -- ReaderConfig's bottom menu, duck-typed (a FocusManager, not a modal class).
 local function is_config_dialog(w)
     return type(w.config_options) == "table" and type(w.closeDialog) == "function"
@@ -1691,6 +1721,10 @@ function PadNav:_context()
     if not (self.enabled_ref and self.enabled_ref.enabled) then return "off" end
     local top = top_window()
     if wheel_of(top) then return "wheel" end
+    -- A text dialog on top (a note opened from visel / hilite, a search) is
+    -- kopad's even over a foreign overlay: dictation, A / X on the field
+    -- (visel's route stands down under a modal dialog anyway).
+    if text_dialog(true) then return "window" end
     if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign" end
     -- No stack (bare Lua tests) counts as the reader / FileManager itself.
     if top == nil or top == self.ui then
@@ -1844,14 +1878,23 @@ function PadNav:_quiet_tab_focus(ctx)
     if not ok then logger.warn("kopad: tab focus wrap failed: " .. tostring(err)) end
 end
 
--- The text-input dialog on top (InputDialog / MultiInputDialog, duck-typed:
--- `_input_widget` + `buttons`) and its focused field, else nil.
-local function text_dialog()
-    local top = top_window()
-    if type(top) ~= "table" then return nil end
-    local input = rawget(top, "_input_widget")
-    if type(input) ~= "table" or input.focused ~= true or type(top.buttons) ~= "table" then return nil end
-    return top, input
+-- Put the focus back on the dialog's field (the D-pad left it on a button
+-- row) the way the D-pad would: FocusManager Unfocus / Focus, so the button
+-- loses its highlight. vkb.lua keeps that Focus from opening the keyboard.
+local function focus_field(dlg, input)
+    local ok, err = pcall(function()
+        if type(dlg.moveFocusTo) == "function" then
+            local x, y = 1, 1
+            if type(dlg.getFocusableWidgetXY) == "function" then
+                local fx, fy = dlg:getFocusableWidgetXY(input)
+                if fx and fy then x, y = fx, fy end
+            end
+            local okF, FM = pcall(require, "ui/widget/focusmanager")
+            dlg:moveFocusTo(x, y, okF and type(FM) == "table" and FM.FORCED_FOCUS or nil)
+        end
+        if input.focused ~= true and type(input.focus) == "function" then input:focus() end
+    end)
+    if not ok then logger.warn("kopad: focus on the text field failed: " .. tostring(err)) end
 end
 
 -- The dialog's default button (`is_enter_default`: Save of a note, Search, ...).
@@ -1875,8 +1918,10 @@ end
 -- the field does nothing. Returns true = consumed.
 function PadNav:_text_field_button(btn)
     if btn ~= BTN_X and btn ~= BTN_A then return false end
-    local dlg, input = text_dialog()
+    local dlg, input, under_kb = text_dialog()
     if not dlg then return false end
+    -- A on the on-screen keyboard (opened by a tap / the toggle): stock types its key.
+    if btn == BTN_A and under_kb then return false end
     if btn == BTN_X then
         if type(input.delChar) == "function" then
             local ok, err = pcall(input.delChar, input)
@@ -1921,12 +1966,19 @@ end
 -- Gamepad.held_axis_directions up to date on every SDL motion, so the release
 -- is polled (like _quick_rearm). A remapped button acting as RT has no release
 -- either and no axis to poll: it toggles. Returns true when the press was
--- used (a focused field and the route on); auto-repeats of a held RT are
--- consumed while the hold lasts.
+-- used (a text dialog on top and the route on); auto-repeats of a held RT are
+-- consumed while the hold lasts. Dictation comes first in a text dialog:
+-- it works under the on-screen keyboard too, and with the D-pad focus on a
+-- button row RT first puts the focus back on the field.
 local DICTATE_POLL_S = 0.05
 function PadNav:_dictate_hold(from_button)
     if self._dictate_holding then return true end
-    if not text_dialog() then return false end
+    local dlg, input = text_dialog(true)
+    if not dlg then return false end
+    if input.focused ~= true then
+        if not Pluginaro.is_enabled("diktonoti", "kopad", "gamepad_dictate") then return false end
+        focus_field(dlg, input)
+    end
     if not Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_active") then return false end
     if from_button then
         Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "toggle")
@@ -2153,6 +2205,10 @@ function PadNav:_trigger_event(axis, value, from_button)
         if tr then Trace.log("padnav axis=%s value=%s: context window, dictation -> result=true", tostring(axis), tostring(value)) end
         return true
     end
+    if ctx == "window" and self:_recording() then
+        if tr then Trace.log("padnav axis=%s value=%s: recording, eaten -> result=true", tostring(axis), tostring(value)) end
+        return true
+    end
     if ctx == "top_menu" or ctx == "window" or ctx == "filemanager" then
         self:_menu_trigger(axis, value, from_button, ctx)
         if tr then
@@ -2251,6 +2307,11 @@ function PadNav:onGamepadAxisMotion(ax)
     -- L-stick ←/→ switches the tab like the D-pad.
     if (ctx == "top_menu" or ctx == "window" or ctx == "dict" or ctx == "filemanager")
             and type(ax) == "table" and STICK_HANDLERS[ax.axis] and type(ax.value) == "number" then
+        -- A recording runs: the sticks must not move the focus off its field.
+        if ctx == "window" and self:_recording() then
+            if tr then Trace.log("padnav axis=%s: recording, eaten -> result=true", tostring(ax.axis)) end
+            return true
+        end
         local neg = ax.value < 0
         if self:_stick_bounce(ax.axis, neg, MENU_STICK_LOCK_S) then
             if tr then Trace.log("padnav axis=%s value=%s: context %s, stick bounce, ignored -> result=true",
