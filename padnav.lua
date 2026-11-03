@@ -12,6 +12,8 @@ Reading:
                          16+ have no stock mapping (Steam Input usually does
                          not expose them), so nothing arrives.
   Select                 Top menu          Start   Footer (bottom) menu
+  B                      Back to the previous location (TOC entry, link, ...);
+                         never KOReader's "Exit KOReader?" (Gamepad* path)
   D-pad                  Open word walk
   L-stick ↑/←            Page turn (↑/← = next page, legacy)
   L-stick ↓              Open crosshair   L-stick → Open word walk
@@ -39,9 +41,15 @@ Top menu open (TouchMenu, reader AND FileManager):
   RT / LT                Next / previous PAGE of the menu (TouchMenu:onNextPage
                          / onPrevPage), one press = one page
   Select                 Close the menu (TouchMenu:closeMenu)
+  D-pad / L-stick ←/→    On the tab bar: previous / next category at once
+                         (stock only moves the focus and wants A)
   D-pad / L-stick / A / B / Start / R-stick
-                         Stock: navigate / Press / Back / close (stock "Menu"
-                         key) / menu page
+                         Otherwise stock: navigate / Press / Back / close
+                         (stock "Menu" key) / menu page
+  A category switch keeps the focus level, visibly: on the bar -> the new
+  icon, in the items -> the first item of the new category.
+  Sticks in menus, lists, the dictionary popup and the FileManager drop
+  release bounces (MENU_STICK_LOCK_S), which would move the focus back.
 
 Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
   RT / LT                Next / previous page of the list (Menu:onNextPage /
@@ -50,7 +58,8 @@ Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
   Everything else        Stock (the window navigates as without kopad)
 
 FileManager (nothing on top of the file list):
-  D-pad / A / B / sticks Stock list navigation
+  D-pad / A / sticks     Stock list navigation
+  B                      Parent folder (stock asks "Exit KOReader?")
   LB / RB                Stock RPgBack / RPgFwd = previous / next list page
   RT / LT                Next / previous list page (file_chooser)
   Select                 Top menu
@@ -185,6 +194,7 @@ local RTL_LANGS = { ar=true, he=true, fa=true, ur=true }
 local BTN_A, BTN_B, BTN_X, BTN_Y = 0, 1, 2, 3
 local BTN_SELECT, BTN_GUIDE, BTN_START = 4, 5, 6
 local BTN_L3, BTN_R3, BTN_LB, BTN_RB = 7, 8, 9, 10
+local BTN_DPAD_LEFT, BTN_DPAD_RIGHT = 13, 14
 local AXIS_LX, AXIS_LY, AXIS_RX, AXIS_RY = 0, 1, 2, 3
 local AXIS_LT, AXIS_RT = 4, 5
 
@@ -245,6 +255,11 @@ local ZOOM_STEP = 1.03
 -- within STICK_LOCK_S of it is that bounce. 0.6 s covers the first stock
 -- auto-repeat (0.5 s) plus the snap back.
 local STICK_LOCK_S = 0.6
+-- The same filter in menus, lists, the dictionary popup and the FileManager,
+-- where the sticks otherwise stay stock: there a bounce would move the focus
+-- back by one item or off the tab bar. Shorter, so that a quick deliberate
+-- reversal still works (bounces seen at 8-110 ms).
+local MENU_STICK_LOCK_S = 0.2
 
 -- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
 -- device.lua fires the first repeat 0.5 s after the press (delay) and then
@@ -915,6 +930,17 @@ function PadNav:onKPBack()
         selector:_close()
         return true
     end
+    -- Stock Back in the reader ends in "Exit KOReader?" once the location
+    -- history is empty (ReaderBack); a few B presses must not quit. B goes
+    -- back to the previous location only (TOC entry, link, skim ...);
+    -- ReaderLink shows "Location history is empty" when there is none.
+    if self.ui and self.ui.document then
+        local link = self.ui.link
+        if link and type(link.onGoBackLink) == "function" then
+            link:onGoBackLink(true)
+        end
+        return true
+    end
     return false
 end
 
@@ -1103,14 +1129,15 @@ function PadNav:_paged_pan(dx, dy)
     self.ui:handleEvent(Event:new("Panning", { dx, dy }))
 end
 
--- True for a release bounce of a stick in a paged document (STICK_LOCK_S).
-function PadNav:_stick_bounce(axis, neg)
+-- True for a release bounce of a stick: a different direction within
+-- `lock_s` (default STICK_LOCK_S, paged documents) of the last accepted one.
+function PadNav:_stick_bounce(axis, neg, lock_s)
     local stick = (axis == AXIS_LX or axis == AXIS_LY) and "l" or "r"
     local dir = axis * 2 + (neg and 1 or 0)
     local now = time.to_s(time.now())
     self._stick_dir = self._stick_dir or {}
     local st = self._stick_dir[stick]
-    if st and st.dir ~= dir and now - st.t < STICK_LOCK_S then return true end
+    if st and st.dir ~= dir and now - st.t < (lock_s or STICK_LOCK_S) then return true end
     self._stick_dir[stick] = { dir = dir, t = now }
     return false
 end
@@ -1388,6 +1415,27 @@ local function menu_tab_step(menu, dir)
     return false
 end
 
+-- Switch the TouchMenu `dir` categories (menu_tab_step) and keep the focus on
+-- the same level, visibly: on the tab bar -> the new tab's icon, in the items
+-- -> the first item of the new tab. (Stock resets it, invisibly, to the bar:
+-- the next A would re-open the tab and the next D-pad press lands elsewhere.)
+-- True when the TouchMenu focus is on its tab bar (FocusManager layout row 1;
+-- the items are the rows below).
+local function menu_focus_on_bar(menu)
+    local sel = type(menu.selected) == "table" and menu.selected or nil
+    return not (sel and type(sel.y) == "number" and sel.y > 1)
+end
+
+local function menu_switch_tab(menu, dir)
+    local on_bar = menu_focus_on_bar(menu)
+    if not menu_tab_step(menu, dir) then return false end
+    if type(menu.moveFocusTo) == "function" and type(menu.layout) == "table" then
+        local row = (not on_bar and menu.layout[2]) and 2 or 1
+        menu:moveFocusTo(menu.cur_tab, row)
+    end
+    return true
+end
+
 -- The top menu (TouchMenu) when kopad should drive it, else nil: kopad
 -- switched on, no FOREIGN family overlay, a TouchMenu in the top window.
 function PadNav:_top_menu()
@@ -1412,10 +1460,21 @@ function PadNav:_menu_button(btn, ctx)
         if btn == BTN_LB or btn == BTN_RB then
             local menu = self:_top_menu()
             if menu then
-                local ok, err = pcall(menu_tab_step, menu, btn == BTN_RB and 1 or -1)
+                local ok, err = pcall(menu_switch_tab, menu, btn == BTN_RB and 1 or -1)
                 if not ok then logger.warn("kopad: menu tab switch failed: " .. tostring(err)) end
                 Trace.log("padnav btn=%s: menu tab step ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
             end
+            return true
+        end
+        -- D-pad ←/→ on the tab bar switches the tab at once (stock only moves
+        -- the focus between the icons and wants A to open one). In the items
+        -- they stay stock.
+        if btn == BTN_DPAD_LEFT or btn == BTN_DPAD_RIGHT then
+            local menu = self:_top_menu()
+            if not (menu and menu_focus_on_bar(menu)) then return false end
+            local ok, err = pcall(menu_switch_tab, menu, btn == BTN_DPAD_RIGHT and 1 or -1)
+            if not ok then logger.warn("kopad: menu tab switch failed: " .. tostring(err)) end
+            Trace.log("padnav btn=%s: menu tab step (bar) ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
             return true
         end
         if btn == BTN_SELECT then
@@ -1468,11 +1527,21 @@ function PadNav:_drop_x_mode(ctx)
 end
 
 -- Buttons (logical role id) in the FileManager (ctx "filemanager"): the list
--- keeps the stock navigation -- D-pad / A / B, LB / RB (RPgBack / RPgFwd =
--- list page). kopad adds Select = top menu; LT / RT (list page) are in
--- _menu_trigger. Returns true = consumed.
+-- keeps the stock navigation -- D-pad / A, LB / RB (RPgBack / RPgFwd = list
+-- page). kopad adds Select = top menu and B = parent folder; LT / RT (list
+-- page) are in _menu_trigger. Returns true = consumed.
 function PadNav:_filemanager_button(btn)
     if btn == BTN_SELECT then return self:onKPSelect() end
+    -- B = parent folder. Stock Back in the file browser asks "Exit KOReader?"
+    -- (FileChooser:onBack, back_to_exit = prompt); quitting stays in the menu.
+    if btn == BTN_B then
+        local fc = self.ui and self.ui.file_chooser
+        if type(fc) == "table" and type(fc.onFolderUp) == "function" then
+            local ok, err = pcall(fc.onFolderUp, fc)
+            if not ok then logger.warn("kopad: folder up failed: " .. tostring(err)) end
+        end
+        return true
+    end
     return BUTTON_SWALLOW[btn] or false
 end
 
@@ -1574,8 +1643,28 @@ function PadNav:onGamepadAxisMotion(ax)
     end
     local ctx = self:_context()
     self:_drop_x_mode(ctx)
-    -- FileManager: both sticks stay stock (L-stick = list navigation, R-stick
-    -- Y = list page), like the menus.
+    -- Menus, lists, dialogs, the dictionary popup and the FileManager: the
+    -- sticks stay stock (L-stick = navigation, R-stick Y = page), minus
+    -- release bounces (MENU_STICK_LOCK_S); on the top menu's tab bar the
+    -- L-stick ←/→ switches the tab like the D-pad.
+    if (ctx == "top_menu" or ctx == "window" or ctx == "dict" or ctx == "filemanager")
+            and type(ax) == "table" and STICK_HANDLERS[ax.axis] and type(ax.value) == "number" then
+        local neg = ax.value < 0
+        if self:_stick_bounce(ax.axis, neg, MENU_STICK_LOCK_S) then
+            if tr then Trace.log("padnav axis=%s value=%s: context %s, stick bounce, ignored -> result=true",
+                tostring(ax.axis), tostring(ax.value), ctx) end
+            return true
+        end
+        if ctx == "top_menu" and ax.axis == AXIS_LX then
+            local menu = self:_top_menu()
+            if menu and menu_focus_on_bar(menu) then
+                local ok, err = pcall(menu_switch_tab, menu, neg and -1 or 1)
+                if not ok then logger.warn("kopad: menu tab switch failed: " .. tostring(err)) end
+                Trace.log("padnav axis=%s value=%s: menu tab step (bar) ok=%s", tostring(ax.axis), tostring(ax.value), tostring(ok))
+                return true
+            end
+        end
+    end
     if not PAD_CONTEXTS[ctx] or ctx == "filemanager" then
         if tr then
             Trace.log("padnav axis=%s value=%s: passthrough, context %s -> result=false",
@@ -1656,6 +1745,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nRT / LT: next / previous page"
     .. "\nRB / LB: next / previous page"
     .. "\nSelect: top menu    Start: footer menu"
+    .. "\nB: back to the previous location"
     .. "\nA: sentence selector    Y: highlights"
     .. "\nD-pad: word walk    R-stick: crosshair"
     .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
@@ -1668,10 +1758,12 @@ local CHEAT_READING = _("Reading mode")
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
     .. "\nRT / LT: next / previous page    Select: close"
+    .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92 on the tabs: category"
     .. "\n\n" .. _("Lists (TOC, bookmarks, history, ...)")
     .. "\nRT / LT: next / previous page"
     .. "\n\n" .. _("File browser")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
+    .. "\nB: parent folder"
 
 local CHEAT_SELECTION = _("Selection mode")
     .. "\nL-stick \xE2\x86\x90/\xE2\x86\x92: sentence    \xE2\x86\x91/\xE2\x86\x93: paragraph"

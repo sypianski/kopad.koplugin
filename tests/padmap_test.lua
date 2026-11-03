@@ -130,7 +130,8 @@ do
     stub("ui/uimanager", { _window_stack = {} })
     stub("ui/time", { now = function() return 0 end, to_s = function(t) return t end })
     stub("logger", { warn = function() end, dbg = function() end })
-    stub("pluginaro", { overlay_active = function() return false end })
+    stub("pluginaro", { overlay_active = function() return false end, is_modal_active = function() return false end,
+                        call_provided = function() return nil end })
     stub("gettext", function(s) return s end)
     local PadNav = require("padnav")
 
@@ -595,6 +596,12 @@ end
 do
     local PadNav = require("padnav")
     local stack = require("ui/uimanager")._window_stack
+    -- a clock that moves 1 s per reading: no event counts as a stick bounce
+    -- or a trigger auto-repeat unless a test sets the time itself
+    local T = package.loaded["ui/time"]
+    local clock = 1000
+    local function ticking() clock = clock + 1; return clock end
+    T.now = ticking
     local function set_stack(...)
         for i = #stack, 1, -1 do stack[i] = nil end
         for i, w in ipairs({ ... }) do stack[i] = { widget = w } end
@@ -622,8 +629,16 @@ do
             { __index = PadNav })
         n:set_padmap(padmap and P.build(padmap, "xbox") or nil)
         local function rec(name) return function() log.menu[#log.menu + 1] = name; return true end end
+        -- focus starts in the items (FocusManager row 2); row 1 = tab bar
         local touch = { tab_item_table = { {}, {}, {} }, cur_tab = 1,
-                        switchMenuTab = function(m, k) m.cur_tab = k; log.menu[#log.menu + 1] = "tab:" .. k end,
+                        selected = { x = 1, y = 2 }, layout = { {}, {} },
+                        switchMenuTab = function(m, k)
+                            m.cur_tab = k; m.selected = { x = k, y = 1 }
+                            log.menu[#log.menu + 1] = "tab:" .. k
+                        end,
+                        moveFocusTo = function(m, x, y)
+                            m.selected = { x = x, y = y }; log.menu[#log.menu + 1] = "focus:" .. x .. "," .. y
+                        end,
                         onNextPage = rec("next"), onPrevPage = rec("prev"), closeMenu = rec("close") }
         local list = { onNextPage = rec("next"), onPrevPage = rec("prev") }
         return n, log, ui, selector, { touch }, { list }
@@ -646,11 +661,41 @@ do
             assert(n:onGamepadAxisMotion({ axis = a[1], value = a[2] }) == false, kind .. " top menu: stick " .. a[1])
         end
         nothing_moved(log, kind .. " top menu")
-        assert(n:onGamepadButtonDown({ button = 10 }) == true and log.menu[1] == "tab:2", kind .. " RB = next category")
-        assert(n:onGamepadButtonDown({ button = 9 }) == true and log.menu[2] == "tab:1", kind .. " LB = previous category")
-        assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.menu[3] == "next", kind .. " RT")
-        assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true and log.menu[4] == "prev", kind .. " LT")
-        assert(n:onGamepadButtonDown({ button = 4 }) == true and log.menu[5] == "close", kind .. " Select closes")
+        -- LB/RB switch the category and keep the focus level: in the items -> first item
+        assert(n:onGamepadButtonDown({ button = 10 }) == true and log.menu[1] == "tab:2" and log.menu[2] == "focus:2,2",
+            kind .. " RB = next category, focus on its first item")
+        assert(n:onGamepadButtonDown({ button = 9 }) == true and log.menu[3] == "tab:1" and log.menu[4] == "focus:1,2",
+            kind .. " LB = previous category")
+        assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.menu[5] == "next", kind .. " RT")
+        assert(n:onGamepadAxisMotion({ axis = 4, value = 32767 }) == true and log.menu[6] == "prev", kind .. " LT")
+        -- focus on the tab bar: D-pad ←/→ switch the tab at once, focus stays on the bar
+        top_menu[1].selected = { x = 1, y = 1 }
+        assert(n:onGamepadButtonDown({ button = 14 }) == true and log.menu[7] == "tab:2" and log.menu[8] == "focus:2,1",
+            kind .. " → on the bar = next tab")
+        assert(n:onGamepadButtonDown({ button = 13 }) == true and log.menu[9] == "tab:1" and log.menu[10] == "focus:1,1",
+            kind .. " ← on the bar = previous tab")
+        assert(n:onGamepadButtonDown({ button = 13 }) == true and log.menu[11] == "tab:3", kind .. " ← wraps")
+        assert(n:onGamepadButtonDown({ button = 12 }) == false, kind .. " ↓ from the bar is stock")
+        -- the L-stick ←/→ on the bar does the same; in the items it is stock
+        top_menu[1].selected = { x = 1, y = 1 }
+        local before = #log.menu
+        assert(n:onGamepadAxisMotion({ axis = 0, value = 20000 }) == true and log.menu[before + 1] == "tab:1",
+            kind .. " L-stick → on the bar = next tab")
+        top_menu[1].selected = { x = 2, y = 3 }
+        assert(n:onGamepadAxisMotion({ axis = 0, value = -20000 }) == false, kind .. " L-stick ← in the items is stock")
+        -- a release bounce (other direction within 0.2 s) is eaten, so the
+        -- focus does not jump back; a later reversal is a real move
+        T.now = function() return clock end
+        clock = clock + 5
+        assert(n:onGamepadAxisMotion({ axis = 1, value = 20000 }) == false, kind .. " L-stick ↓ stock")
+        clock = clock + 0.08
+        assert(n:onGamepadAxisMotion({ axis = 1, value = -6000 }) == true, kind .. " bounce eaten")
+        clock = clock + 0.05
+        assert(n:onGamepadAxisMotion({ axis = 0, value = 6000 }) == true, kind .. " bounce on the other axis eaten")
+        clock = clock + 0.5
+        assert(n:onGamepadAxisMotion({ axis = 1, value = -20000 }) == false, kind .. " later ↑ is a real move")
+        T.now = ticking
+        assert(n:onGamepadButtonDown({ button = 4 }) == true and log.menu[#log.menu] == "close", kind .. " Select closes")
         for _, b in ipairs({ 5, 7, 8 }) do assert(n:onGamepadButtonDown({ button = b }) == true, "swallow " .. b) end
         nothing_moved(log, kind .. " top menu")
         assert(not n._x_mode, kind .. " X does not arm the modifier under a menu")
@@ -696,8 +741,9 @@ do
     -- FileManager (TASK-9): stock list navigation, LT/RT = list page, Select = menu
     local pages = {}
     ui.file_chooser = { onNextPage = function() pages[#pages + 1] = "next" end,
-                        onPrevPage = function() pages[#pages + 1] = "prev" end }
-    for _, b in ipairs({ 0, 1, 2, 3, 9, 10, 11, 12, 13, 14 }) do
+                        onPrevPage = function() pages[#pages + 1] = "prev" end,
+                        onFolderUp = function() pages[#pages + 1] = "up" end }
+    for _, b in ipairs({ 0, 2, 3, 9, 10, 11, 12, 13, 14 }) do
         assert(n:onGamepadButtonDown({ button = b }) == false, "filemanager: button " .. b .. " is stock")
     end
     assert(not n._x_mode, "filemanager: X does not arm the modifier")
@@ -708,6 +754,19 @@ do
     assert(pages[1] == "next" and pages[2] == "prev", "filemanager: LT/RT = list page")
     assert(#log.events == 0)
     assert(n:onGamepadButtonDown({ button = 4 }) == true and log.events[1] == "ShowMenu", "filemanager: Select = menu")
+    -- B = parent folder, never the stock "Exit KOReader?" (TASK-11)
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and pages[3] == "up", "filemanager: B = folder up")
+    -- B while reading (EPUB and PDF, no selection): back to the previous
+    -- location only, never the stock Back that ends in "Exit KOReader?"
+    for _, kind in ipairs({ "epub", "pdf" }) do
+        local r, rlog, rui = reader(kind)
+        set_stack(rui)
+        local back = 0
+        rui.link = { onGoBackLink = function(_, notify) assert(notify == true); back = back + 1; return false end }
+        assert(r:onGamepadButtonDown({ button = 1 }) == true and r:onGamepadButtonDown({ button = 1 }) == true
+            and back == 2, kind .. ": B = previous location, consumed even when the history is empty")
+        nothing_moved(rlog, kind .. " B")
+    end
     -- X modifier is dropped as soon as the pad is used outside plain reading
     n, log, ui = reader("epub")
     set_stack(ui)
@@ -774,6 +833,7 @@ do
     n.enabled_ref.enabled = false
     assert(n:_context() == "off")
     set_stack()
+    T.now = function() return 0 end
 end
 
 print("padmap_test: all tests passed")

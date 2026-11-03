@@ -182,8 +182,9 @@ M.ACTIONS = {}
 for _, id in ipairs(M.ACTION_ORDER) do M.ACTIONS[id] = true end
 
 -- What each role does in the idle reading context without an override. B is
--- absent on purpose: kopad does nothing there and KOReader's own Back runs, so
--- no action id describes it. An override equal to the default is dropped
+-- absent on purpose (koligilo's panel shows no default for it): its built-in
+-- is PadNav:onKPBack, which since TASK-11 does what `back_location` does
+-- (ReaderLink:onGoBackLink) and never falls through to KOReader's Back. An override equal to the default is dropped
 -- (build_actions), which keeps the built-in handler -- and its pass-through in
 -- paged documents -- exactly as it was.
 M.DEFAULT_ACTIONS = {

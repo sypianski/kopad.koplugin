@@ -230,7 +230,13 @@ Two input paths end in the same `on<Key>` handlers:
   window, Select/Start/Guide/L3/R3 swallowed, the rest stock. Dictionary popup
   (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
   triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`
-  page, Select = top menu.
+  page, Select = top menu, B = `FileChooser:onFolderUp` (stock Back asks
+  "Exit KOReader?"). Reading without a selection: B = `ReaderLink:onGoBackLink`
+  only, never the stock Back (ReaderBack ends in "Exit KOReader?"). Top menu:
+  D-pad / L-stick ←/→ with the focus on the tab bar (`selected.y == 1`) switch
+  the tab at once; `menu_switch_tab` keeps the focus level (bar -> new icon,
+  items -> first item). Sticks outside the reading contexts drop release
+  bounces (`_stick_bounce` with `MENU_STICK_LOCK_S`).
 - **Older patched builds:** physical button → KOReader key name → `padnav`
   binding in the `key_events` table in `PadNav:init`. Names come from SDL3 + the
   userpatch. L4/R4 back paddles (`ScrollLock`/`Pause`) are LB/RB aliases on these
