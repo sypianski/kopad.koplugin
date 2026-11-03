@@ -142,7 +142,11 @@ If the [keyreader](https://github.com/sypianski/keyreader.koplugin) plugin is in
 
 With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** move the selection, **RB** / **LB** extend / trim it, **B** closes it.
 
-Without keyreader, or with the switch off, nothing changes. This is the only plugin kopad talks to; windows opened by other plugins get the pad as stock KOReader keys (see *Menus versus reading*).
+Without keyreader, or with the switch off, nothing changes. Windows opened by other plugins get the pad as stock KOReader keys (see *Menus versus reading*), apart from dictation below.
+
+### Dictation (diktonoti, opt-in via pluginaro)
+
+With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*), **R3** in a dialog with a focused text field — e.g. the note to a highlight — starts / stops dictation through the Diktilo daemon on the Steam Deck; **B** during a recording cancels it. Without diktonoti, or with the switch off, R3 does nothing there and B is the stock Back.
 
 ### Button remapping (gamepad layouts)
 

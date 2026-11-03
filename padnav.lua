@@ -503,6 +503,27 @@ function PadNav:_visel_route(method, arg)
     return true
 end
 
+-- Integration B (pluginaro): dictation into the focused text field through
+-- diktonoti (`diktonoti.ext.kopad.gamepad_dictate`). Context "window" only
+-- (the note InputDialog, any dialog with a text field): R3 starts / stops a
+-- recording, B cancels a running one. With the toggle off, diktonoti absent,
+-- or no focused text field (is_active nil/false) nothing is routed: R3 stays
+-- swallowed and B stays the stock Back, as before.
+function PadNav:_diktonoti_route(btn)
+    if btn ~= BTN_R3 and btn ~= BTN_B then return false end
+    local recording = Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording")
+    if btn == BTN_B then
+        if not recording then return false end
+        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "cancel")
+        return true
+    end
+    if not (recording or Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_active")) then
+        return false
+    end
+    Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "toggle")
+    return true
+end
+
 function PadNav:_is_rtl()
     if not self.ui or not self.ui.document then return false end
     local ok, props = pcall(function() return self.ui.document:getProps() end)
@@ -1503,6 +1524,7 @@ function PadNav:_menu_button(btn, ctx)
         end
         if btn == BTN_START then return false end
     elseif ctx == "window" then
+        if self:_diktonoti_route(btn) then return true end
         local dlg = find_config_dialog()
         if not dlg then return BUTTON_SWALLOW[btn] or false end
         if btn == BTN_START then

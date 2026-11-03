@@ -165,6 +165,18 @@ function kopad:init()
         default_enabled = false,
     })
 
+    -- Integration B (pluginaro): R3 in a text field dictates through
+    -- diktonoti (B cancels). Same shape as above: toggle in diktonoti's menu,
+    -- harmless without diktonoti.
+    Pluginaro.register("diktonoti", {
+        id              = "gamepad_dictate",
+        provider        = "kopad",
+        section         = "extensions",
+        menu_location   = "host",
+        label           = _("Dictate with gamepad R3, B cancels (kopad)"),
+        default_enabled = false,
+    })
+
     if self.ui and self.ui.menu then
         self.ui.menu:registerToMainMenu(self)
     end

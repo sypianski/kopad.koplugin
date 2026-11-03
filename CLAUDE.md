@@ -246,8 +246,12 @@ shows they arrive as sync commits.
 ## Coordination with the plugin family
 
 The family: `keyreader` (with `visel` and `hilite`), `marjenoti`, `textolimiti`,
-`kotheme`, `frontespico` and kopad. Each is its own GitHub repo. **Today the only
-gamepad integration is kopad ↔ visel** (`visel.ext.kopad.gamepad_select`); every
+`kotheme`, `frontespico` and kopad. Each is its own GitHub repo. **Today there are two
+gamepad integrations: kopad ↔ visel** (`visel.ext.kopad.gamepad_select`) **and
+kopad ↔ diktonoti** (`diktonoti.ext.kopad.gamepad_dictate`: in context `window`
+R3 toggles dictation into the focused text field, B cancels a running one —
+`PadNav:_diktonoti_route`, called first in `_menu_button`'s window branch;
+section 15 of `tests/padmap_test.lua`); every
 other plugin's windows simply get stock keys from kopad (context `window`) and
 need no pad code. The rules below describe how that integration works and how to
 add the next one. The sibling repos carry the same rules in their own `CLAUDE.md`.
@@ -282,7 +286,8 @@ optional method in the host's `provide` table, then a route to it from kopad.
    never renamed or given a new meaning.
 4. **The contract is `(host, provider, id)` plus method names and arguments.**
    Today `visel / kopad / gamepad_select`: `is_active()`, `move(dir)`,
-   `extend(dir)`, `close()`. Change it in both repos and name the other repo's
+   `extend(dir)`, `close()`; `diktonoti / kopad / gamepad_dictate`:
+   `is_active()`, `is_recording()`, `toggle()`, `cancel()`. Change it in both repos and name the other repo's
    commit in each commit message.
 5. **Route before `_is_enabled()`, and know the two rounds.** A foreign overlay
    makes the context `foreign`, which disables PadNav's own handlers — and that is
