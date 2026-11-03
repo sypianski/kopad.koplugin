@@ -1,5 +1,5 @@
 -- Tests for kopad_hints.lua ("point from-to", TASK-29): label assignment by
--- position, the line layer and the two-step pointer. Pure Lua, no KOReader.
+-- position, the line layer and the two-step pointer on sentences (TASK-35). Pure Lua, no KOReader.
 -- Run from the repo root: lua tests/kopad_hints_test.lua
 package.path = "./?.lua;" .. package.path
 
@@ -100,60 +100,144 @@ do
     assert(#cols == 3)
 end
 
--- 5. The pointer: start labels, end labels from the start line, B.
+-- 5. The pointer on sentences (TASK-35, PC-022): start labels at the
+-- sentence starts, end labels at the sentence ends from the start sentence
+-- down, refinement to a word (R-stick), B.
+-- Page: 4 lines of 5 words (x = 20 + k * 60, y = line * 30); sentences
+-- S1 = 1-3, S2 = 4-12, S3 = 13-14, S4 = 15-20.
+local function page(nwords, per_line)
+    local boxes = {}
+    per_line = per_line or 5
+    for i = 1, nwords do
+        local k, line = (i - 1) % per_line, math.floor((i - 1) / per_line)
+        boxes[i] = { x = 20 + k * 60, y = line * 30, w = 50, h = 20 }
+    end
+    return boxes
+end
+local function label_for(p, field, value)
+    for _, v in ipairs(p:visible()) do if v[field] == value then return v.label end end
+end
+local function pick(p, field, value)
+    local l = label_for(p, field, value)
+    assert(l, "a label for " .. field .. " " .. tostring(value))
+    assert(p:press(l[1]) == "prefix", "first symbol")
+    return p:press(l[2])
+end
 do
-    local lines = {}
-    for i = 1, 10 do lines[i] = { x = 20, y = (i - 1) * 30, w = 300 - (i % 3) * 40, h = 20, first = i, last = i } end
-    local p = H.Pointer.new(lines)
-    assert(p.step == "start")
+    local boxes = page(20)
+    local sents = { { first = 1, last = 3 }, { first = 4, last = 12 },
+                    { first = 13, last = 14 }, { first = 15, last = 20 } }
+    local p = H.Pointer.new(sents, boxes)
+    assert(p.step == "start" and p.level == "sentence" and p.refine == false)
     local vis = p:visible()
-    assert(#vis == 10 and vis[1].side == "left" and vis[1].x == 20, "start labels on the left of every line")
+    assert(#vis == 4, "one label per sentence")
+    assert(vis[2].sent == 2 and vis[2].word == 4 and vis[2].side == "left" and vis[2].x == boxes[4].x,
+        "start label left of the sentence's first word")
+    assert(vis[2].h == 20 and vis[2].y == boxes[4].y + 10)
     -- a symbol no label starts with is ignored
     local used = {}
     for _, v in ipairs(vis) do used[v.label[1]] = true end
     for _, c in ipairs(H.FIRST) do
         if not used[c] then assert(p:press(c) == "ignored"); break end
     end
-    -- line 4: the first symbol filters, the second picks
-    local lab = vis[4].label
+    -- S2: the first symbol filters, the second picks the start (word 4)
+    local lab = label_for(p, "sent", 2)
     assert(p:press(lab[1]) == "prefix")
-    local f = p:visible()
-    for _, v in ipairs(f) do assert(v.label[1] == lab[1] and v.typed == 1, "only the prefix's labels") end
-    assert(#f < 10)
-    -- B with a prefix: drops it when no label continues with B
+    for _, v in ipairs(p:visible()) do assert(v.label[1] == lab[1] and v.typed == 1) end
     local has_b = false
-    for _, v in ipairs(f) do if v.label[2] == "B" then has_b = true end end
+    for _, v in ipairs(p:visible()) do if v.label[2] == "B" then has_b = true end end
     if not has_b then
-        assert(p:press("B") == "unprefix" and #p:visible() == 10)
+        assert(p:press("B") == "unprefix" and #p:visible() == 4)
         assert(p:press(lab[1]) == "prefix")
     end
-    assert(p:press(lab[2]) == "start" and p.start == 4 and p.step == "end")
-    -- end labels: lines 4..10, at the right end of each line
+    assert(p:press(lab[2]) == "start" and p.start == 4 and p.start_sent == 2 and p.step == "end")
+    -- end labels: S2 .. S4, right of each sentence's last word
     local ends = p:visible()
-    assert(#ends == 7 and ends[1].line == 4 and ends[1].side == "right", "end labels from the start line")
-    assert(ends[1].x == lines[4].x + lines[4].w)
-    local e = ends[3].label -- line 6
-    assert(p:press(e[1]) == "prefix" and p:press(e[2]) == "done")
-    assert(p.start == 4 and p.stop == 6 and #p:visible() == 0)
+    assert(#ends == 3 and ends[1].sent == 2 and ends[1].word == 12 and ends[1].side == "right", "end labels")
+    assert(ends[1].x == boxes[12].x + boxes[12].w)
+    assert(pick(p, "sent", 3) == "done" and p.start == 4 and p.stop == 14 and #p:visible() == 0)
     assert(p:press("A") == "ignored", "done: nothing more")
 
-    -- B in step end = no end (one word)
-    p = H.Pointer.new(lines)
-    local l1 = p:visible()[1].label
-    p:press(l1[1]); p:press(l1[2])
-    assert(p.step == "end" and p:press("B") == "done" and p.start == 1 and p.stop == nil)
-    -- B in step start = cancel
-    p = H.Pointer.new(lines)
+    -- B: start labels = cancel, end labels = one word
+    p = H.Pointer.new(sents, boxes)
     assert(p:press("B") == "cancel")
-    -- RTL: the line start is on the right, the end on the left
-    p = H.Pointer.new(lines, { rtl = true })
+    assert(pick(p, "sent", 1) == "start")
+    assert(p:press("B") == "done" and p.start == 1 and p.stop == nil)
+
+    -- the start sentence as its own end
+    p = H.Pointer.new(sents, boxes)
+    pick(p, "sent", 3)
+    assert(pick(p, "sent", 3) == "done" and p.start == 13 and p.stop == 14)
+
+    -- refinement to a word: R↓ in the step, a sentence label = its words
+    p = H.Pointer.new(sents, boxes)
+    assert(p:refine_to_word(true) == true and p.refine and p.level == "sentence")
+    assert(p:refine_to_word(true) == false, "already on")
+    assert(#p:visible() == 4, "still the sentence labels")
+    assert(pick(p, "sent", 2) == "sentence" and p.level == "word" and p.sent == 2)
+    local wv = p:visible()
+    assert(#wv == 9, "labels on S2's nine words only, got " .. #wv)
+    for _, v in ipairs(wv) do assert(v.sent == 2 and v.word >= 4 and v.word <= 12 and v.side == "top") end
+    assert(wv[1].x == boxes[4].x + boxes[4].w / 2 and wv[1].y == boxes[4].y, "over the word, its top edge")
+    -- B on the word labels: back to the sentence labels (refine stays on)
+    assert(p:press("B") == "back" and p.level == "sentence" and p.refine and #p:visible() == 4)
+    pick(p, "sent", 2)
+    assert(pick(p, "word", 7) == "start" and p.start == 7 and p.step == "end")
+    -- a new step starts with sentences, refinement off
+    assert(p.refine == false and p.level == "sentence")
+    assert(label_for(p, "sent", 2) and label_for(p, "sent", 1) == nil, "end labels from S2 on")
+    -- refine the end: S2 offers only the words from the start word on
+    p:refine_to_word(true)
+    assert(pick(p, "sent", 2) == "sentence")
+    wv = p:visible()
+    assert(#wv == 6 and wv[1].word == 7 and wv[6].word == 12, "S2 from the start word: " .. #wv)
+    -- R↑ on the word labels: the sentence labels again, refinement off
+    assert(p:refine_to_word(false) == true and p.level == "sentence" and p.refine == false)
+    assert(p:refine_to_word(false) == false)
+    p:refine_to_word(true)
+    pick(p, "sent", 4)
+    assert(pick(p, "word", 17) == "done" and p.start == 7 and p.stop == 17)
+    assert(p:refine_to_word(true) == false, "done: nothing to refine")
+
+    -- a sentence over the page edge / out of a zoomed view: labels at its
+    -- visible part; a sentence with no visible word gets none
+    local zb = page(20)
+    for i = 1, 5 do zb[i] = false end   -- the first line is off the screen
+    p = H.Pointer.new(sents, zb)
+    assert(label_for(p, "sent", 1) == nil, "S1 has no visible word: no label")
+    assert(label_for(p, "sent", 2) and p:visible()[1].word == 6, "S2 labelled at its first visible word")
+    assert(#H.Pointer.new(sents, page(0)):visible() == 0)
+
+    -- RTL: the start is on the right of the first word, the end on the left
+    -- of the last one
+    p = H.Pointer.new(sents, boxes, { rtl = true })
     local r = p:visible()[1]
-    assert(r.side == "right" and r.x == lines[1].x + lines[1].w)
-    p:press(r.label[1]); p:press(r.label[2])
-    assert(p:visible()[1].side == "left" and p:visible()[1].x == 20)
-    -- no lines: no labels, B closes
-    p = H.Pointer.new({})
+    assert(r.side == "right" and r.x == boxes[1].x + boxes[1].w)
+    pick(p, "sent", 1)
+    r = p:visible()[1]
+    assert(r.side == "left" and r.x == boxes[3].x)
+
+    -- no sentences: no labels, B closes
+    p = H.Pointer.new({}, {})
     assert(#p:visible() == 0 and p:press("up") == "ignored" and p:press("B") == "cancel")
+end
+
+-- 6. A sentence longer than 56 visible words: word labels on a window of 56,
+-- the first ones in the start step, the last ones in the end step.
+do
+    local boxes = page(70, 10)
+    local sents = { { first = 1, last = 70 } }
+    local p = H.Pointer.new(sents, boxes)
+    p:refine_to_word(true)
+    pick(p, "sent", 1)
+    local wv = p:visible()
+    assert(#wv == 56 and wv[1].word == 1 and wv[56].word == 56, "start: the first 56")
+    assert(pick(p, "word", 3) == "start")
+    p:refine_to_word(true)
+    pick(p, "sent", 1)
+    wv = p:visible()
+    assert(#wv == 56 and wv[1].word == 15 and wv[56].word == 70, "end: the last 56, got " .. wv[1].word)
+    assert(pick(p, "word", 70) == "done" and p.start == 3 and p.stop == 70)
 end
 
 print("kopad_hints_test: OK")

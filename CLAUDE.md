@@ -19,7 +19,7 @@ directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, lines from word boxes, the pointer's two
-steps) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
+steps on sentences, the refinement to a word, the 56-word window) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
 over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
@@ -156,7 +156,10 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   and starts no `_dpad_start` repeat. `ov:point_press(sym) == "cancel"` (B
   with nothing typed on the start labels) closes the overlay. Other buttons,
   triggers and sticks take the selection's path; the overlay ignores
-  `step` / `line` / `para` / `action_menu` in mode `point`.
+  `step` / `line` / `para` / `action_menu` / `to_words` / `to_sentences`
+  in mode `point`. The R-stick there (`_rstick`, both input paths) calls
+  `ov:point_refine(dy > 0)` instead of switching the level (TASK-35,
+  PC-022: ↓ = refinement to a word in the current step, ↑ = off).
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
@@ -305,7 +308,7 @@ KOReader modules are required lazily. padnav: context `"wheel"` (top window has
 `_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
 `_wheel_button` / `_wheel_call`; every pad event is consumed there.
 
-### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29)
+### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29, sentences TASK-35)
 No KOReader dependencies; tested by `tests/kopad_hints_test.lua`. Port of the
 Vivaldi-on-the-Deck labels (`~/aparati/steamdeck/vivaldi-deck/ext/hints.js`):
 `M.DIRS` = eight symbols (`up down left right` + `A B X Y`) with anchors in a
@@ -317,21 +320,33 @@ lone item repeats its symbol: `up,up`). Coordinates are snapped to
 1/`M.GRID` of the region, so an indent does not reorder a column. Labels
 never START with `M.BACK` = B (`M.FIRST`), because B with nothing typed is
 back / one word -> at most 7 * 8 = 56 targets, the rest get no label.
-**The line layer is document-independent** (contract with TASK-30's PDF
-adapter): a line is `{ x, y, w, h, first, last }` in SCREEN coordinates, in
-reading order; `first` / `last` are the adapter's word indices, opaque to
-kopad_hints.lua. `M.lines_from_boxes(boxes)` groups word boxes in reading order
-(new line when a word's middle leaves the line's band; nil / false boxes are
-skipped). `M.Pointer.new(lines, {rtl})`: step `start` (labels at the line
-starts: left edge, right in RTL), `press(sym)` -> `prefix` / `unprefix` /
-`start` (step `end`: labels at the line ends, from the start line down) /
-`done` (`self.start`, `self.stop`; stop nil = B = one word) / `cancel` (B on
-the start labels) / `ignored`; `visible()` = the labels to draw (only those
-continuing the typed prefix; `typed`, `side`, anchor `x`, `y`). The EPUB
-adapter is `SelectorOverlay:_point_begin` (paginmapo `sbox` per word, so a
-hyphenated word belongs to the line of its head). The PDF adapter is the same
-method: `PagedOverlay:_point_begin` refreshes the words' screen boxes and
-calls it, so only the lines on the screen get labels.
+**The pointer is document-independent** (TASK-35, PC-022; replaced the line
+labels of TASK-29): `M.Pointer.new(sentences, boxes, {rtl})` with
+`sentences = { {first, last}, ... }` (word indices, reading order) and
+`boxes[i]` = word i's SCREEN box or false (off the screen). Only visible
+words count: a sentence over the page edge / out of a zoomed view is
+labelled at its visible part, one without a visible word gets no label.
+Step `start` (labels left of each sentence's first visible word, right in
+RTL), `press(sym)` -> `prefix` / `unprefix` / `start` (step `end`: labels
+right of the sentences' last visible words, left in RTL, from the start
+sentence down) / `done` (`self.start`, `self.stop` = WORD indices; stop nil
+= B = one word) / `cancel` (B on the start labels) / `ignored`.
+`refine_to_word(on)` (R-stick ↓ / ↑) sets `self.refine` for the current
+step only (reset when the end step begins): a sentence label then returns
+`sentence` and shows level `word` = labels over that sentence's visible
+words (in step `end` from the start word on; side `top`, centred on the
+word's top edge), a word label = start / end on that word, B with nothing
+typed = `back` (the sentence labels of the same step). More than
+`M.MAX_LABELS` (56) words: a window of 56, the first ones in step `start`,
+the last ones in step `end`. `visible()` = the labels to draw (only those
+continuing the typed prefix; `sent`, `word`, `typed`, `side`, anchor `x`,
+`y`, word height `h`). `M.lines_from_boxes(boxes)` (word boxes -> lines
+`{ x, y, w, h, first, last }`) stays as a tested helper; the pointer no
+longer uses it. The adapter is `SelectorOverlay:_point_begin`, the same for
+EPUB and PDF: `_point_sentences()` turns `self.word_to_sent` into the word
+ranges (paginmapo sentences in an EPUB, `pdfwords.sentences` in a PDF), the
+boxes are the words' `sbox`; `PagedOverlay:_point_begin` refreshes the
+screen boxes first, so only what is on the screen gets labels.
 
 ### `vkb.lua` — no on-screen keyboard while a pad is connected
 `main.lua:_install_vkb()` calls `Vkb.install(state_fn)` (state = kopad
@@ -508,14 +523,18 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   (`_is_split_word`, `_resolve_split_fragment`).
 - **`hl`** — the page's saved highlights (`hl_items` / `hl_cur`, opened by Y);
   every arrow steps between them (`_hl_step`, wrapping).
-- **`point`** — point from-to (TASK-29, A tapped): `self.pointer` (kopad_hints.lua)
-  over the lines built by `_point_begin`; `point_press(sym)` feeds it, and on
-  `done` `_point_finish` turns the overlay into `walk` with `ww_anchor` = the
-  start line's first word, `ww_word` = the end line's last word (no end = the
-  first word alone, no anchor). `_draw_point` paints the labels (white pill,
-  D-pad symbols as rounded squares with an arrow, letters as circles, a
-  pressed symbol grey; outside the line when the margin allows, else over
-  it) and, on the end labels, the start word inverted. Status `FROM` / `TO`.
+- **`point`** — point from-to (TASK-29, A tapped; on sentences since TASK-35):
+  `self.pointer` (kopad_hints.lua) over the sentences / word boxes built by
+  `_point_begin`; `point_press(sym)` feeds it, `point_refine(on)` (R-stick)
+  toggles the refinement to a word, and on `done` `_point_finish` turns the
+  overlay into `walk` with `ww_anchor` = the start word (`p.start`),
+  `ww_word` = the end word (`p.stop`; no end = the start word alone, no
+  anchor). `_draw_point` paints the labels (white pill, D-pad symbols as
+  rounded squares with an arrow, letters as circles, a pressed symbol grey;
+  beside the sentence start / end when the margin allows, else over the
+  text; word labels centred on the word's top edge) and, on the end labels,
+  the start word inverted. Status `FROM` / `TO`, plus `WORD` while refined
+  (`FROM WORD` / `TO WORD`; on the word labels `B sentences`).
 
 Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
 document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:

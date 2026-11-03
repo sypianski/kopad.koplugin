@@ -3,8 +3,9 @@ Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
 documents and, through PagedOverlay below (TASK-30), PDF / DjVu pages with a
 text layer, driven by the handlers in padnav.lua. Four modes: sentences
 ("struct", Y + D-pad), words ("walk", A + D-pad), the page's saved
-highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29: pad
-labels at the lines pick the start and the end, then it is a word walk);
+highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 / TASK-35: pad
+labels at the sentences pick the start and the end, R-stick ↓ refines a step
+to a word, then it is a word walk);
 R-stick ↓/↑ switches between sentence and word. The
 arrows move a cursor; while A is held padnav passes range = true and an
 anchor stays where the range began. Without a range the cursor crosses the
@@ -694,21 +695,44 @@ function SelectorOverlay:to_sentences()
 end
 
 ----------------------------------------------------------------------
--- Point from-to (TASK-29)
+-- Point from-to (TASK-29, on sentences since TASK-35 / PC-022)
 ----------------------------------------------------------------------
--- EPUB adapter of kopad_hints.lua: the lines come from the word boxes of
--- paginmapo (self.words, reading order), and a line's first / last are
--- indices into self.words. kopad_hints.lua itself knows no document (TASK-30
--- feeds it PDF lines the same way).
+-- Adapter of kopad_hints.lua, the same for EPUB and PDF: the word boxes are
+-- the screen boxes of self.words (reading order; nil off the screen), the
+-- sentences are word-index ranges built from self.word_to_sent (paginmapo
+-- in an EPUB, pdfwords.sentences in a PDF). Only the words on the page are
+-- in self.words, so a sentence over the page edge is labelled at its
+-- visible part. kopad_hints.lua itself knows no document.
 
--- Labels at the line starts of the page. False when the page has no text.
+-- The page's sentences as { first, last } word indices, in reading order.
+function SelectorOverlay:_point_sentences()
+    local by, order = {}, {}
+    for wi = 1, #self.words do
+        local si = self.word_to_sent and self.word_to_sent[wi]
+        if si then
+            local s = by[si]
+            if not s then
+                s = { first = wi, last = wi, si = si }
+                by[si] = s
+                order[#order + 1] = s
+            end
+            if wi < s.first then s.first = wi end
+            if wi > s.last then s.last = wi end
+        end
+    end
+    table.sort(order, function(a, b) return a.si < b.si end)
+    return order
+end
+
+-- Labels at the sentence starts of the page. False when the page has no
+-- text (no sentence with a word on the screen).
 function SelectorOverlay:_point_begin()
     local boxes = {}
     for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
-    local lines = Hints.lines_from_boxes(boxes)
-    if #lines == 0 then return false end
+    local pointer = Hints.Pointer.new(self:_point_sentences(), boxes, { rtl = self.is_rtl })
+    if #pointer:visible() == 0 then return false end
     self.mode = "point"
-    self.pointer = Hints.Pointer.new(lines, { rtl = self.is_rtl })
+    self.pointer = pointer
     self.ww_word, self.ww_anchor = nil, nil
     return true
 end
@@ -725,19 +749,27 @@ function SelectorOverlay:point_press(sym)
     return res
 end
 
--- The chosen lines as a word walk: anchor = the first word of the start
--- line, cursor = the last word of the end line (A + arrows move the cursor,
--- A tapped = the action menu); no end = the first word alone.
+-- R-stick ↓ (on) / ↑ (off) in the labels: refinement to the word in the
+-- current step (PC-022). True when the labels or the status line changed.
+function SelectorOverlay:point_refine(on)
+    local p = self.pointer
+    if self.mode ~= "point" or not p then return false end
+    local changed = p:refine_to_word(on)
+    if changed then self:_refresh() end
+    return changed
+end
+
+-- The chosen words as a word walk: anchor = the start word (a sentence's
+-- first word, or the refined word), cursor = the end word (A + arrows move
+-- the cursor, A tapped = the action menu); no end = the start word alone.
 function SelectorOverlay:_point_finish()
     local p = self.pointer
     self.pointer = nil
     self.mode = "walk"
-    local L0 = p.lines[p.start]
-    local w0 = L0 and self.words[L0.first]
+    local w0 = p.start and self.words[p.start]
     local first = w0 and self:_ww_word_from_xp(w0.xp0)
     if not first then return end
-    local L1 = p.stop and p.lines[p.stop]
-    local w1 = L1 and self.words[L1.last]
+    local w1 = p.stop and self.words[p.stop]
     local last = w1 and w1 ~= w0 and self:_ww_word_from_xp(w1.xp0)
     if last then
         self.ww_anchor, self.ww_word = first, last
@@ -1179,10 +1211,11 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     end
 end
 
--- Point from-to: the labels (a pill with two badges per line, next to the
--- line start / end, over the text when the margin is too narrow), and in
--- the second step the start word. D-pad symbols are rounded squares with an
--- arrow, letters are circles; a symbol already pressed is grey.
+-- Point from-to: the labels (a pill with two badges per target: next to the
+-- sentence start / end, over the text when the margin is too narrow; on the
+-- word labels centred on the top edge of the word), and in the second step
+-- the start word. D-pad symbols are rounded squares with an arrow, letters
+-- are circles; a symbol already pressed is grey.
 local POINT_GLYPHS = {
     up = "\xE2\x86\x91", down = "\xE2\x86\x93", left = "\xE2\x86\x90", right = "\xE2\x86\x92",
     A = "A", B = "B", X = "X", Y = "Y",
@@ -1192,8 +1225,7 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
     local p = self.pointer
     if not p then return end
     if p.step == "end" and p.start then
-        local L = p.lines[p.start]
-        local w = L and self.words[L.first]
+        local w = self.words[p.start]
         local s = w and w.sbox
         if s then invert_rounded_rect(bb, ox, oy, s.x, s.y, s.w, s.h) end
     end
@@ -1201,10 +1233,12 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
     local border = math.max(1, Screen:scaleBySize(1))
     local gap = Screen:scaleBySize(3)
     for _, v in ipairs(p:visible()) do
-        local L = p.lines[v.line]
-        local d = math.max(Screen:scaleBySize(14), math.min(L.h, Screen:scaleBySize(22)))
+        local d = math.max(Screen:scaleBySize(14), math.min(v.h or 0, Screen:scaleBySize(22)))
         local pw, ph = 2 * d + 3 * gap, d + 2 * gap
-        local x = v.side == "left" and (v.x - pw - gap) or (v.x + gap)
+        local x
+        if v.side == "left" then x = v.x - pw - gap
+        elseif v.side == "right" then x = v.x + gap
+        else x = math.floor(v.x - pw / 2) end
         x = math.max(0, math.min(sw - pw, x))
         local y = math.max(0, math.min(sh - ph, math.floor(v.y - ph / 2)))
         bb:paintRect(ox + x, oy + y, pw, ph, Blitbuffer.COLOR_WHITE)
@@ -1235,11 +1269,20 @@ function SelectorOverlay:_status_text(short)
     local keys = short and " \xC2\xB7 A menu \xC2\xB7 B close"
         or " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
     if self.mode == "point" then
+        -- PC-022: FROM / TO = the step, WORD = refined to the word (R-stick
+        -- down on, up off); on the word labels B goes back to the sentences
         local p = self.pointer
-        if p and p.step == "end" then
-            return "TO" .. (short and "" or " \xC2\xB7 label = end") .. " \xC2\xB7 B one word"
+        local step = (p and p.step == "end") and "TO" or "FROM"
+        if p and p.level == "word" then
+            return step .. " WORD" .. (short and "" or " \xC2\xB7 label = word \xC2\xB7 R\xE2\x86\x91 sentences")
+                .. " \xC2\xB7 B sentences"
         end
-        return "FROM" .. (short and "" or " \xC2\xB7 label = start") .. " \xC2\xB7 B close"
+        local b = step == "TO" and " \xC2\xB7 B one word" or " \xC2\xB7 B close"
+        if p and p.refine then
+            return step .. " WORD" .. (short and "" or " \xC2\xB7 label = sentence \xC2\xB7 R\xE2\x86\x91 off") .. b
+        end
+        return step .. (short and "" or (step == "TO" and " \xC2\xB7 label = sentence end"
+            or " \xC2\xB7 label = sentence") .. " \xC2\xB7 R\xE2\x86\x93 word") .. b
     end
     if self.mode == "walk" then
         return (self.ww_anchor and "WORDS" or "WORD") .. keys
@@ -1851,7 +1894,7 @@ function PagedOverlay:_note_saved(a, note)
     self:_highlights_changed()
 end
 
--- Point from-to: the labels go at the lines on the screen now.
+-- Point from-to: the labels go at the sentences on the screen now.
 function PagedOverlay:_point_begin()
     self:_screen_boxes()
     return SelectorOverlay._point_begin(self)
@@ -1984,8 +2027,8 @@ function Selector:_open_walk(from_end)
     return true
 end
 
--- Point from-to (A tapped while reading, TASK-29): labels at the line
--- starts. False, with nothing shown, when the page has no text.
+-- Point from-to (A tapped while reading, TASK-29 / TASK-35): labels at the
+-- sentence starts. False, with nothing shown, when the page has no text.
 function Selector:_open_point()
     local ov, why = self:_new_overlay()
     if not ov then return Selector._refused(why) end

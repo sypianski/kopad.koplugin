@@ -57,7 +57,7 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **D-pad** | next page (→ / ↓) / previous page (← / ↑; in right-to-left books ← / → follow the screen) |
 | hold **A** + D-pad | select words: → / ↓ start at the first word of the page, ← / ↑ at the last one |
 | hold **Y** + D-pad | select sentences: → / ↓ start at the first sentence of the page, ← / ↑ at the last one |
-| tap **A** | point from-to: labels next to the lines pick where the selection starts and ends (see below) |
+| tap **A** | point from-to: labels at the sentences pick where the selection starts and ends, R-stick ↓ refines to a word (see below) |
 | tap **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
 | **R-stick** | the quick-action wheel (see below) |
 | **L-stick** | nothing |
@@ -152,9 +152,11 @@ Touch works too: tap a sector to run it, the centre for the next page, the page 
 
 ### Point from-to (tap A)
 
-A tap on **A** while reading puts a small label next to the start of every line on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles). Press the two symbols of a line's label and that line's first word is the start of the selection; after the first symbol only the labels starting with it stay on screen. The labels then move to the ends of the lines (from the start line down): press one to end the selection at that line's last word, or **B** to keep just the one start word. From there it is the ordinary word selection: hold **A** and use the arrows to fine-tune the range, tap **A** for the action menu.
+A tap on **A** while reading puts a small label next to the start of every sentence on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles). Press the two symbols of a sentence's label and its first word is the start of the selection; after the first symbol only the labels starting with it stay on screen. The labels then move to the ends of the sentences (from the start sentence down): press one to end the selection at that sentence's last word, or **B** to keep just the one start word. A whole sentence or a run of sentences is four presses. From there it is the ordinary word selection: hold **A** and use the arrows to fine-tune the range, tap **A** for the action menu.
 
-The symbols follow the place of the line, like the link labels of the Vivaldi setup on the Deck: lines near the top start with ↑ or **Y**, lines at the bottom with ↓ or **A**, the middle with ←, → or **X**, and neighbouring lines share their first symbol. Every label is two presses, even on a short page (a lone line in its group repeats the symbol, e.g. ↑↑). No label starts with **B**: **B** before any symbol closes the labels (on the start labels) or means "one word" (on the end labels); after a first symbol it drops that symbol, unless a label goes on with **B**. That leaves room for 56 lines on a page; lines beyond that (very small fonts) get no label. Only on KOReader 2026.07+ (`Gamepad*` events); on older patched builds a tap on **A** still opens the sentences.
+To start or end on a word inside a sentence, push the **R-stick ↓** in that step (the status bar says `FROM WORD` / `TO WORD`): the next sentence label you press shows labels over the words of that sentence only, and a word label puts the start / end on that word. **B** on the word labels goes back to the sentence labels, **R-stick ↑** turns the refinement off. It holds for one step: the end step starts with sentences again. A sentence that runs over the page edge is labelled at its part on the screen (in a zoomed PDF: at its part in the view). A sentence with more than 56 words on the screen gets word labels on 56 of them: the first 56 for the start, the last 56 for the end (the rest is reached with **A** + arrows afterwards).
+
+The symbols follow the place of the target, like the link labels of the Vivaldi setup on the Deck: targets near the top start with ↑ or **Y**, those at the bottom with ↓ or **A**, the middle with ←, → or **X**, and neighbours share their first symbol. Every label is two presses, even on a short page (a lone target in its group repeats the symbol, e.g. ↑↑). No label starts with **B**: **B** before any symbol closes the labels (on the start labels), means "one word" (on the end labels) or goes back to the sentences (on word labels); after a first symbol it drops that symbol, unless a label goes on with **B**. That leaves room for 56 sentences on a page; sentences beyond that get no label. Only on KOReader 2026.07+ (`Gamepad*` events); on older patched builds a tap on **A** still opens the sentences.
 
 ### Selection mode (sentences and words)
 
@@ -262,7 +264,7 @@ The selection works in EPUBs and, on pages with a text layer, in PDF / DjVu (wor
 | **hold B + D-pad ← / →** | fit the whole page / fit the text width; tap **B** = back |
 | **hold A + D-pad** | select words, as in an EPUB: → / ↓ from the first word on the screen, ← / ↑ from the last |
 | **hold Y + D-pad** | select sentences (the same) |
-| **tap A** | point from-to: labels at the lines on the screen |
+| **tap A** | point from-to: labels at the sentences on the screen (R-stick ↓ = to a word) |
 | **tap Y** | the page's highlights, as in an EPUB: the D-pad steps between them (the view pans to each), **X** removes one; none = a message |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
@@ -278,7 +280,7 @@ The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, range
 
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
-- **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position, the lines of a page from word boxes, and the two-step pointer (start labels, end labels, B). Knows no document type, so the PDF selection can use it as it is.
+- **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position and the two-step pointer on sentences (start labels, end labels, the refinement to a word, B). Knows no document type: EPUB and PDF hand it word boxes and sentences as word-index ranges.
 - **selector.lua** — the selection overlay: sentence, word, highlight and point from-to modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map"); in PDF / DjVu its `PagedOverlay` takes them from `pdfwords.lua`.
 - **pdfwords.lua** — pure word source for PDF / DjVu: KOReader's `getTextBoxes` lines turned into the overlay's word list (page boxes, sentence ends, lines), sentences grouped by `paginmapo.lua`, words in reading order.
 - **pdfpara.lua** — pure paragraph detection for PDF / DjVu pages from the text-line rectangles (one or two columns; line pitch, first-line indent, short last line, list markers). Gives the paragraph numbers behind **LT / RT** and ↑ / ↓ in a PDF.
@@ -329,7 +331,7 @@ lua tests/pdfwords_test.lua
 lua tests/pdfpara_test.lua
 ```
 
-`selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and line moves, page crossing, ranges, level switches, highlights and point from-to. `kopad_hints_test.lua` checks the labels of point from-to (`kopad_hints.lua`): placement by position, two symbols, unique, at most 56, the prefix filter, **B**, the lines from word boxes and the pointer's two steps.
+`selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and line moves, page crossing, ranges, level switches, highlights and point from-to. `kopad_hints_test.lua` checks the labels of point from-to (`kopad_hints.lua`): placement by position, two symbols, unique, at most 56, the prefix filter, **B**, the lines from word boxes and the pointer's two steps on sentences, with the refinement to a word and the 56-word window.
 
 ## How this was made
 

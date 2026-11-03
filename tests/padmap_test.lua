@@ -1181,6 +1181,10 @@ do
                 if presses == 4 then self.mode = "walk"; return "done" end
                 return presses == 2 and "start" or "prefix"
             end
+            function ov:point_refine(on)
+                log.ov[#log.ov + 1] = "refine(" .. tostring(on) .. ")"
+                return true
+            end
             return true
         end
         selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return false end
@@ -1216,6 +1220,16 @@ do
     up(n, 0)
     assert(log.sel[1] == "_open_point" and n:_context() == "selection" and #log.ov == 0,
         "A tap = point from-to, no menu")
+    -- R-stick ↓ / ↑ in the labels: the refinement to a word (TASK-35,
+    -- PC-022), not the level switch; ←/→ nothing. Gamepad* path and legacy keys.
+    -- (T.now ticks one second per call: no stick bounce)
+    assert(n:onGamepadAxisMotion({ axis = 3, value = 20000 }) == true)
+    assert(n:onGamepadAxisMotion({ axis = 3, value = -20000 }) == true)
+    assert(n:onGamepadAxisMotion({ axis = 2, value = 20000 }) == true)
+    assert(n:onKPRStickDown() == true and n:onKPRStickUp() == true and n:onKPRStickLeft() == true)
+    assert(table.concat(log.ov, " ") == "refine(true) refine(false) refine(true) refine(false)",
+        "R-stick in the labels = refine: " .. table.concat(log.ov, " "))
+    log.ov = {}
     -- the labels: D-pad and letters are symbols on the press; a held D-pad
     -- does not repeat, A / Y / B start no hold (their release does nothing)
     assert(down(n, 12) == true and #sched == 0, "no D-pad repeat on the labels"); up(n, 12)

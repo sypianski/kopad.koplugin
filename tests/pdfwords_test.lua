@@ -278,27 +278,49 @@ sel = fresh({ reflow = true })
 ok, why = sel:_open_walk(false)
 assert(ok == false and why == "reflow" and claims == 0, "reflow")
 
--- point from-to on a PDF page: lines from the words on the screen
-local function label_of(o, line)
-    for _, v in ipairs(o.pointer:visible()) do if v.line == line then return v.label end end
+-- point from-to on a PDF page (TASK-35): labels at the sentences, from the
+-- words on the screen; R-stick ↓ refines a step to a word
+local function label_of(o, sent, word)
+    for _, v in ipairs(o.pointer:visible()) do
+        if (sent and v.sent == sent) or (word and v.word == word) then return v.label end
+    end
 end
+local function press(o, l) assert(l, "a label"); o:point_press(l[1]); return o:point_press(l[2]) end
 sel = fresh({ zoom = 1, vx = 0, vy = 0 })
 assert(sel:_open_point() == true)
 ov = sel.overlay
-assert(ov.mode == "point" and #ov.pointer.lines == 2 and ov.pointer.lines[2].first == 4, "two lines")
-assert(ov.words[ov.pointer.lines[1].first].sbox.x == 10 + 100, "labels at screen boxes")
+local vis = ov.pointer:visible()
+assert(ov.mode == "point" and #vis == 2 and vis[2].word == 4, "two sentences, S2 at Delta")
+assert(vis[1].x == ov.words[1].sbox.x and ov.words[1].sbox.x == 10 + 100, "labels at screen boxes")
 painted = {}
 ov:paintTo(bb, 0, 0)
 local l = label_of(ov, 1)
 assert(ov:point_press(l[1]) == "prefix" and ov:point_press(l[2]) == "start")
-l = label_of(ov, 2)
-ov:point_press(l[1])
-assert(ov:point_press(l[2]) == "done" and ov.mode == "walk")
-assert(text(ov) == "T:Alpha beta gamma. Delta eps zeta", "start line .. end line: " .. tostring(text(ov)))
+assert(press(ov, label_of(ov, 2)) == "done" and ov.mode == "walk")
+assert(text(ov) == "T:Alpha beta gamma. Delta eps zeta", "S1 start .. S2 end: " .. tostring(text(ov)))
 sel:_close()
--- zoomed: only the lines on the screen get labels (line 1 of a view scrolled down)
+-- refined: start on "beta", end on "eps"
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+sel:_open_point(); ov = sel.overlay
+assert(ov:point_refine(true) == true and ov:_status_text():match("^FROM WORD"))
+assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 3, "S1's three words")
+assert(press(ov, label_of(ov, nil, 2)) == "start" and ov:_status_text():match("^TO "), ov:_status_text())
+ov:point_refine(true)
+assert(press(ov, label_of(ov, 2)) == "sentence")
+assert(press(ov, label_of(ov, nil, 5)) == "done")
+assert(text(ov) == "T:beta gamma. Delta eps", "beta .. eps: " .. tostring(text(ov)))
+sel:_close()
+-- page 2: the sentence begun on page 1 is labelled at its visible part
+sel = fresh({ page = 2, zoom = 1, vx = 0, vy = 0 })
+sel:_open_point(); ov = sel.overlay
+vis = ov.pointer:visible()
+assert(#vis == 2 and vis[1].word == 1 and ov.sentences[1]._extends_before, "eta theta. labelled at eta")
+sel:_close()
+-- zoomed: only the sentences on the screen get labels (a view scrolled down
+-- to line 2: S1 is off the screen)
 sel = fresh({ vy = 290 })
-assert(sel:_open_point() == true and #sel.overlay.pointer.lines == 1, "only visible lines")
+assert(sel:_open_point() == true and #sel.overlay.pointer:visible() == 1, "only visible sentences")
+assert(sel.overlay.pointer:visible()[1].sent == 2)
 sel:_close()
 assert(claims == 0)
 

@@ -301,21 +301,28 @@ assert(claims == 0)
 sel = fresh(3, { { pos0 = "w2", pos1 = "w3e" } })
 assert(sel:_open_highlights() == false and sel.overlay == nil and claims == 0)
 
--- 10. Point from-to (A tapped, TASK-29): labels at the two lines of the page,
--- start + end = a word range of whole lines, B = one word, then the usual
--- word walk. The labels come from kopad_hints.lua (tests/kopad_hints_test.lua).
-local function label_of(ov, line)
-    for _, v in ipairs(ov.pointer:visible()) do if v.line == line then return v.label end end
+-- 10. Point from-to (A tapped, TASK-29, on sentences since TASK-35 /
+-- PC-022): labels at the sentences of the page (page 1: S1 = t1-t4, S2 =
+-- t5-t6 visible), start + end = a word range of whole sentences, R-stick ↓
+-- refines a step to a word, B = one word, then the usual word walk. The
+-- labels come from kopad_hints.lua (tests/kopad_hints_test.lua).
+local function label_of(ov, sent, word)
+    for _, v in ipairs(ov.pointer:visible()) do
+        if (sent and v.sent == sent) or (word and v.word == word) then return v.label end
+    end
 end
+local function press(ov, l) assert(l, "a label"); ov:point_press(l[1]); return ov:point_press(l[2]) end
 sel, doc = fresh()
 assert(sel:_open_point() == true and claims == 1)
 ov = sel.overlay
-assert(ov.mode == "point" and #ov.pointer.lines == 2, "two lines on the page")
-assert(ov.pointer.lines[1].first == 1 and ov.pointer.lines[1].last == 3)
-assert(ov:_status_text():match("^FROM"), ov:_status_text())
+local vis = ov.pointer:visible()
+assert(ov.mode == "point" and #vis == 2, "two sentences on the page")
+assert(vis[1].word == 1 and vis[2].word == 5 and vis[2].x == doc:box(5).x, "at the sentence starts")
+assert(ov:_status_text():match("^FROM") and ov:_status_text():find("R\xE2\x86\x93 word", 1, true), ov:_status_text())
+assert(ov:_status_text(true) == "FROM \xC2\xB7 B close", ov:_status_text(true))
 assert(ov:_get_selection() == nil, "no selection while labelling")
-ov:step(1); ov:line(1); ov:para(1); ov:action_menu()
-assert(ov.mode == "point" and doc.page == 1, "arrows / menu do nothing in the labels")
+ov:step(1); ov:line(1); ov:para(1); ov:action_menu(); ov:to_words(); ov:to_sentences()
+assert(ov.mode == "point" and doc.page == 1, "arrows / menu / levels do nothing in the labels")
 -- painting the labels: a smoke test with a recording blitbuffer
 local TW = require("ui/widget/textwidget")
 function TW:new(o) return setmetatable(o or {}, { __index = { getSize = function() return { w = 8, h = 10 } end,
@@ -330,28 +337,50 @@ local l = label_of(ov, 1)
 assert(ov:point_press(l[1]) == "prefix" and ov:point_press(l[2]) == "start")
 paint()
 assert(painted.invertRect, "end labels: the start word inverted")
-assert(ov:_status_text():match("^TO") and #ov.pointer:visible() == 2, "end labels: lines 1 and 2")
-l = label_of(ov, 2)
-ov:point_press(l[1])
-assert(ov:point_press(l[2]) == "done")
-assert(ov.mode == "walk" and ov.pointer == nil and text(ov) == "t1 t2 t3 t4 t5 t6", "line 1 start .. line 2 end")
+vis = ov.pointer:visible()
+assert(ov:_status_text():match("^TO") and #vis == 2 and vis[1].word == 4 and vis[2].word == 6,
+    "end labels: at the ends of S1 and S2")
+assert(press(ov, label_of(ov, 2)) == "done")
+assert(ov.mode == "walk" and ov.pointer == nil and text(ov) == "t1 t2 t3 t4 t5 t6", "S1 start .. S2 end")
 -- then the usual walk: A + arrows move the end, the anchor stays
 ov:step(-1, true); assert(text(ov) == "t1 t2 t3 t4 t5", "A + ← shrinks from the end")
 sel:_close()
--- B in the end step = one word (the first of the start line)
-sel, doc = fresh(2)
-sel:_open_point(); ov = sel.overlay
-l = label_of(ov, 2)
-ov:point_press(l[1]); ov:point_press(l[2])
-assert(ov:point_press("B") == "done" and ov.mode == "walk" and ov.ww_anchor == nil and text(ov) == "t10",
-    "B = one word: " .. tostring(text(ov)))
-sel:_close()
--- the start line as its own end: that line
+-- one sentence as start and end: that sentence
 sel, doc = fresh()
 sel:_open_point(); ov = sel.overlay
-l = label_of(ov, 2); ov:point_press(l[1]); ov:point_press(l[2])
-l = label_of(ov, 2); ov:point_press(l[1]); ov:point_press(l[2])
-assert(text(ov) == "t4 t5 t6", "one line: " .. tostring(text(ov)))
+press(ov, label_of(ov, 1)); press(ov, label_of(ov, 1))
+assert(text(ov) == "t1 t2 t3 t4", "one sentence: " .. tostring(text(ov)))
+sel:_close()
+-- page 2: S2 (begun on page 1) labelled at its visible part t7; B in the end
+-- step = one word
+sel, doc = fresh(2)
+sel:_open_point(); ov = sel.overlay
+vis = ov.pointer:visible()
+assert(#vis == 3 and vis[1].word == 1 and ov.words[1].xp0 == "w7", "S2's visible part: t7")
+press(ov, label_of(ov, 2))
+assert(ov:point_press("B") == "done" and ov.mode == "walk" and ov.ww_anchor == nil and text(ov) == "t9",
+    "B = one word: " .. tostring(text(ov)))
+sel:_close()
+-- refinement (R-stick ↓): start on t2, the end refined to t5; B on the word
+-- labels goes back to the sentences, R-stick ↑ turns it off
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+assert(ov:point_refine(true) == true and ov:_status_text():match("^FROM WORD"), ov:_status_text())
+assert(ov:point_refine(true) == false, "already on")
+assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 4, "S1's four words")
+assert(ov:_status_text():match("^FROM WORD") and ov:_status_text():find("B sentences", 1, true))
+paint()
+assert(painted.paintBorder, "word labels painted")
+assert(ov:point_press("B") == "back" and #ov.pointer:visible() == 2, "B: the sentence labels again")
+press(ov, label_of(ov, 1))
+assert(press(ov, label_of(ov, nil, 2)) == "start" and ov:_status_text():match("^TO "), "start on t2")
+ov:point_refine(true)
+assert(press(ov, label_of(ov, 1)) == "sentence")
+assert(#ov.pointer:visible() == 3, "S1 from the start word: t2 t3 t4")
+assert(ov:point_refine(false) == true and ov.pointer.level == "sentence", "R↑: sentences")
+ov:point_refine(true)
+press(ov, label_of(ov, 2))
+assert(press(ov, label_of(ov, nil, 5)) == "done" and text(ov) == "t2 t3 t4 t5", "t2 .. t5: " .. tostring(text(ov)))
 sel:_close()
 -- B in the start step: cancel (padnav closes the overlay)
 sel = fresh()
