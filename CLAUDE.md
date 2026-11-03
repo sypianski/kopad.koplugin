@@ -117,12 +117,19 @@ delegate to overlay methods (`step` / `line` for the arrows, `to_words` /
 flip horizontal directions via `_is_rtl()` (in `_sel_move`, once).
 
 **Holds (TASK-16, Gamepad* path only).** `onGamepadButtonUp` (relayed by
-main.lua, remapped through padmap like the press) ends three holds:
-- **A**: `_press_a` sets `_a_down`; while it is set `_sel_move` passes
-  `range = true` (the overlay keeps an anchor) and marks `_a_moved`.
-  `_release_a` opens the action menu only for a tap (no arrow, and not the A
-  press that opened the selection: `_a_opened`). The legacy `Press` key goes
-  to `onKPConfirm` (menu on the press).
+main.lua, remapped through padmap like the press) ends four holds. The rule
+(TASK-28): a letter held + D-pad = a mode, a tapped letter = its action, so
+A and Y act on the RELEASE, and only when no D-pad came in between.
+- **A**: `_press_a` sets `_a_down` (and `_a_reading` when pressed while
+  reading); nothing happens on the press. While it is set, `_dpad` opens the
+  words (reading; `_a_opened`) and `_sel_move` passes `range = true` (the
+  overlay keeps an anchor) and marks `_a_moved`. `_release_a` acts only for a
+  tap: reading = sentences (until TASK-29), selection = action menu. The
+  legacy `Press` key goes to `onKPConfirm` (sentences / menu on the press).
+- **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
+  `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
+  `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
+  `onKPMenu` on the press.
 - **X**: `_button_down` wraps `_button_dispatch`; a press that arms `_x_mode`
   records its role in `_x_hold`, and its release clears the modifier.
   `_x_combo` keeps the modifier armed while `_x_hold` is set. A trigger acting
@@ -131,8 +138,10 @@ main.lua, remapped through padmap like the press) ends three holds:
 - **D-pad**: in an EPUB (reading / selection) `_button_dispatch` calls the
   `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
   step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
-  other than `selection`, or `DPAD_REPEAT_MAX`. X combos are not repeated.
-  The interval shrinks after `DPAD_ACCEL_AFTER` repeats (`dpad_interval`,
+  other than `selection`, or `DPAD_REPEAT_MAX`. X combos, page turns and the
+  press that opened the selection are not repeated. While reading without a
+  held letter `_dpad` turns the page (`GotoViewRel`, ←/→ mirrored for RTL),
+  on the legacy key path too. The interval shrinks after `DPAD_ACCEL_AFTER` repeats (`dpad_interval`,
   TASK-25) down to `DPAD_REPEAT_MIN_S`.
 
 In the selection LB / RB close it and turn the page (`_turn_page`, in

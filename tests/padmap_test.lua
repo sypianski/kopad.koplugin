@@ -807,7 +807,9 @@ do
     local n, log, ui = reader("epub")
     set_stack(ui, { toast = true })
     assert(n:_context() == "reading")
-    assert(n:onGamepadButtonDown({ button = 0 }) == true and log.selector[1] == "_open", "EPUB: A opens the selector")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true, "EPUB: A consumed")
+    n:onGamepadButtonUp({ button = 0 })
+    assert(log.selector[1] == "_open", "EPUB: A tapped opens the selector")
     -- malformed axis events pass without an error (TASK-10)
     for _, a in ipairs({ 1, 3, 4, 5 }) do
         assert(n:onGamepadAxisMotion({ axis = a, value = "x" }) == false, "non-numeric value on axis " .. a)
@@ -1081,7 +1083,10 @@ do
             selector.overlay = ov
             set_stack(ui, ov)
         end
-        selector._open = function() log.sel[#log.sel + 1] = "_open"; show("struct") end
+        selector._open = function(_, from_end)
+            log.sel[#log.sel + 1] = "_open" .. (from_end ~= nil and (":" .. tostring(from_end)) or "")
+            show("struct")
+        end
         selector._open_walk = function(_, from_end) log.sel[#log.sel + 1] = "_open_walk:" .. tostring(from_end); show("walk") end
         selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return false end
         selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
@@ -1110,10 +1115,12 @@ do
     end
     assert(#log.events == 0 and #log.sel == 0 and #log.ov == 0, "reading: sticks move nothing")
 
-    -- A opens the sentences; its own release opens no menu
-    assert(down(n, 0) == true and log.sel[1] == "_open" and n:_context() == "selection")
+    -- A tapped while reading opens the sentences on the release (TASK-28),
+    -- and that release opens no menu
+    assert(down(n, 0) == true and #log.sel == 0, "reading: nothing on the A press")
     up(n, 0)
-    assert(#log.ov == 0, "the A that opened the selection is not a tap")
+    assert(log.sel[1] == "_open" and n:_context() == "selection" and #log.ov == 0,
+        "A tap = sentences, no menu")
     -- a tap (down + up, no arrow) = the action menu, on the release
     down(n, 0); assert(#log.ov == 0, "nothing on the press")
     up(n, 0); assert(log.ov[1] == "menu()", "tap = menu")
@@ -1222,16 +1229,46 @@ do
     assert(#log.events == 1 and log.events[1] == "GotoViewRel:1", "reading: held RT = one page")
     T.now = function() clock = clock + 1; return clock end
 
-    -- D-pad while reading: the word level, ↓/→ from the first word, ↑/← from the last
+    -- D-pad while reading (TASK-28): pages, →/↓ next, ←/↑ previous, no repeat
     n, log, sel = epub()
-    down(n, 12); assert(log.sel[1] == "_open_walk:false" and #log.ov == 0, "D-pad ↓ only opens")
-    up(n, 12); sel:_close()
-    down(n, 13); assert(log.sel[3] == "_open_walk:true", "D-pad ← from the last word")
-    up(n, 13)
-
-    -- Y while reading: the page's highlights; none = a message
+    for btn, want in pairs({ [14] = "GotoViewRel:1", [12] = "GotoViewRel:1",
+                             [13] = "GotoViewRel:-1", [11] = "GotoViewRel:-1" }) do
+        log.events = {}
+        assert(down(n, btn) == true and log.events[1] == want and #log.sel == 0,
+            "D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
+        assert(#sched == 0, "a page turn does not repeat")
+        up(n, btn)
+    end
+    -- A held + D-pad = the words, →/↓ from the first word, ←/↑ from the last;
+    -- the release of that A is no tap, A still held + D-pad = a range
+    log.events = {}
+    down(n, 0); down(n, 14)
+    assert(log.sel[1] == "_open_walk:false" and #log.ov == 0 and #log.events == 0, "A + → = words, first")
+    assert(#sched == 0, "the press that opened the words does not repeat")
+    up(n, 14); down(n, 14); up(n, 14)
+    assert(log.ov[1] == "step(1,true)", "A still held: a range")
+    up(n, 0); assert(#log.ov == 1, "no menu after A + D-pad")
+    sel:_close()
+    down(n, 0); down(n, 13); up(n, 13); up(n, 0)
+    assert(log.sel[3] == "_open_walk:true", "A + ← = words, last")
+    sel:_close()
+    -- Y held + D-pad = the sentences; Y's release then shows no highlights
+    down(n, 3); down(n, 12); up(n, 12); up(n, 3)
+    assert(log.sel[5] == "_open:false" and #log.text == 0, "Y + ↓ = sentences, first: " .. tostring(log.sel[5]))
+    sel:_close()
+    down(n, 3); down(n, 11); up(n, 11); up(n, 3)
+    assert(log.sel[7] == "_open:true", "Y + ↑ = sentences, last")
+    sel:_close()
+    assert(#log.events == 0, "no page turned by a combo")
+    -- legacy key path (no release): the D-pad turns pages too
     n, log = epub()
-    assert(down(n, 3) == true and log.sel[1] == "_open_highlights" and log.text[1] == "No highlights on this page")
+    n:onKPRight2(); assert(log.events[1] == "GotoViewRel:1" and #log.sel == 0, "legacy D-pad = page")
+
+    -- Y tapped while reading: the page's highlights, on the release; none = a message
+    n, log = epub()
+    assert(down(n, 3) == true and #log.sel == 0, "nothing on the Y press")
+    up(n, 3)
+    assert(log.sel[1] == "_open_highlights" and log.text[1] == "No highlights on this page")
     -- browsing highlights: X removing the last one closes the overlay
     n, log, sel = epub()
     sel._open_highlights = function()
@@ -1239,7 +1276,7 @@ do
         sel._open(); sel.overlay.mode, sel.overlay.hl_cur = "hl", 1
         return true
     end
-    down(n, 3)
+    down(n, 3); up(n, 3)
     assert(sel.overlay and sel.overlay.mode == "hl" and #log.text == 0)
     down(n, 2)
     assert(sel.overlay == nil and log.sel[#log.sel] == "_close", "last highlight removed -> closed")
@@ -1252,7 +1289,7 @@ do
     assert(#sched == 0 and #log.sel == 0, "a combo opens nothing and does not repeat")
     up(n, 11); up(n, 12); up(n, 2)
     assert(not n._x_mode, "release ends the modifier")
-    down(n, 12); assert(log.sel[1] == "_open_walk:false", "D-pad without X = words again")
+    down(n, 12); assert(log.events[3] == "GotoViewRel:1" and #log.sel == 0, "D-pad without X = page again")
     -- legacy key path: X is a latch, one combo spends it
     n, log = epub()
     n:onKPExtend(); assert(n._x_mode)

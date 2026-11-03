@@ -212,6 +212,12 @@ ov:line(-1); assert(doc.page == 1 and text(ov) == "t6", "↑ on the first line =
 assert(ov:_status_text():match("^WORD ") and not ov:_status_text():find("%d"))
 sel:_close()
 
+-- 5a. Y + D-pad ↑/← (TASK-28): the sentences from the page's last one
+sel, doc = fresh()
+sel:_open(true); ov = sel.overlay
+assert(ov.mode == "struct" and ov.sel_cur == 2 and text(ov) == "t5 t6 t7 t8", "from_end = last sentence: " .. tostring(text(ov)))
+sel:_close()
+
 -- 5b. LT / RT in words (TASK-25): the first word of the next / this or the
 -- previous paragraph, over page edges; a paragraph that began on the
 -- previous page is reached at its real start

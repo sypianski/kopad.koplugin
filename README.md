@@ -54,13 +54,17 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **RB** / **LB** | next / previous page (**X** + RB = bookmarks, **X** + LB = table of contents) |
 | **Select** | top menu |
 | **Start** | bottom menu (font, margins, contrast); **Start** again closes it |
-| **A** | select sentences, starting at the first sentence of the page |
-| **D-pad** | select words: ↓ / → start at the first word of the page, ↑ / ← at the last one |
-| **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
+| **D-pad** | next page (→ / ↓) / previous page (← / ↑; in right-to-left books ← / → follow the screen) |
+| hold **A** + D-pad | select words: → / ↓ start at the first word of the page, ← / ↑ at the last one |
+| hold **Y** + D-pad | select sentences: → / ↓ start at the first sentence of the page, ← / ↑ at the last one |
+| tap **A** | select sentences, starting at the first sentence of the page |
+| tap **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
 | **R-stick** | the quick-action wheel (see below) |
 | **L-stick** | nothing |
 | hold **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 | **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
+
+The letters follow one rule: a letter held with the D-pad is a mode, a tapped letter is its action, so **A** and **Y** act when you let go, and only if no arrow was pressed meanwhile. On older patched builds (no button releases) **A** and **Y** act on the press and the D-pad only turns pages.
 
 **X** is a modifier you hold: the combos work while it is down and stop when you let go. On older patched builds (no button releases) and when a trigger is mapped to X, it is a latch instead: press X, then one combo. It is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
 
@@ -134,7 +138,7 @@ Touch works too: tap a sector to run it, the centre for the next page, the page 
 
 ### Selection mode (sentences and words)
 
-The selection has two levels: sentences (opened with **A**) and words (opened with the **D-pad**). The arrows do the same on both, one step bigger on the sentence level.
+The selection has two levels: sentences (opened with a tap on **A** or with **Y** + D-pad) and words (opened with **A** + D-pad). The arrows do the same on both, one step bigger on the sentence level.
 
 | Button | Words | Sentences |
 |---|---|---|

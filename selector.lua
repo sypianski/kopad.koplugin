@@ -1183,14 +1183,17 @@ function Selector:_show(ov)
     UIManager:setDirty("all", "ui")
 end
 
--- Sentences, from the first sentence of the page (A while reading).
-function Selector:_open()
+-- Sentences: the first sentence of the page, or the last one with from_end
+-- (Y + D-pad while reading, TASK-28; A tapped opens the first).
+function Selector:_open(from_end)
     local ov = self:_new_overlay()
-    if ov then self:_show(ov) end
+    if not ov then return end
+    if from_end and #ov.sentences > 0 then ov:_set_sent(#ov.sentences) end
+    self:_show(ov)
 end
 
--- Words: the first word of the page, or the last one with from_end (D-pad
--- ↑/← while reading).
+-- Words: the first word of the page, or the last one with from_end (A +
+-- D-pad ↑/← while reading, TASK-28).
 function Selector:_open_walk(from_end)
     local ov = self:_new_overlay()
     if not ov then return end

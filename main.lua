@@ -9,9 +9,11 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     RT / LT                  Next / previous page
     RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
     Select / Start           Top menu / bottom menu
-    A                        Select sentences
-    D-pad                    Select words
-    Y                        The page's highlights (none = a message)
+    D-pad                    Next / previous page (TASK-28)
+    A held + D-pad           Select words (→/↓ from the first, ←/↑ the last)
+    Y held + D-pad           Select sentences (the same)
+    A tapped                 Select sentences
+    Y tapped                 The page's highlights (none = a message)
     L-stick                  Nothing
     R-stick                  Quick-action wheel (also PDF; library set in
                              the file browser; padmap `quick`, TASK-26)

@@ -15,10 +15,18 @@ Reading:
                          margins, contrast, ...: ShowConfigMenu)
   B                      Back to the previous location (TOC entry, link, ...);
                          never KOReader's "Exit KOReader?" (Gamepad* path)
-  A                      Select sentences (from the first one of the page)
-  D-pad                  Select words: ↓/→ from the first word of the page,
-                         ↑/← from the last one
-  Y                      The page's saved highlights (D-pad steps between
+  D-pad                  Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
+                         books; TASK-28). Letter + D-pad = a mode, a tapped
+                         letter = its action (Gamepad* path; the legacy key
+                         path has no release, so there A / Y act on the
+                         press and the D-pad only turns pages):
+  A held + D-pad         Select words: →/↓ from the first word of the page,
+                         ←/↑ from the last one
+  Y held + D-pad         Select sentences: →/↓ from the first sentence, ←/↑
+                         from the last one
+  A tapped               Select sentences from the first one (until TASK-29,
+                         "point from-to")
+  Y tapped               The page's saved highlights (D-pad steps between
                          them); none on the page = a message
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
   R-stick                The quick-action wheel (TASK-26, PC-021): a
@@ -260,7 +268,7 @@ local BUTTON_HANDLERS = {
     [BTN_A]      = "_press_a", -- a hold control (TASK-16); legacy Press = onKPConfirm
     [BTN_B]      = "onKPBack",
     [BTN_X]      = "onKPExtend",
-    [BTN_Y]      = "onKPMenu",
+    [BTN_Y]      = "_press_y", -- a hold control too (TASK-28); legacy = onKPMenu
     [BTN_SELECT] = "onKPSelect",
     [BTN_START]  = "onKPStart",
     [BTN_LB]     = "onKPPgBk",
@@ -623,14 +631,27 @@ function PadNav:_x_combo(action_fn)
     action_fn()
 end
 
--- D-pad: arrows in the selection, else open the word level: ↓/→ on the first
--- word of the page, ↑/← on the last one.
+-- D-pad (TASK-28): arrows in the selection. While reading it turns the page
+-- (→/↓ next, ←/↑ previous; ←/→ follow the screen in RTL books), unless a
+-- letter is held (Gamepad* path only, the legacy key path has no release):
+-- A + D-pad opens the words, Y + D-pad the sentences, →/↓ from the first of
+-- the page, ←/↑ from the last.
 function PadNav:_dpad(dx, dy)
     local selector = self:_selector()
     if selector.overlay then
         self:_sel_move(dx, dy); return
     end
-    selector:_open_walk(dy < 0 or dx < 0)
+    local from_end = dy < 0 or dx < 0
+    if self._a_down then
+        self._a_opened = true -- the release is not a tap any more
+        selector:_open_walk(from_end); return
+    end
+    if self._y_down then
+        self._y_used = true
+        selector:_open(from_end); return
+    end
+    if dx ~= 0 and self:_is_rtl() then dx = -dx end
+    self.ui:handleEvent(Event:new("GotoViewRel", (dx > 0 or dy > 0) and 1 or -1))
 end
 
 function PadNav:onKPUp2()
@@ -828,29 +849,58 @@ function PadNav:onKPConfirm()
     return true
 end
 
--- A pressed (Gamepad* path, TASK-16). Reading: open the sentence level; its
--- release opens nothing. Selection: while held, the arrows select a range
--- (_sel_move); released without an arrow = a tap = the action menu, see
--- _release_a.
+-- A pressed (Gamepad* path, TASK-16 / TASK-28). Nothing happens on the press:
+-- while A is held the D-pad opens the words (reading, _dpad) or selects a
+-- range (selection, _sel_move); what a tap does is decided on the release,
+-- see _release_a.
 function PadNav:_press_a()
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if not selector then return false end
-    self._a_down, self._a_moved = true, false
-    self._a_opened = not selector.overlay
-    if self._a_opened then self:_open_sentence_select() end
+    self._a_down, self._a_moved, self._a_opened = true, false, false
+    self._a_reading = not selector.overlay
     return true
 end
 
--- A released (Gamepad* path): a tap in the selection opens the action menu.
--- A range selected while A was held stays the selection.
+-- A released (Gamepad* path). A tap: while reading the sentences (until
+-- TASK-29 gives it the "point from-to" mode), in the selection the action
+-- menu. After A + D-pad (words opened, a range selected) nothing.
 function PadNav:_release_a()
     if not self._a_down then return end
     local tap = not self._a_moved and not self._a_opened
-    self._a_down, self._a_moved, self._a_opened = false, false, false
+    local reading = self._a_reading
+    self._a_down, self._a_moved, self._a_opened, self._a_reading = false, false, false, false
+    if not tap then return end
     local selector = self:_selector()
-    local ov = selector and selector.overlay
-    if tap and ov and self:_context() == "selection" then ov:action_menu() end
+    if not selector then return end
+    local ov, ctx = selector.overlay, self:_context()
+    if reading then
+        if not ov and ctx == "reading" then self:_open_sentence_select() end
+    elseif ov and ctx == "selection" then
+        ov:action_menu()
+    end
+end
+
+-- Y pressed (Gamepad* path, TASK-28). In the selection Vortuyo at once.
+-- While reading nothing on the press: Y + D-pad opens the sentences
+-- (_dpad), a tap shows the page's highlights on the release (_release_y).
+function PadNav:_press_y()
+    if not self:_is_enabled() then return false end
+    local selector = self:_selector()
+    if not selector then return false end
+    if selector.overlay then return self:onKPMenu() end
+    self._y_down, self._y_used = true, false
+    return true
+end
+
+function PadNav:_release_y()
+    if not self._y_down then return end
+    local tap = not self._y_used
+    self._y_down, self._y_used = false, false
+    local selector = self:_selector()
+    if tap and selector and not selector.overlay and self:_context() == "reading" then
+        self:_open_highlights(selector)
+    end
 end
 
 -- B: close the overlay
@@ -956,6 +1006,7 @@ function PadNav:onGamepadButtonUp(ev)
         self._a_zoom = false
         self:_release_a()
     end
+    if btn == BTN_Y then self:_release_y() end
     return false
 end
 
@@ -1264,13 +1315,16 @@ function PadNav:_button_dispatch(ev)
     end
     -- D-pad in an EPUB: kopad's own handlers, and a held D-pad repeats its
     -- step in the selection (stock buttons do not auto-repeat). Not after an
-    -- X combo (it must fire once). Without a selector the stock key passes.
+    -- X combo (it must fire once), nor for the press that opened the
+    -- selection (A / Y + D-pad) or turned a page. Without a selector the
+    -- stock key passes.
     local dpad = DPAD_HANDLERS[btn]
     if dpad and (ctx == "reading" or ctx == "selection") and self:_selector() then
         local combo = self._x_mode
+        local moved = self:_selector().overlay ~= nil -- not the press that opens it
         local handled = self[dpad](self) or false
         local selector = self:_selector()
-        if handled and not combo and selector and selector.overlay then self:_dpad_start(btn) end
+        if handled and moved and not combo and selector and selector.overlay then self:_dpad_start(btn) end
         if tr then Trace.log("padnav btn=%s: dpad %s -> result=%s", tostring(btn), dpad, tostring(handled)) end
         return handled
     end
@@ -1965,11 +2019,11 @@ function PadNav:onGamepadAxisMotion(ax)
 end
 
 local CHEAT_READING = _("Reading mode")
-    .. "\nRT / LT, RB / LB: next / previous page"
+    .. "\nD-pad, RT / LT, RB / LB: next / previous page"
     .. "\nSelect: top menu    Start: bottom menu"
     .. "\nB: back to the previous location"
-    .. "\nA: select sentences    D-pad: select words"
-    .. "\nY: highlights on the page"
+    .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
+    .. "\nA: select sentences    Y: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\nR-stick: quick actions (A run, B close)"
