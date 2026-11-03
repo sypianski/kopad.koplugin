@@ -719,6 +719,19 @@ do
         set_stack(ui, {})
         assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true)
         nothing_moved(log, kind .. " dialog")
+
+        -- Start (TASK-13): opens the bottom menu while reading, closes it when
+        -- open; in the FileManager it stays swallowed (no bottom menu there)
+        n, log, ui = reader(kind)
+        set_stack(ui)
+        local want = kind == "fm" and 0 or 1
+        assert(n:onGamepadButtonDown({ button = 6 }) == true and #log.events == want, kind .. ": Start")
+        if want == 1 then assert(log.events[1] == "ShowConfigMenu", kind .. ": Start opens the bottom menu") end
+        local closed = 0
+        set_stack(ui, { config_options = {}, closeDialog = function() closed = closed + 1 end })
+        assert(n:_context() == "window")
+        assert(n:onGamepadButtonDown({ button = 6 }) == true and closed == 1, kind .. ": Start closes the bottom menu")
+        assert(#log.events == want, kind .. ": closing sends no event")
     end
 
     -- nothing on top (a toast does not count): the reading controls are back

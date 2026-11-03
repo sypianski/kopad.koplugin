@@ -129,7 +129,7 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --   goto_page / skim        the "go to page" dialog / the skim widget
 --  Menus
 --   top_menu / footer_menu  the reader's top menu (where its settings live) /
---                           the footer (bottom) menu toggle
+--                           the footer mode toggle (status bar contents)
 --   config_menu             the bottom configuration panel (font, margins...)
 --  Book
 --   toc / bookmarks         the same targets X + LB / X + RB reach
@@ -190,7 +190,7 @@ for _, id in ipairs(M.ACTION_ORDER) do M.ACTIONS[id] = true end
 M.DEFAULT_ACTIONS = {
     a = "sentence_select", x = "x_modifier", y = "highlights",
     lb = "prev_page", rb = "next_page", lt = "prev_page", rt = "next_page",
-    select = "top_menu", start = "footer_menu",
+    select = "top_menu", start = "config_menu",
 }
 
 -- Logical (kind, id) -> role name; nil for controls outside the vocabulary.

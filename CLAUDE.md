@@ -227,7 +227,9 @@ Two input paths end in the same `on<Key>` handlers:
   `TouchMenu:onPrevPage`/`onNextPage` with the auto-repeat filter, Select =
   `closeMenu`, everything else stock (Start's stock key `Menu` closes it).
   Other windows: LT/RT = `onPrevPage`/`onNextPage` of the first pager in the
-  window, Select/Start/Guide/L3/R3 swallowed, the rest stock. Dictionary popup
+  window, Start in the bottom menu (ConfigDialog, duck-typed by
+  `config_options` + `closeDialog`) = close it (TASK-13: reading Start opens it
+  via `ShowConfigMenu`), Select/Start/Guide/L3/R3 otherwise swallowed, the rest stock. Dictionary popup
   (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
   triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`
   page, Select = top menu, B = `FileChooser:onFolderUp` (stock Back asks

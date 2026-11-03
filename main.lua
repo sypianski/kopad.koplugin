@@ -8,7 +8,7 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
   Reading:
     RT / LT                  Next / previous page (always)
     RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
-    Select / Start           Top menu / footer menu
+    Select / Start           Top menu / bottom menu
     D-pad                    Open word walk
     R-stick                  Open crosshair
     L-stick ↑/←              Page turn; ↓ crosshair selector; → word walk
@@ -33,7 +33,7 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     B                        Exit extend / close overlay
     RB / LB                  Extend selection right / left
     RT / LT                  Close overlay and turn page
-    Select / Start           Close overlay and open top / footer menu
+    Select / Start           Close overlay and open top / bottom menu
 
   Dictionary popup:
     LB / RB                  Cycle dictionaries (the popup's own keys)

@@ -11,7 +11,8 @@ Reading:
                          Not handled on KOReader >= 2026.07: SDL paddle ids
                          16+ have no stock mapping (Steam Input usually does
                          not expose them), so nothing arrives.
-  Select                 Top menu          Start   Footer (bottom) menu
+  Select                 Top menu          Start   Bottom menu (font,
+                         margins, contrast, ...: ShowConfigMenu)
   B                      Back to the previous location (TOC entry, link, ...);
                          never KOReader's "Exit KOReader?" (Gamepad* path)
   D-pad                  Open word walk
@@ -54,7 +55,9 @@ Top menu open (TouchMenu, reader AND FileManager):
 Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
   RT / LT                Next / previous page of the list (Menu:onNextPage /
                          onPrevPage), when the window has pages
-  Select / Start / Guide / L3 / R3   Swallowed
+  Start                  In the bottom menu (ConfigDialog): close it (Start
+                         opened it); elsewhere swallowed
+  Select / Guide / L3 / R3   Swallowed
   Everything else        Stock (the window navigates as without kopad)
 
 FileManager (nothing on top of the file list):
@@ -74,7 +77,7 @@ Selection (struct/walk/cross overlay):
   RB                     Extend selection right (quick extend when active)
   LB                     Extend selection left (quick extend when active)
   RT / LT                Close overlay and turn page
-  Select / Start         Close overlay and open top / footer menu
+  Select / Start         Close overlay and open top / bottom menu
 
 Dictionary popup:
   LB / RB                Cycle dictionaries (the popup's own RPgBack/RPgFwd)
@@ -319,7 +322,7 @@ function PadNav:init()
         KPPgFwd   = { { "RPgFwd" } },     -- RB
         KPPgBk2   = { { "LPgBack" } },    -- LT (F6): always previous page
         KPPgFwd2  = { { "LPgFwd" } },     -- RT (F7): always next page
-        -- Select / Start: top menu / footer menu (key names are an ASSUMPTION,
+        -- Select / Start: top menu / bottom menu (key names are an ASSUMPTION,
         -- see header docstring and SELECT_KEYS/START_KEYS)
         KPSelect  = { SELECT_KEYS },
         KPStart   = { START_KEYS },
@@ -876,7 +879,9 @@ function PadNav:onKPPgFwd2()
     return self:_turn_page(1)
 end
 
--- Select: top menu. Start: footer (bottom) menu. No X modifier needed.
+-- Select: top menu. Start: bottom menu (ReaderConfig's ConfigDialog: font,
+-- margins, contrast, ...). No X modifier needed; the footer mode toggle
+-- stays on X + D-pad ↓.
 function PadNav:_menu_action(fn)
     local selector = self:_selector()
     if selector and selector.overlay then selector:_close() end
@@ -893,8 +898,7 @@ end
 function PadNav:onKPStart()
     if not self:_is_enabled() then return false end
     return self:_menu_action(function()
-        local footer = self.ui.view and self.ui.view.footer
-        if footer then footer:onToggleFooterMode() end
+        self.ui:handleEvent(Event:new("ShowConfigMenu"))
     end)
 end
 function PadNav:onKPPgBk3()  return self:onKPPgBk()  end
@@ -1359,6 +1363,11 @@ local function top_window()
     return nil
 end
 
+-- ReaderConfig's bottom menu, duck-typed (a FocusManager, not a modal class).
+local function is_config_dialog(w)
+    return type(w.config_options) == "table" and type(w.closeDialog) == "function"
+end
+
 local function find_touch_menu()
     local top = top_window()
     return top and find_in(top, is_touch_menu, MENU_SEARCH_DEPTH, {}) or nil
@@ -1453,6 +1462,8 @@ end
 --             auto-repeat, so no filter; the stock RPgBack/RPgFwd = menu page
 --             turn is not sent), Select = close the menu (Select opened it).
 --             Start passes: its stock key "Menu" closes a TouchMenu too.
+--   window:   Start in the bottom menu (ConfigDialog) closes it (Start opened
+--             it; its stock keys only close on Back).
 --   both:     BUTTON_SWALLOW (stick clicks, Guide, Select / Start elsewhere)
 --             would send surprising stock keys, so they are eaten.
 function PadNav:_menu_button(btn, ctx)
@@ -1486,6 +1497,14 @@ function PadNav:_menu_button(btn, ctx)
             return true
         end
         if btn == BTN_START then return false end
+    elseif ctx == "window" and btn == BTN_START then
+        local top = top_window()
+        local dlg = top and find_in(top, is_config_dialog, MENU_SEARCH_DEPTH, {})
+        if dlg then
+            local ok, err = pcall(dlg.closeDialog, dlg)
+            if not ok then logger.warn("kopad: config menu close failed: " .. tostring(err)) end
+            return true
+        end
     end
     return BUTTON_SWALLOW[btn] or false
 end
@@ -1744,7 +1763,7 @@ end
 local CHEAT_READING = _("Reading mode")
     .. "\nRT / LT: next / previous page"
     .. "\nRB / LB: next / previous page"
-    .. "\nSelect: top menu    Start: footer menu"
+    .. "\nSelect: top menu    Start: bottom menu"
     .. "\nB: back to the previous location"
     .. "\nA: sentence selector    Y: highlights"
     .. "\nD-pad: word walk    R-stick: crosshair"
@@ -1761,6 +1780,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92 on the tabs: category"
     .. "\n\n" .. _("Lists (TOC, bookmarks, history, ...)")
     .. "\nRT / LT: next / previous page"
+    .. "\nStart in the bottom menu: close"
     .. "\n\n" .. _("File browser")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
     .. "\nB: parent folder"
@@ -1801,7 +1821,7 @@ local ACTION_LABELS = {
     goto_page         = _("go to page"),
     skim              = _("skim document"),
     top_menu          = _("top menu"),
-    footer_menu       = _("footer menu"),
+    footer_menu       = _("footer mode toggle"),
     config_menu       = _("bottom configuration menu"),
     toc               = _("table of contents"),
     bookmarks         = _("bookmarks"),

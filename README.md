@@ -53,7 +53,7 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **RT** / **LT** | next / previous page |
 | **RB** / **LB** | next / previous page (**X** + RB = bookmarks, **X** + LB = table of contents) |
 | **Select** | top menu |
-| **Start** | footer (bottom) menu |
+| **Start** | bottom menu (font, margins, contrast); **Start** again closes it |
 | **D-pad** | open word walk |
 | **R-stick** | open crosshair |
 | **L-stick** | ↑/← page turn, ↓ crosshair, → word walk |
@@ -85,6 +85,7 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | Button | Action |
 |---|---|
 | **RT** / **LT** | next / previous page of the list |
+| **Start** in the bottom menu | close it (**Start** opened it) |
 | everything else | stock KOReader keys (**Select**, **Start** and stick clicks are swallowed) |
 
 #### File browser
@@ -108,7 +109,7 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | **RB** / **LB** | extend selection right / left (again = quick extend) |
 | **B** | exit extend mode / close selection |
 | **RT** / **LT** | close selection and turn page |
-| **Select** / **Start** | close selection and open top / footer menu |
+| **Select** / **Start** | close selection and open top / bottom menu |
 
 In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to explain the selection (when the popup was opened from kopad's selection) and **B** closes the popup. Everything else reaches the popup as stock keys; the triggers do nothing there.
 
@@ -116,7 +117,7 @@ In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to
 
 On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and is mapped by id in `padnav.lua` (`onGamepadButtonDown` / `onGamepadAxisMotion`, relayed from `main.lua`). While kopad is enabled:
 
-- **Select** / **Start** open the top / footer menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
+- **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
 - **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. The D-pad is passed through to the original Up/Down/Left/Right keys.
 - With kopad disabled nothing is intercepted. With a menu, list, dialog or the dictionary popup on top, only the additions listed under *Menus versus reading* are intercepted; everything else behaves as stock.
@@ -156,7 +157,7 @@ Button names in this README are Xbox-style **roles** (A = bottom face button, et
 
 Keys are physical controls by position — `south east west north back start lshoulder rshoulder ltrigger rtrigger` — and values are roles — `a b x y select start lb rb lt rt`. A button may take a trigger role and vice versa. Controls not listed keep the layout's default. Anything malformed (other `version`, unknown names, wrong types) is skipped with a log warning; with no data kopad behaves exactly as without remapping. The D-pad, sticks, Guide/L3/R3 and the older patched-build key path are not remappable, and when kopad passes an event through to KOReader (kopad off, a dialog on top), KOReader sees the physical button. The pure logic is `padmap.lua`, tested by `lua tests/padmap_test.lua`.
 
-**Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup`; display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `footer_menu`; B has no default action id; it goes back to the previous location, like `back_location`. Roles not listed keep their default.
+**Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup`; display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `config_menu` (until kopad TASK-13: `footer_menu`; the footer mode toggle stays on **X** + D-pad ↓); B has no default action id; it goes back to the previous location, like `back_location`. Roles not listed keep their default.
 
 An override applies only in the idle reading context: the book itself is on top (no menu, list, dialog, dictionary popup or selection) and no X combo is pending. Everywhere else the role keeps what it does today (RB still extends a selection and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
 
