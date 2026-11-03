@@ -680,6 +680,11 @@ do
     set_stack(ui, { toast = true })
     assert(n:_context() == "reading")
     assert(n:onGamepadButtonDown({ button = 0 }) == true and log.selector[1] == "_open", "EPUB: A opens the selector")
+    -- malformed axis events pass without an error (TASK-10)
+    for _, a in ipairs({ 1, 3, 4, 5 }) do
+        assert(n:onGamepadAxisMotion({ axis = a, value = "x" }) == false, "non-numeric value on axis " .. a)
+    end
+    assert(n:onGamepadAxisMotion({ value = 1 }) == false and n:onGamepadAxisMotion(nil) == false)
     n, log, ui = reader("pdf")
     set_stack(ui)
     assert(n:_context() == "paged")

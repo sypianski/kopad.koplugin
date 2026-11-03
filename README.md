@@ -61,15 +61,37 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **Y** | highlight mode (crosshair if the page has none) |
 | **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 
-### Top menu open (reader and FileManager)
+A pending **X** is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
+
+### Menus versus reading
+
+kopad decides what the pad drives from the window on top of the screen. The reading and selection controls apply **only** while the book itself (or kopad's selection) is on top. Any menu, list, dialog or popup on top gets the pad as plain KOReader keys (D-pad / L-stick navigate, **A** presses, **B** goes back) plus the few additions below. Nothing moves the page underneath it. This works on the `Gamepad*` path (KOReader 2026.07+) only.
+
+#### Top menu open (reader and file browser)
 
 | Button | Action |
 |---|---|
 | **RB** / **LB** | next / previous category (tab with an icon), wrapping at the ends |
 | **RT** / **LT** | next / previous page of the menu, one page per press |
-| **D-pad** / **A** | as before (stock navigation / press) |
+| **Select** | close the menu |
+| **D-pad** / **L-stick** / **A** / **B** / **Start** | stock (navigate / press / back / close) |
 
-Tabs that are actions rather than categories (the reader's "file browser" tab, which closes the book) are skipped. The bumpers are consumed in the menu, so the stock page turn on them no longer happens there. Outside a top menu (other dialogs, plain lists) the bumpers and triggers behave as in reading mode. This works on the `Gamepad*` path (KOReader 2026.07+) only.
+Tabs that are actions rather than categories (the reader's "file browser" tab, which closes the book) are skipped. The bumpers are consumed in the menu, so the stock page turn on them no longer happens there.
+
+#### Other lists and dialogs (TOC, bookmarks, history, settings, …)
+
+| Button | Action |
+|---|---|
+| **RT** / **LT** | next / previous page of the list |
+| everything else | stock KOReader keys (**Select**, **Start** and stick clicks are swallowed) |
+
+#### File browser
+
+| Button | Action |
+|---|---|
+| **D-pad** / **L-stick** / **A** / **B** | stock list navigation |
+| **RB** / **LB**, **RT** / **LT** | next / previous page of the list |
+| **Select** | top menu |
 
 ### Selection mode (sentence / word walk / crosshair)
 
@@ -85,7 +107,7 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | **RT** / **LT** | close selection and turn page |
 | **Select** / **Start** | close selection and open top / footer menu |
 
-In the dictionary popup **LB** / **RB** cycle dictionaries and **Y** asks the AI to explain.
+In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to explain the selection (when the popup was opened from kopad's selection) and **B** closes the popup. Everything else reaches the popup as stock keys; the triggers do nothing there.
 
 ### Input paths, Select / Start and the triggers
 
@@ -94,7 +116,7 @@ On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and
 - **Select** / **Start** open the top / footer menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
 - **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. The D-pad is passed through to the original Up/Down/Left/Right keys.
-- With kopad disabled, or while a menu/dialog is on top, nothing is intercepted and KOReader behaves as stock.
+- With kopad disabled nothing is intercepted. With a menu, list, dialog or the dictionary popup on top, only the additions listed under *Menus versus reading* are intercepted; everything else behaves as stock.
 
 On **older patched builds** there are no such events; buttons arrive as key names (`LPgBack`/`LPgFwd` for LT/RT, F-keys for the R-stick and X). Select and Start are then bound to **F12** / **F2**: add a hunk to `sdl3_gamepad.patch` that sends keycodes `1073741893` (F12) for `SDL_GAMEPAD_BUTTON_BACK` and `1073741883` (F2) for `SDL_GAMEPAD_BUTTON_START`. Until then those two bindings are inert and the menus stay reachable via **X** + D-pad. The back paddles **L4** / **R4** (`ScrollLock` / `Pause`) are aliases of **LB** / **RB** on these patched builds only; on KOReader 2026.07+ they are not handled (SDL paddle ids have no stock mapping and Steam Input usually does not expose them).
 
@@ -133,11 +155,11 @@ Keys are physical controls by position — `south east west north back start lsh
 
 **Changing what a role does.** `actions` goes one step further: it says what a *role* does while you are plainly reading, e.g. RB opening the top menu (where KOReader's settings live) instead of turning the page. It is keyed by role, not by physical button, so it is shared by every layout and survives switching pads. Values (a closed list, grouped as in the koligilo panel): pages — `next_page prev_page pages_forward_10 pages_back_10 next_chapter prev_chapter first_page last_page back_location forward_location goto_page skim`; menus — `top_menu footer_menu config_menu`; book — `toc bookmarks toggle_bookmark next_bookmark prev_bookmark book_map page_browser fulltext_search book_status book_info reading_progress`; library — `history file_browser last_book favorites collections`; selection and dictionary — `sentence_select highlights word_walk crosshair dict_lookup`; display — `font_bigger font_smaller zoom_in zoom_out zoom_fit_width zoom_fit_page night_mode rotate full_refresh frontlight_toggle frontlight_up frontlight_down`; other — `screenshot cheat_sheet x_modifier none`. Most of them send the same KOReader event its own gestures and profiles use, so an action KOReader has no handler for on this device or document (frontlight on a desktop, font size in a PDF, zoom in an EPUB, `reading_progress` without the statistics plugin) does nothing. Defaults: A `sentence_select`, X `x_modifier`, Y `highlights`, LB/LT `prev_page`, RB/RT `next_page`, Select `top_menu`, Start `footer_menu`; B has no kopad action (KOReader's own Back runs). Roles not listed keep their default.
 
-An override applies only in the idle reading context: a document is open and no selection overlay, dictionary popup, top menu or X combo is active. Everywhere else the role keeps what it does today (RB still extends a selection and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
+An override applies only in the idle reading context: the book itself is on top (no menu, list, dialog, dictionary popup or selection) and no X combo is pending. Everywhere else the role keeps what it does today (RB still extends a selection and switches menu categories, LT/RT still turn menu pages, X + D-pad / X + LB / X + RB still reach the menus, TOC and bookmarks), and in the file browser buttons act as before. `sentence_select`, `highlights`, `word_walk` and `crosshair` need the selector (EPUB and other reflowable documents); in a PDF the press is swallowed. The cheat sheet in the menu lists the roles you changed. kopad versions without this stage ignore the `actions` key and read `layouts` as before. koligilo edits it in the panel under *Wtyczki → Ustawienia wtyczek → Gamepad (KOPad): akcje w czytaniu*.
 
 ### Scope
 
-The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) and in the FileManager no reader keys are suppressed and selector-dependent handlers pass through — only page turns and X-combos remain active there.
+The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys are suppressed and selector-dependent handlers pass through.
 
 Paged documents get their own view controls instead (stock KOReader 2026.07+ `Gamepad*` path). Only the bumpers and the triggers change the page, always by a whole page, so nothing else turns pages by surprise:
 

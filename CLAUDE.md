@@ -83,12 +83,32 @@ footer, highlight, bookmark, and every active widget) — saving them in
 `onReaderReady` re-applying suppression, matters: KOReader modules set their
 `key_events` at different lifecycle points.
 
-Every `on<Key>` handler first checks `_is_enabled()` (returns `false` to pass
-the event through when disabled or when a `_kokb_overlay` is up). Handlers
+**Context is the core rule (TASK-7): menus and reading have separate controls.**
+`PadNav:_context()` classifies the topmost non-toast window of
+`UIManager._window_stack`: `off`, `foreign` (another family overlay owns
+`_kokb_overlay`), `reading` / `paged` / `filemanager` (the top window IS
+`self.ui`), `selection` (kopad's own overlay), `dict` (a DictQuickLookup, found
+via `DictQuickLookup.window_list` — the class has no `name` field), `top_menu`
+(a TouchMenu in the top window) or `window` (anything else: TOC, bookmarks,
+history, ConfigDialog, dialogs, …). It is a positive rule on purpose:
+`Pluginaro.is_modal_active()` only checks the class of the top window, and
+KOReader wraps the top menu, the TOC and the bookmark list in a
+`CenterContainer`, so the pad used to drive the page under an open menu.
+`_button_down` / `_trigger_event` / `onGamepadAxisMotion` dispatch on the
+context first (`_menu_button`, `_menu_trigger`, `_dict_button`,
+`_filemanager_button`); outside the reading contexts the pad is stock KOReader
+plus those few additions. Unknown windows fall into `window`, i.e. stock — new
+code must keep it that way. Tests: section 11 of `tests/padmap_test.lua` builds
+real window stacks (`CenterContainer{TouchMenu}`, `CenterContainer{Menu}`).
+
+Every `on<Key>` handler first checks `_is_enabled()` (true only in the
+`PAD_CONTEXTS`: reading, paged, selection, filemanager — so the legacy key path
+stands down in menus too). Handlers
 branch on whether `selector.overlay` exists and which `mode` it's in, then
 delegate to overlay methods. Reading-mode-only state: `_x_mode` (X button acts
 as a modifier for D-pad/shoulder combos: menu / footer / history / files / TOC /
-bookmarks). RTL languages flip horizontal directions via `_is_rtl()`.
+bookmarks; only in a document, dropped by `_drop_x_mode` whenever the pad is
+used in any other context). RTL languages flip horizontal directions via `_is_rtl()`.
 
 ### `padmap.lua` — button remapping (pure, PC-011)
 No KOReader dependencies. `build(padmap, layout, warn)` turns the shared
@@ -103,8 +123,8 @@ is a second stage AFTER the layout — role → reading action from the closed l
 `M.DEFAULT_ACTIONS` are dropped so the built-in handler (and its pass-through in
 paged documents) is untouched. `padnav.lua` applies it in `_button_down` /
 `_trigger_event` via `_override_action(role)` — only in the idle reading context
-(document open, no selection overlay, dictionary popup, top menu or X-combo;
-never in the FileManager) — and runs it from `ACTION_RUNNERS`. Elsewhere the
+(`_context()` = `reading` / `paged`, no selection overlay, no X-combo; never in
+menus, dialogs, the dictionary popup or the FileManager) — and runs it from `ACTION_RUNNERS`. Elsewhere the
 role's `on<Key>` handler runs unchanged. Actions are part of the vocabulary
 contract with koligilo (`padmap.go`/`web/padmap.js`, TASK-27 there). Malformed data → `warn` + skip, never raises; no data =
 identity. `main.lua:_apply_padmap()` builds it (init, `onReaderReady`,
@@ -145,7 +165,9 @@ a single `self.mode` state machine:
 Actions on the current selection (`_get_selection`): `_do_dict`, `_do_ai`,
 `_do_vortuyo`, `_do_highlight`/`_do_toggle_highlight`, `_do_copy`, `_do_note`.
 `_hook_dict_widget` patches the open dictionary popup so Y → AI explain and
-LB/RB cycle dictionaries. Painting is done with manual blitbuffer inversion
+LB/RB cycle dictionaries — LEGACY key path only (on >= 2026.07
+`PadNav:_dict_button` handles Y and LB/RB are the popup's own stock keys); it
+finds the popup via `DictQuickLookup.window_list`. Painting is done with manual blitbuffer inversion
 (`invert_rounded_rect`, `_draw_*` methods) — no standard widgets for the
 selection rectangles.
 
@@ -171,7 +193,9 @@ shows they arrive as sync commits.
   by the plugin family. `main.lua` registers extensions and builds the
   extension menu; `selector` calls `claim_overlay`/`release_overlay` so only one
   family plugin owns the screen/keys at a time; `padnav` yields
-  (`return false`) when `overlay_active` for another owner or `is_modal_active`.
+  (`return false`) when `overlay_active` for another owner (context `foreign`).
+  `is_modal_active` is NOT used for menus any more (see the context rule above);
+  its blind spot for `CenterContainer`-wrapped menus lives upstream.
   Extensions are strictly opt-in (`default_enabled` must be literally `false`).
   Requirable in bare Lua (deps injected via `Pluginaro._deps`).
 - **`llm.lua`** — self-contained one-shot chat-completion POST to OpenRouter
@@ -193,15 +217,20 @@ Two input paths end in the same `on<Key>` handlers:
   kopad plugin widget) but not `ui.active_widgets`, where PadNav lives. Triggers
   are de-bounced (stock auto-repeats held axes and never reports release; own
   `time.now()` clock, not `ax.time`). Axes 2/3 (R-stick) are always consumed
-  while enabled, because stock maps R-stick Y to `RPgBack`/`RPgFwd`.
-  **Top menu:** with a `TouchMenu` on top of the window stack (reader *and*
-  FileManager) `onGamepadButtonDown`/`onGamepadAxisMotion` handle LB/RB and LT/RT
-  *before* the `_is_enabled()` guard (`PadNav:_top_menu`, `_menu_button`,
-  `_menu_trigger`, `find_touch_menu`): LB/RB = previous/next category (wrapping,
+  in the reading contexts (reading / paged / selection), because stock maps
+  R-stick Y to `RPgBack`/`RPgFwd`; in menus, dialogs, the dictionary popup and
+  the FileManager both sticks are stock.
+  **Menus (context `top_menu` / `window`):** `_menu_button` / `_menu_trigger`.
+  Top menu (reader *and* FileManager): LB/RB = previous/next category (wrapping,
   action tabs with `remember == false`/callback skipped, via `bar:switchToTab`;
   consumed, so the stock `RPgBack`/`RPgFwd` menu page turn is suppressed), LT/RT =
-  `TouchMenu:onPrevPage`/`onNextPage` with the auto-repeat filter. Outside a
-  TouchMenu everything is as before.
+  `TouchMenu:onPrevPage`/`onNextPage` with the auto-repeat filter, Select =
+  `closeMenu`, everything else stock (Start's stock key `Menu` closes it).
+  Other windows: LT/RT = `onPrevPage`/`onNextPage` of the first pager in the
+  window, Select/Start/Guide/L3/R3 swallowed, the rest stock. Dictionary popup
+  (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
+  triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`
+  page, Select = top menu.
 - **Older patched builds:** physical button → KOReader key name → `padnav`
   binding in the `key_events` table in `PadNav:init`. Names come from SDL3 + the
   userpatch. L4/R4 back paddles (`ScrollLock`/`Pause`) are LB/RB aliases on these

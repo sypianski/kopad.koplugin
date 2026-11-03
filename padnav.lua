@@ -19,9 +19,17 @@ Reading:
   A                      Open sentence selector
   Y                      Open highlight mode (crosshair if none)
   X                      Modifier: X + D-pad = ↑menu ↓footer ←history →files
+                         (documents only; a pending X is dropped as soon as
+                         the pad is used anywhere but plain reading)
 
-Top menu open (TouchMenu on top of the window stack, reader AND FileManager;
-Gamepad* path = KOReader >= 2026.07 only):
+Context (PadNav:_context; Gamepad* path = KOReader >= 2026.07): what the pad
+drives depends on the topmost non-toast window of the UIManager stack. The
+reading / selection controls apply ONLY while that window is the reader
+itself or kopad's selection overlay. Menus, dialogs, the dictionary popup and
+the FileManager get the pad as stock KOReader keys plus the few additions
+below -- nothing moves the document under them.
+
+Top menu open (TouchMenu, reader AND FileManager):
   RB / LB                Next / previous CATEGORY (tab with icon), wrapping at
                          the ends. Consumed here, so the stock RPgFwd/RPgBack
                          key (= menu page turn) is NOT sent. Tabs that are
@@ -30,8 +38,22 @@ Gamepad* path = KOReader >= 2026.07 only):
                          closes the book) are skipped.
   RT / LT                Next / previous PAGE of the menu (TouchMenu:onNextPage
                          / onPrevPage), one press = one page
-  D-pad / A              Unchanged (stock navigation / Press)
-  Outside a TouchMenu (other dialogs, plain Menu) LB/RB/LT/RT behave as before.
+  Select                 Close the menu (TouchMenu:closeMenu)
+  D-pad / L-stick / A / B / Start / R-stick
+                         Stock: navigate / Press / Back / close (stock "Menu"
+                         key) / menu page
+
+Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
+  RT / LT                Next / previous page of the list (Menu:onNextPage /
+                         onPrevPage), when the window has pages
+  Select / Start / Guide / L3 / R3   Swallowed
+  Everything else        Stock (the window navigates as without kopad)
+
+FileManager (nothing on top of the file list):
+  D-pad / A / B / sticks Stock list navigation
+  LB / RB                Stock RPgBack / RPgFwd = previous / next list page
+  RT / LT                Next / previous list page (file_chooser)
+  Select                 Top menu
 
 Selection (struct/walk/cross overlay):
   L-stick ←/→            Sentence move    ↑/↓  Paragraph jump
@@ -46,8 +68,10 @@ Selection (struct/walk/cross overlay):
   Select / Start         Close overlay and open top / footer menu
 
 Dictionary popup:
-  LB / RB                Cycle dictionaries
-  Y                      AI explain
+  LB / RB                Cycle dictionaries (the popup's own RPgBack/RPgFwd)
+  Y                      AI explain of kopad's selection (closes the popup;
+                         passes when the popup was not opened from kopad)
+  B / A / D-pad / sticks Stock (B closes the popup); RT / LT swallowed
 
 Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   D-pad / L-stick ←/→   Move visel selection (as keyboard ←/→)
@@ -55,17 +79,15 @@ Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   B                     Close visel
 
 Scope: the selector (word walk / struct / crosshair) only exists for
-crengine (rolling) documents. In paged documents (PDF/DjVu) and in the
-FileManager no reader keys are suppressed and the selector-dependent
-handlers return false (pass-through) — only LB/RB page turns and X-combos
-remain active there. Paged documents get their own view controls instead
+crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys
+are suppressed and the selector-dependent handlers return false
+(pass-through); paged documents get their own view controls instead
 (PAGED_* tables, _paged_idle; Gamepad* path only). Only LB/RB and LT/RT
 change the page, always by a whole page:
   D-pad / L-stick        Pan the page (never turns it)
-  R-stick ↑ / ↓          Zoom in / out
+  R-stick ↑ / ↓          Zoom in / out in small steps (ZOOM_STEP)
   R-stick ← / →          Fit whole page / fit text width (margins cropped)
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
-The FileManager keeps the stock list navigation.
 
 Input paths (two, both end in the same on<Key> handlers):
 
@@ -75,7 +97,8 @@ Input paths (two, both end in the same on<Key> handlers):
    default key press (gamepad.lua button_key_names / axis_key_names) is NOT
    sent. onGamepadButtonDown / onGamepadAxisMotion below map SDL ids to the
    handlers; false = pass through to the stock default (kopad disabled, a
-   modal Menu/dialog on top, or a foreign overlay owning the screen).
+   menu / dialog / dictionary popup on top -- see Context above -- or a
+   foreign overlay owning the screen).
    main.lua relays the broadcast here (PadNav lives in ui.active_widgets,
    which UIManager:broadcastEvent does not visit).
      Buttons (SDL ids): A=0 B=1 X=2 Y=3 Select=4 Start=6 LB=9 RB=10;
@@ -87,15 +110,19 @@ Input paths (two, both end in the same on<Key> handlers):
        press = one page (in the top menu: one menu page): the stock
        auto-repeat (first repeat after 0.5 s, then every 0.2 s while held) is
        filtered out, see _trigger_is_new_press.
-     Top menu: the LB/RB (button) and LT/RT (axis) branches run BEFORE the
-       _is_enabled() guard (a TouchMenu on top is a modal, which silences the
-       rest of PadNav); they need kopad enabled, no foreign overlay and a
-       TouchMenu on top of the window stack (_top_menu).
+     Context first: _button_down / _trigger_event / onGamepadAxisMotion ask
+       _context() before anything else and hand menus, other windows, the
+       dictionary popup and the FileManager to _menu_button / _menu_trigger /
+       _dict_button / _filemanager_button. _is_enabled() is true only in the
+       reading contexts (PAD_CONTEXTS), so the on<Key> handlers -- also on the
+       legacy key path -- stand down everywhere else.
      L-stick = axes 0 (x) / 1 (y), R-stick = axes 2 (x) / 3 (y); negative =
        left/up. The stock auto-repeat is kept on the sticks (handy for
        navigation). Stock maps R-stick Y to RPgBack/RPgFwd, which with the
-       auto-repeat flips pages endlessly, so while kopad is active axes 2/3
-       are always consumed (axis 2 has no stock mapping).
+       auto-repeat flips pages endlessly, so while kopad drives reading or a
+       selection axes 2/3 are always consumed (axis 2 has no stock mapping);
+       in menus, dialogs, the dictionary popup and the FileManager both
+       sticks are stock.
 
    Remapping (padmap.lua, PC-011): onGamepadButtonDown / onGamepadAxisMotion
      first translate the PHYSICAL control into its logical ROLE (the ids
@@ -109,9 +136,9 @@ Input paths (two, both end in the same on<Key> handlers):
    Action overrides (padmap.lua `actions`, PC-014): after the role is known,
      _button_down / _trigger_event ask _override_action(role) whether the
      user gave that role another reading action (e.g. RB = top menu). It
-     applies only in the idle reading context -- a document is open and no
-     selection overlay, dictionary popup or X-combo is active (the top menu
-     and modal dialogs are handled before, by their own branches). Anywhere
+     applies only in the idle reading context -- context "reading" / "paged",
+     no selection overlay and no X-combo (menus, dialogs, the dictionary
+     popup and the FileManager never reach it, see Context). Anywhere
      else the role's built-in handler above runs unchanged, so the table of
      controls in this header stays true for selection, dictionary and menus.
      The override does not replace X + <button> combos (they stay on the
@@ -1552,24 +1579,12 @@ function PadNav:onGamepadAxisMotion(ax)
     end
     if type(ax) ~= "table" then return false end
     local axis, value = ax.axis, ax.value
-    if axis == nil or value == nil then
+    -- Triggers with a numeric value were handled at the top; anything else
+    -- that is not a numeric stick event passes (no comparison on a non-number).
+    if axis == nil or type(value) ~= "number" or axis == AXIS_LT or axis == AXIS_RT then
         if tr then Trace.log("padnav axis=%s value=%s: incomplete event -> result=false",
             tostring(axis), tostring(value)) end
         return false
-    end
-
-    if axis == AXIS_LT or axis == AXIS_RT then
-        -- Triggers: 0..32767, only positive values are a press.
-        local new_press = value > 0 and self:_trigger_is_new_press(axis)
-        if new_press then
-            if axis == AXIS_LT then self:onKPPgBk2() else self:onKPPgFwd2() end
-        end
-        if tr then
-            Trace.log("padnav axis=%s value=%s: trigger new_press=%s handler=%s swallowed -> result=true",
-                tostring(axis), tostring(value), tostring(new_press),
-                new_press and (axis == AXIS_LT and "onKPPgBk2" or "onKPPgFwd2") or "none")
-        end
-        return true
     end
 
     local pair = STICK_HANDLERS[axis]
@@ -1646,7 +1661,11 @@ local CHEAT_READING = _("Reading mode")
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
+    .. "\nRT / LT: next / previous page    Select: close"
+    .. "\n\n" .. _("Lists (TOC, bookmarks, history, ...)")
     .. "\nRT / LT: next / previous page"
+    .. "\n\n" .. _("File browser")
+    .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
 
 local CHEAT_SELECTION = _("Selection mode")
     .. "\nL-stick \xE2\x86\x90/\xE2\x86\x92: sentence    \xE2\x86\x91/\xE2\x86\x93: paragraph"
@@ -1658,7 +1677,7 @@ local CHEAT_SELECTION = _("Selection mode")
     .. "\nRT / LT: close and turn page"
     .. "\nSelect / Start: close and open menu"
     .. "\n\n" .. _("Dictionary popup")
-    .. "\nLB / RB: cycle dictionaries    Y: AI explain"
+    .. "\nLB / RB: cycle dictionaries    Y: AI explain    B: close"
 
 function PadNav:_show_text(text)
     local InfoMessage = require("ui/widget/infomessage")

@@ -16,9 +16,13 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Y                        Highlight mode
     X + D-pad                Combo: ↑menu ↓footer ←history →files
 
-  Top menu open (TouchMenu, reader and FileManager; KOReader >= 2026.07):
-    RB / LB                  Next / previous category (tab, wraps)
-    RT / LT                  Next / previous menu page (one press = one page)
+  Menus versus reading (KOReader >= 2026.07, PadNav:_context): the reading
+  and selection controls apply only while the book (or kopad's selection) is
+  the top window; menus, lists, dialogs, the dictionary popup and the file
+  browser get stock KOReader keys plus:
+    Top menu                 RB / LB category, RT / LT menu page, Select close
+    Lists / dialogs          RT / LT list page (TOC, bookmarks, history, ...)
+    File browser             LB / RB, LT / RT list page, Select top menu
 
   Selection (struct/walk/cross):
     L-stick ←/→              Sentence move    ↑/↓  Paragraph jump
@@ -32,8 +36,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Select / Start           Close overlay and open top / footer menu
 
   Dictionary popup:
-    LB / RB                  Cycle dictionaries
-    Y                        AI explain
+    LB / RB                  Cycle dictionaries (the popup's own keys)
+    Y                        AI explain (selection from kopad)
+    B                        Close the popup
 
 Input paths:
   KOReader >= 2026.07 (stock, no patch): the device broadcasts
