@@ -136,7 +136,7 @@ do
 
     local function nav(resolved)
         local calls = {}
-        local o = setmetatable({ enabled_ref = { enabled = true } }, { __index = PadNav })
+        local o = setmetatable({ enabled_ref = { enabled = true }, ui = { document = {} } }, { __index = PadNav })
         o._is_enabled = function() return true end
         o._top_menu = function() return nil end
         for _, m in ipairs({ "onKPConfirm", "onKPBack", "onKPExtend", "onKPMenu",
@@ -437,14 +437,18 @@ do
     assert(n:onGamepadButtonDown({ button = 1 }) == true and #log.calls == 0)
     assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.calls == 0)
 
-    -- outside idle reading the BUILT-IN runs: selection overlay, FileManager
+    -- outside idle reading the BUILT-IN runs over a selection overlay
     -- (the dictionary popup never reaches the overrides, see test 11)
-    for name, ctx in pairs({ overlay = { overlay = true, selector = {} }, filemanager = { doc = false } }) do
-        n, log = nav(acts({ rb = "top_menu", a = "none" }), ctx)
-        assert(n:onGamepadButtonDown({ button = 10 }) == true and log.calls[1] == "onKPPgFwd" and #log.events == 0,
-            name .. ": RB keeps its built-in")
-        n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "onKPConfirm", name .. ": A keeps its built-in")
-    end
+    n, log = nav(acts({ rb = "top_menu", a = "none" }), { overlay = true, selector = {} })
+    assert(n:onGamepadButtonDown({ button = 10 }) == true and log.calls[1] == "onKPPgFwd" and #log.events == 0,
+        "overlay: RB keeps its built-in")
+    n:onGamepadButtonDown({ button = 0 }); assert(log.calls[2] == "onKPConfirm", "overlay: A keeps its built-in")
+    -- ...and the FileManager keeps the STOCK list navigation (TASK-9): no
+    -- override, no handler, the stock key goes to the list
+    n, log = nav(acts({ rb = "top_menu", a = "none" }), { doc = false })
+    assert(n:onGamepadButtonDown({ button = 10 }) == false and #log.calls == 0 and #log.events == 0,
+        "filemanager: RB = stock list page")
+    assert(n:onGamepadButtonDown({ button = 0 }) == false and #log.calls == 0, "filemanager: A = stock")
 
     -- kopad off / foreign overlay: untouched pass-through (override never reached)
     for _, c in ipairs({ "off", "foreign" }) do
@@ -683,6 +687,28 @@ do
     n, log, ui = reader("fm")
     set_stack(ui)
     assert(n:_context() == "filemanager")
+    -- FileManager (TASK-9): stock list navigation, LT/RT = list page, Select = menu
+    local pages = {}
+    ui.file_chooser = { onNextPage = function() pages[#pages + 1] = "next" end,
+                        onPrevPage = function() pages[#pages + 1] = "prev" end }
+    for _, b in ipairs({ 0, 1, 2, 3, 9, 10, 11, 12, 13, 14 }) do
+        assert(n:onGamepadButtonDown({ button = b }) == false, "filemanager: button " .. b .. " is stock")
+    end
+    assert(not n._x_mode, "filemanager: X does not arm the modifier")
+    for _, a in ipairs({ 0, 1, 2, 3 }) do
+        assert(n:onGamepadAxisMotion({ axis = a, value = 20000 }) == false, "filemanager: stick " .. a .. " is stock")
+    end
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 }); n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+    assert(pages[1] == "next" and pages[2] == "prev", "filemanager: LT/RT = list page")
+    assert(#log.events == 0)
+    assert(n:onGamepadButtonDown({ button = 4 }) == true and log.events[1] == "ShowMenu", "filemanager: Select = menu")
+    -- X modifier is dropped as soon as the pad is used outside plain reading
+    n, log, ui = reader("epub")
+    set_stack(ui)
+    n:onGamepadButtonDown({ button = 2 }); assert(n._x_mode, "X arms the modifier while reading")
+    set_stack(ui, {})
+    n:onGamepadButtonDown({ button = 11 })
+    assert(not n._x_mode, "a window on top drops a pending X")
     -- own overlay, dictionary, foreign overlay, kopad off
     local sel
     n, log, ui, sel = reader("epub")

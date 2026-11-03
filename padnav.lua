@@ -755,6 +755,9 @@ function PadNav:onKPExtend()
         if sel then selector.overlay:_do_toggle_highlight(sel) end
         return true
     end
+    -- The modifier only exists in a document: in the FileManager the stock
+    -- list navigation eats the arrows, so X + D-pad could never fire there.
+    if not (self.ui and self.ui.document) then return false end
     self._x_mode = not self._x_mode
     return true
 end
@@ -1135,11 +1138,17 @@ function PadNav:_button_down(ev)
     local tr = Trace.active()
     local btn = type(ev) == "table" and ev.button or nil
     local ctx = self:_context()
+    self:_drop_x_mode(ctx)
     -- A menu or another window on top: the pad belongs to it (_menu_button
     -- takes LB/RB and Select in the top menu, the rest is stock).
     if ctx == "top_menu" or ctx == "window" then
         local res = self:_menu_button(btn, ctx)
         if tr then Trace.log("padnav btn=%s: context %s -> result=%s", tostring(btn), ctx, tostring(res)) end
+        return res
+    end
+    if ctx == "filemanager" then
+        local res = self:_filemanager_button(btn)
+        if tr then Trace.log("padnav btn=%s: context filemanager -> result=%s", tostring(btn), tostring(res)) end
         return res
     end
     if ctx == "dict" then
@@ -1389,15 +1398,20 @@ function PadNav:_menu_button(btn, ctx)
     return BUTTON_SWALLOW[btn] or false
 end
 
--- LT / RT while a menu or another window is on top: previous / next page of
--- the top menu, or of the first pager (Menu: TOC, bookmarks, ...) in the top
--- window. One press = one page (_trigger_is_new_press); auto-repeats and
+-- LT / RT while a menu or another window is on top, or in the FileManager:
+-- previous / next page of the top menu, of the file list (file_chooser), or
+-- of the first pager (Menu: TOC, bookmarks, ...) in the top window. One press = one page (_trigger_is_new_press); auto-repeats and
 -- windows without pages are consumed without action (stock has no trigger
 -- mapping anyway).
 function PadNav:_menu_trigger(axis, value, from_button, ctx)
     local target
     if ctx == "top_menu" then
         target = self:_top_menu()
+    elseif ctx == "filemanager" then
+        target = self.ui and self.ui.file_chooser
+        if not (type(target) == "table" and is_pager(target)) then
+            target = self.ui and find_in(self.ui, is_pager, MENU_SEARCH_DEPTH, {}) or nil
+        end
     else
         local top = top_window()
         target = top and find_in(top, is_pager, MENU_SEARCH_DEPTH, {}) or nil
@@ -1411,6 +1425,22 @@ function PadNav:_menu_trigger(axis, value, from_button, ctx)
             end
         end
     end
+end
+
+-- The X modifier belongs to plain reading: anywhere else (menu, dialog,
+-- dictionary, selection overlay, FileManager) a pending X is dropped, so it
+-- cannot fire as a surprise combo after the user comes back.
+function PadNav:_drop_x_mode(ctx)
+    if ctx ~= "reading" and ctx ~= "paged" then self._x_mode = false end
+end
+
+-- Buttons (logical role id) in the FileManager (ctx "filemanager"): the list
+-- keeps the stock navigation -- D-pad / A / B, LB / RB (RPgBack / RPgFwd =
+-- list page). kopad adds Select = top menu; LT / RT (list page) are in
+-- _menu_trigger. Returns true = consumed.
+function PadNav:_filemanager_button(btn)
+    if btn == BTN_SELECT then return self:onKPSelect() end
+    return BUTTON_SWALLOW[btn] or false
 end
 
 -- Buttons (logical role id) while the dictionary popup is on top (ctx
@@ -1439,11 +1469,12 @@ end
 function PadNav:_trigger_event(axis, value, from_button)
     local tr = Trace.active()
     local ctx = self:_context()
+    self:_drop_x_mode(ctx)
     if ctx == "dict" then
         if tr then Trace.log("padnav axis=%s value=%s: context dict, swallowed -> result=true", tostring(axis), tostring(value)) end
         return true
     end
-    if ctx == "top_menu" or ctx == "window" then
+    if ctx == "top_menu" or ctx == "window" or ctx == "filemanager" then
         self:_menu_trigger(axis, value, from_button, ctx)
         if tr then
             Trace.log("padnav axis=%s value=%s: context %s, menu page -> result=true",
@@ -1508,11 +1539,14 @@ function PadNav:onGamepadAxisMotion(ax)
         end
         return self:_trigger_event(id, ax.value, false)
     end
-    if not self:_is_enabled() then
+    local ctx = self:_context()
+    self:_drop_x_mode(ctx)
+    -- FileManager: both sticks stay stock (L-stick = list navigation, R-stick
+    -- Y = list page), like the menus.
+    if not PAD_CONTEXTS[ctx] or ctx == "filemanager" then
         if tr then
-            Trace.log("padnav axis=%s value=%s: passthrough, %s -> result=false",
-                tostring(type(ax) == "table" and ax.axis), tostring(type(ax) == "table" and ax.value),
-                self:_why_disabled())
+            Trace.log("padnav axis=%s value=%s: passthrough, context %s -> result=false",
+                tostring(type(ax) == "table" and ax.axis), tostring(type(ax) == "table" and ax.value), ctx)
         end
         return false
     end
