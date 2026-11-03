@@ -112,6 +112,19 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | **Start** in the bottom menu | close it (**Start** opened it) |
 | everything else | stock KOReader keys (**Select**, **Start** and stick clicks are swallowed) |
 
+#### Confirmation dialogs (A / B on the buttons)
+
+While kopad is on and a gamepad is connected, KOReader's confirmation and value dialogs carry the pad letter on their buttons — **Ⓐ Delete**, **Ⓑ Cancel** (plain **A · Delete** when the fonts have no circled letters) — and the letters work:
+
+| Dialog | **A** | **B** | **X** / **Y** |
+|---|---|---|---|
+| Yes/no question (`ConfirmBox`: delete, overwrite, reset, …) | the action (OK, Delete, …) | Cancel | — |
+| Three-way question (`MultiConfirmBox`) | the main choice, by its text (Save, Connect, Open, Yes, Download) | Cancel | **X** = the other choice (Discard, Turn Wi-Fi off, Another, No); a pair without a main choice (Default / Fallback, http / https) gets **X** = left, **Y** = right and no **A** |
+| Number, two numbers, date / time, list of options (`SpinWidget`, `DoubleSpinWidget`, `DateTimeWidget`, `RadioButtonWidget`) | Apply / Set | Close | — |
+| Text input (`InputDialog`) | the main button (Save, Search, …) | Cancel / Close | **X** = backspace |
+
+**A** follows the label only while nothing is highlighted. Once the D-pad has moved the focus (to a button, a ▲/▼ arrow, an option in a list), **A** presses what is highlighted, as in stock KOReader, and **Start** still does the labelled **A** action. **LB** / **RB** change the value in the number dialogs (stock).
+
 #### Dialogs as a wheel
 
 Dialogs that KOReader draws as a grid of buttons in the middle of the screen (`ButtonDialog`: kopad's own action menu, a highlight's menu, a file's long-press menu, …) open as a **wheel** while kopad is on, as in console games: the wheel is cut into as many sectors as there are buttons, each with a monochrome glyph; the selected sector is black and pops out of the rim, and its label is printed in the centre. The wheel has no frame: it sits on a white disc over the page, with the dialog's title in a pill above it (or, for kopad's action menu and KOReader's highlight menus, the text they are about) and the buttons A / B (X, LB / RB with the page number when they apply) in a pill below. Switch it off per device in *kopad → Dialogs as a wheel (this device)*.
@@ -259,6 +272,7 @@ X + D-pad still opens the menus, and role overrides from koligilo still win over
 - **selector.lua** — the selection overlay: sentence, word and highlight modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map").
 - **wheel.lua** — turns plain `ButtonDialog`s into a radial menu (wraps `ButtonDialog.init`, replaces only the dialog's content, so button callbacks keep working); glyphs come from KOReader's bundled Nerd Font symbols.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
+- **padconfirm.lua** — puts the pad letters on the buttons of confirmation and value dialogs (wraps the dialogs' `init` once, prefixes `ok_text` / `cancel_text` / `choice*_text`; circled letters when a bundled font has them) and presses the labelled button for **A** / **B** / **X** / **Y**.
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
 
@@ -293,6 +307,7 @@ Three automated tests: the remapping layer (`padmap.lua`) with the pad wiring in
 
 ```bash
 lua tests/padmap_test.lua
+lua tests/padconfirm_test.lua
 lua tests/wheel_test.lua
 lua tests/selector_test.lua
 ```

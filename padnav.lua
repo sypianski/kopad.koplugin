@@ -254,6 +254,10 @@ if not ok_trace or type(Trace) ~= "table" then
     Trace = { log = function() end, active = function() return false end }
 end
 
+-- A / B / X / Y on confirmation dialogs (padconfirm.lua); missing = stock keys.
+local ok_confirm, PadConfirm = pcall(require, "padconfirm")
+if not ok_confirm or type(PadConfirm) ~= "table" then PadConfirm = nil end
+
 -- Optional button remapping (padmap.lua, PC-011). PadNav only calls
 -- Padmap.resolve on the table main.lua hands over via set_padmap(); a missing
 -- module or no table = identity mapping (behaviour before remapping existed).
@@ -1766,6 +1770,28 @@ function PadNav:_text_field_button(btn)
     return true
 end
 
+-- Confirmation dialogs labelled by padconfirm.lua (ConfirmBox,
+-- MultiConfirmBox, the spin / date / radio widgets, InputDialog buttons):
+-- A = the "Ⓐ" button while nothing shows the focus (once the D-pad lit
+-- something, A presses that, stock), Start = the "Ⓐ" button always,
+-- B / X / Y = their buttons (X, Y: MultiConfirmBox choices).
+-- Returns true = consumed.
+local CONFIRM_LETTER = { [BTN_A] = "A", [BTN_START] = "A", [BTN_B] = "B", [BTN_X] = "X", [BTN_Y] = "Y" }
+function PadNav:_confirm_button(btn)
+    local letter = CONFIRM_LETTER[btn]
+    if not (letter and PadConfirm) then return false end
+    local dlg = top_window()
+    if not PadConfirm.letters(dlg) then return false end
+    if btn == BTN_A and PadConfirm.focus_shown(dlg) then return false end
+    local ok, res = pcall(PadConfirm.press, dlg, letter)
+    if not ok then
+        logger.warn("kopad: confirm button failed: " .. tostring(res))
+        return false
+    end
+    Trace.log("padnav btn=%s: confirm %s -> %s", tostring(btn), letter, tostring(res))
+    return res
+end
+
 -- RT in a text-input dialog: push-to-talk through diktonoti. Start on the
 -- press, stop on the release. KOReader reports no trigger release, but keeps
 -- Gamepad.held_axis_directions up to date on every SDL motion, so the release
@@ -1854,6 +1880,7 @@ function PadNav:_menu_button(btn, ctx)
     elseif ctx == "window" then
         if self:_diktonoti_route(btn) then return true end
         if self:_text_field_button(btn) then return true end
+        if self:_confirm_button(btn) then return true end
         local dlg = find_config_dialog()
         if not dlg then return BUTTON_SWALLOW[btn] or false end
         if btn == BTN_START then

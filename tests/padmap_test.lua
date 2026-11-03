@@ -1612,4 +1612,37 @@ do
     package.loaded["device"] = saved_dev
 end
 
+-- 17. Confirmation dialogs labelled by padconfirm.lua (context "window"):
+-- A = the "A ·" button while no focus is painted, else stock; Start = "A ·"
+-- always; B / X = their buttons; unlabelled windows keep the stock keys.
+do
+    local PadNav = require("padnav")
+    local stack = require("ui/uimanager")._window_stack
+    local log = {}
+    local function btn(text, name)
+        return { text = text, callback = function() log[#log + 1] = name end, frame = { invert = false } }
+    end
+    local ok_b = btn("A · Delete", "ok")
+    local dlg = { _kopad_confirm = { A = true, B = true }, { { ok_b, btn("B · Cancel", "cancel") } } }
+    local ui = { document = {}, rolling = {}, handleEvent = function() end }
+    for i = #stack, 1, -1 do stack[i] = nil end
+    stack[1], stack[2] = { widget = ui }, { widget = dlg }
+    local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = {} } }, { __index = PadNav })
+    n:set_padmap(nil)
+    assert(n:_context() == "window")
+
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and log[1] == "ok", "A = labelled OK")
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and log[2] == "cancel", "B = labelled Cancel")
+    assert(n:onGamepadButtonDown({ button = 2 }) == false and #log == 2, "X: no letter here -> stock")
+    ok_b.frame.invert = true
+    assert(n:onGamepadButtonDown({ button = 0 }) == false and #log == 2, "A with a painted focus: stock")
+    assert(n:onGamepadButtonDown({ button = 6 }) == true and log[3] == "ok", "Start = OK, focus or not")
+
+    -- an unlabelled window: unchanged (A / B stock, Start swallowed)
+    stack[2] = { widget = { { { btn("OK", "plain") } } } }
+    assert(n:onGamepadButtonDown({ button = 0 }) == false and n:onGamepadButtonDown({ button = 1 }) == false, "unlabelled: stock")
+    assert(n:onGamepadButtonDown({ button = 6 }) == true and #log == 3, "unlabelled: Start swallowed")
+    for i = #stack, 1, -1 do stack[i] = nil end
+end
+
 print("padmap_test: all tests passed")

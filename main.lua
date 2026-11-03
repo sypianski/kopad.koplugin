@@ -160,6 +160,7 @@ function kopad:init()
     self:_apply_padmap()
     self:_install_wheel()
     self:_install_vkb()
+    self:_install_confirm()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
         tostring(self.subs.selector ~= nil))
@@ -268,6 +269,17 @@ function kopad:_install_vkb()
     local ok, res = pcall(Vkb.install, function() return self.enabled end)
     if not ok then logger.warn("kopad: vkb install failed: " .. tostring(res)) end
     Trace.log("vkb: installed=%s", tostring(ok and res))
+end
+
+-- "Ⓐ OK" / "Ⓑ Cancel" on confirmation dialogs while kopad is enabled and
+-- a pad is connected (padconfirm.lua; padnav presses the labelled buttons).
+-- Same once-per-run patch; after vkb, so it wraps vkb's InputDialog.init.
+function kopad:_install_confirm()
+    local PadConfirm = safe_require("padconfirm")
+    if not PadConfirm then return end
+    local ok, res = pcall(PadConfirm.install, function() return self.enabled end, logger.warn)
+    if not ok then logger.warn("kopad: confirm install failed: " .. tostring(res)) end
+    Trace.log("confirm: installed=%s", tostring(ok and res))
 end
 
 function kopad:_ensure_selector()

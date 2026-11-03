@@ -12,7 +12,8 @@ words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
-padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
+padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
+`lua tests/padconfirm_test.lua` (button letters on confirmation dialogs), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller) and `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights); plain `assert`, KOReader stubbed.
@@ -273,6 +274,37 @@ when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
 the last pad is unplugged. Text input with a pad: RT held = dictation, X =
 backspace, A = accept (`_text_field_button`, `_dictate_hold`). Test:
 `lua tests/vkb_test.lua`. Related: TASK-34 (kopad off without a pad).
+
+### `padconfirm.lua` — A / B / X / Y on confirmation dialogs
+`main.lua:_install_confirm()` (after `_install_vkb`, so it wraps vkb's
+`InputDialog.init`) calls `PadConfirm.install(state_fn, warn)`, which wraps
+`init` ONCE per run (`_kopad_confirm_init`) of the classes in `M.SPECS`
+(`ConfirmBox`, `MultiConfirmBox`, `SpinWidget`, `DoubleSpinWidget`,
+`DateTimeWidget`, `RadioButtonWidget`) and of `InputDialog`. On the first init
+of a dialog (kopad enabled + `vkb.pad_connected()`), it prefixes the instance
+texts with the letter: `ok_text` = A, `cancel_text` = B. Prefix = `Ⓐ Ⓑ Ⓧ Ⓨ` + space
+when `glyph_check` (once per run, `M.circled`) finds all four in `cfont` or
+`Font.fallbacks` (the `RenderText:getGlyph` lookup), else `"A · "`.
+MultiConfirmBox goes by content (`multi_spec`, user decision 2026-11-03): the
+choice whose translated text is in `M.PRIMARY` (or whose partner is in
+`M.SECONDARY`) = A, the other = X; no main choice (Default / Fallback, unknown
+texts) = X left, Y right, no A. `*_text_func` is read and wrapped; disabled
+choices and `no_ok_button` are not labelled. InputDialog: the caller's
+`buttons` rows are COPIED, then the `is_enter_default` button = A and the
+first `_("Cancel")` / `_("Close")` = B. `dlg._kopad_confirm` = the letters set
+(also the reinit guard). padnav `_confirm_button` (context `window`, after
+`_diktonoti_route` and `_text_field_button`): A = `press(dlg, "A")` unless
+`focus_shown(dlg)` (any `frame` / `_frame` / `image` with `invert == true`: on a
+touch device the initial FocusManager focus is not painted, so painted = the
+user moved it -> stock press of the highlighted thing); Start = A always;
+B / X / Y = their buttons. `press` finds the Button by its label prefix in the
+widget tree (array children only) and runs its `callback`; a disabled button
+is consumed without action. Why: stock A pressed the unpainted focus at
+x = 1, y = 1, which in a ConfirmBox is Cancel. Not covered (no OK/Cancel pair
+or no need): TextViewer and InfoMessage (B closes), FrontLight /
+NaturalLight, SkimTo, SortWidget, PathChooser, KeyboardLayoutDialog,
+ButtonDialog (wheel.lua). diktonoti's label line describes only RT and X
+(A / B are on the buttons). Tests: `lua tests/padconfirm_test.lua`, section 17 of `tests/padmap_test.lua`.
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
