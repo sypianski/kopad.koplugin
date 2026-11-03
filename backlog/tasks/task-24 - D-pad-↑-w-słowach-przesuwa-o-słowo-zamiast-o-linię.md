@@ -1,9 +1,10 @@
 ---
 id: TASK-24
 title: D-pad ↑ w słowach przesuwa o słowo zamiast o linię
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 20:00'
+updated_date: '2026-11-03 21:37'
 labels:
   - gamepad
   - bug
@@ -20,7 +21,13 @@ Zgłoszenie usera ze Steam Decka (2026-11-03, kopad 7456838): w zaznaczaniu sło
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 _ww_line porównuje linie przez getScreenPositionFromXPointer po obu stronach (kursor i kandydat), słowo w docelowej linii szuka na jej środku
-- [ ] #2 Atrapa w selector_test zwraca górę linii jak CreDocument; dopisany przypadek ↑ w obrębie strony
+- [x] #1 _ww_line porównuje linie przez getScreenPositionFromXPointer po obu stronach (kursor i kandydat), słowo w docelowej linii szuka na jej środku
+- [x] #2 Atrapa w selector_test zwraca górę linii jak CreDocument; dopisany przypadek ↑ w obrębie strony
 - [ ] #3 Sprawdzone na Decku: ↑ i ↓ przechodzą o linię
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Poprawka w c8a82a0 (wypchnięte, na Decku). Zostaje AC3: sprawdzenie przez usera na Decku.
+<!-- SECTION:NOTES:END -->

@@ -3,9 +3,10 @@ id: TASK-25
 title: >-
   Szybsze poruszanie w zaznaczeniu: LT/RT o akapit, przyspieszenie trzymanego
   D-pada
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 20:10'
+updated_date: '2026-11-03 21:37'
 labels:
   - gamepad
   - ux
@@ -22,9 +23,15 @@ Decyzja usera 2026-11-03: poruszanie się słowami linijka po linijce jest za wo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Selector:para(dir, range): słowa / zdania / podkreślenia, z przejściem przez brzeg strony
-- [ ] #2 LT/RT w zaznaczeniu wywołują para (także trzymane i na starszej ścieżce klawiszy); LB/RB dalej zamykają i przewracają stronę
-- [ ] #3 Trzymany D-pad przyspiesza do minimalnego odstępu
-- [ ] #4 Nagłówki padnav/main, ściągawka, README, CLAUDE.md zgodne
-- [ ] #5 Testy: selector_test (para w słowach i zdaniach, brzeg strony, zakres) i padmap_test (spusty w zaznaczeniu, przyspieszenie)
+- [x] #1 Selector:para(dir, range): słowa / zdania / podkreślenia, z przejściem przez brzeg strony
+- [x] #2 LT/RT w zaznaczeniu wywołują para (także trzymane i na starszej ścieżce klawiszy); LB/RB dalej zamykają i przewracają stronę
+- [x] #3 Trzymany D-pad przyspiesza do minimalnego odstępu
+- [x] #4 Nagłówki padnav/main, ściągawka, README, CLAUDE.md zgodne
+- [x] #5 Testy: selector_test (para w słowach i zdaniach, brzeg strony, zakres) i padmap_test (spusty w zaznaczeniu, przyspieszenie)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Zrobione w 9e43a7d (wypchnięte, na Decku).
+<!-- SECTION:NOTES:END -->
