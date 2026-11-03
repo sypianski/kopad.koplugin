@@ -40,11 +40,12 @@ function Doc:getScreenBoxesFromPositions(a, b)
     for i = math.max(idx(a), self:first()), math.min(idx(b), self:last()) do t[#t + 1] = self:box(i) end
     return t
 end
+-- Like CreDocument: the TOP of the word's line (doc_y - top_y), not its
+-- middle. The word on the left of the cursor has the same y (TASK-24).
 function Doc:getScreenPositionFromXPointer(xp)
     local i = idx(xp)
     if not self:isXPointerInCurrentPage(xp) then return nil end
-    local b = self:box(i)
-    return b.y + b.h / 2
+    return self:box(i).y
 end
 function Doc:getWordFromPosition(pos)
     local best, bd
@@ -202,6 +203,8 @@ sel:_open_walk(false); ov = sel.overlay
 assert(ov.mode == "walk" and text(ov) == "t1", "D-pad ↓/→ opens on the first word")
 ov:step(1); assert(text(ov) == "t2")
 ov:line(1); assert(text(ov) == "t5", "↓ = word below at the same x: " .. tostring(text(ov)))
+ov:line(-1); assert(doc.page == 1 and text(ov) == "t2", "↑ = word above at the same x, not the word on the left: " .. tostring(text(ov)))
+ov:line(1); assert(text(ov) == "t5")
 ov:line(1); assert(doc.page == 2 and text(ov) == "t7", "↓ on the last line = next page, first word")
 ov:step(-1); assert(doc.page == 1 and text(ov) == "t6", "← on the first word = previous page, last word")
 ov:step(1); assert(doc.page == 2 and text(ov) == "t7", "→ on the last word = next page")

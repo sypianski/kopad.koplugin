@@ -355,9 +355,17 @@ function SelectorOverlay:_ww_line(delta, range)
     local doc    = self.doc
     local fsbox  = self:_ww_fragment_sbox() or self.ww_word.sbox
     local target_x = fsbox.x
-    local start_y  = fsbox.y + fsbox.h * 0.5
+    -- getScreenPositionFromXPointer gives the TOP of a word's line, so lines
+    -- are compared through that same call (start_y = the cursor's line):
+    -- against the box middle, the word on the left counted as the line above
+    -- and ↑ moved by one word. A split word's tail sits on another line than
+    -- its pos0, so there the fragment box is the reference.
     local line_h   = fsbox.h
     local line_tol = line_h * 0.3
+    local start_y  = self.ww_word.is_split_fragment ~= "tail"
+        and doc:getScreenPositionFromXPointer(self.ww_word.pos0) or nil
+    start_y = start_y or fsbox.y
+    local box_dy = fsbox.y - start_y  -- line top -> word box top
 
     local current_xp    = self.ww_word.pos0
     local target_line_y = nil
@@ -381,8 +389,10 @@ function SelectorOverlay:_ww_line(delta, range)
         return
     end
 
+    -- Probe the middle of the target line (target_line_y is its top).
+    local probe_y = target_line_y + box_dy + line_h * 0.5
     local ok, probe = pcall(function()
-        return doc:getWordFromPosition({x = target_x, y = target_line_y}, true)
+        return doc:getWordFromPosition({x = target_x, y = probe_y}, true)
     end)
     if ok and probe and probe.pos0 and probe.pos0 ~= self.ww_word.pos0 then
         local ok2, boxes = pcall(function()
@@ -393,7 +403,7 @@ function SelectorOverlay:_ww_line(delta, range)
             if sbox then
                 probe.sbox = sbox; probe.segments = boxes
                 local resolved, eval_y = self:_resolve_split_fragment(probe, target_x)
-                if math.abs(eval_y - target_line_y) <= line_tol then
+                if math.abs(eval_y - probe_y) <= line_tol then
                     self.ww_word = {
                         pos0 = resolved.pos0, pos1 = resolved.pos1,
                         sbox = sbox, word = resolved.word or "",
