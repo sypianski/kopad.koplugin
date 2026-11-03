@@ -187,6 +187,8 @@ Without keyreader, or with the switch off, nothing changes. Windows opened by ot
 
 In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **B** = close without saving (stock Back).
 
+While kopad is enabled and a gamepad is connected, these dialogs open **without the on-screen keyboard** (it would cover half of the screen); tap the field or the dialog's keyboard button to bring it up.
+
 With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*): **hold RT** and speak — on release the text is recognized by the Diktilo daemon on the Steam Deck and inserted at the cursor; **B** during a recording cancels it. (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, RT does nothing there.
 
 ### Button remapping (gamepad layouts)

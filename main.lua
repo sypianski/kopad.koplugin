@@ -156,6 +156,7 @@ function kopad:init()
     self:_load_subs()
     self:_apply_padmap()
     self:_install_wheel()
+    self:_install_vkb()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
         tostring(self.subs.selector ~= nil))
@@ -253,6 +254,17 @@ function kopad:_install_wheel()
     if not ok then logger.warn("kopad: wheel install failed: " .. tostring(res)) end
     self.wheel_available = ok and res or false
     Trace.log("wheel: available=%s", tostring(self.wheel_available))
+end
+
+-- No on-screen keyboard popping up in text-input dialogs while kopad is
+-- enabled and a pad is connected (vkb.lua). Same once-per-run patch with a
+-- per-instance state function as the wheel.
+function kopad:_install_vkb()
+    local Vkb = safe_require("vkb")
+    if not Vkb then return end
+    local ok, res = pcall(Vkb.install, function() return self.enabled end)
+    if not ok then logger.warn("kopad: vkb install failed: " .. tostring(res)) end
+    Trace.log("vkb: installed=%s", tostring(ok and res))
 end
 
 function kopad:_ensure_selector()

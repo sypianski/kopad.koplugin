@@ -12,7 +12,7 @@ words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
-padnav wiring), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
+padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller) and `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights); plain `assert`, KOReader stubbed.
@@ -247,6 +247,20 @@ else the label's first letter). The top half of the file is pure Lua (tested);
 KOReader modules are required lazily. padnav: context `"wheel"` (top window has
 `_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
 `_wheel_button` / `_wheel_call`; every pad event is consumed there.
+
+### `vkb.lua` — no on-screen keyboard while a pad is connected
+`main.lua:_install_vkb()` calls `Vkb.install(state_fn)` (state = kopad
+enabled), which wraps `InputDialog.init` ONCE per run (`ID._kopad_stock_init`;
+`MultiInputDialog:init` calls it too). On a first init (not a reinit) of an
+editable dialog, when kopad is enabled and SDL reports a connected gamepad, it
+sets what stock sets for a physical keyboard with `virtual_keyboard_enabled`
+off: `keyboard_visible = false`, `skip_first_show_keyboard = true`. Tapping the
+field or the dialog's ⌨ toggle still opens the keyboard. Pad check:
+`SDL_GetJoysticks` + `SDL_IsGamepad` through `require("ffi/SDL3").SDL`, only
+when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
+the last pad is unplugged. Text input with a pad: RT held = dictation, X =
+backspace, A = accept (`_text_field_button`, `_dictate_hold`). Test:
+`lua tests/vkb_test.lua`. Related: TASK-34 (kopad off without a pad).
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
