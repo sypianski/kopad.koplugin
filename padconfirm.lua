@@ -51,6 +51,9 @@ M.SPECS = {
     ["ui/widget/doublespinwidget"] = OK_CANCEL,
     ["ui/widget/datetimewidget"] = OK_CANCEL,
     ["ui/widget/radiobuttonwidget"] = OK_CANCEL,
+    -- Vortpaf's definition card (vortpaf.koplugin/vortpaf_card.lua); not
+    -- loadable = Vortpaf not installed, skipped like any missing class.
+    ["vortpaf_card"] = { A = "keep_text", X = "regenerate_text", B = "discard_text" },
 }
 M.INPUT_DIALOG = "ui/widget/inputdialog"
 M.LETTERS = { "A", "X", "Y", "B" }

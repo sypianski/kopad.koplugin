@@ -36,12 +36,19 @@ local SpinWidget = class({ ok_text = "Apply", cancel_text = "Close" }, function(
              button(self.ok_text, function() log[#log + 1] = "apply" end, self.changed or false) }
 end)
 local InputDialog = { init = function(self) self[1] = { { self.buttons[1][1] and {} or nil } } end }
+local VortpafCard = class({ keep_text = "Keep", regenerate_text = "Regenerate", discard_text = "Discard" }, function(self)
+    local ready = not self.loading
+    return { button(self.discard_text, function() log[#log + 1] = "discard" end, ready),
+             button(self.regenerate_text, function() log[#log + 1] = "regenerate" end, ready),
+             button(self.keep_text, function() log[#log + 1] = "keep" end, ready) }
+end)
 
 local mods = {
     ["ui/widget/confirmbox"] = ConfirmBox,
     ["ui/widget/multiconfirmbox"] = MultiConfirmBox,
     ["ui/widget/spinwidget"] = SpinWidget,
     ["ui/widget/inputdialog"] = InputDialog,
+    ["vortpaf_card"] = VortpafCard,
     ["gettext"] = function(s) return s end,
 }
 for name, m in pairs(mods) do package.preload[name] = function() return m end end
@@ -109,6 +116,19 @@ d = new(SpinWidget)
 assert(C.press(d, "A") == true and #log == 0, "disabled Apply: consumed, no action")
 d = new(SpinWidget, { changed = true })
 assert(C.press(d, "A") == true and log[1] == "apply", "Apply")
+
+-- 5b. Vortpaf's definition card: A = Keep, X = Regenerate, B = Discard; while
+-- the answer is loading the buttons are disabled = consumed, nothing runs
+log = {}
+d = new(VortpafCard)
+assert(d.seen.keep_text == "A · Keep" and d.seen.regenerate_text == "X · Regenerate"
+    and d.seen.discard_text == "B · Discard", "vortpaf card labels")
+assert(C.press(d, "X") and C.press(d, "A") and C.press(d, "B"), "vortpaf card presses")
+assert(table.concat(log, ",") == "regenerate,keep,discard", table.concat(log, ","))
+assert(C.press(d, "Y") == false, "vortpaf card: no Y")
+log = {}
+d = new(VortpafCard, { loading = true })
+assert(C.press(d, "A") == true and #log == 0, "vortpaf card loading: consumed, no action")
 
 -- 6. kopad off / no pad: no labels, presses stock
 enabled = false
