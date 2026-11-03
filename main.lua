@@ -132,6 +132,7 @@ function kopad:init()
     self.subs     = {}
 
     if Trace.active() then self:_trace_start() end
+    self:_default_page_view()
     self:_load_subs()
     self:_apply_padmap()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
@@ -161,6 +162,24 @@ function kopad:init()
     if self.ui and self.ui.menu then
         self.ui.menu:registerToMainMenu(self)
     end
+end
+
+-- On the pad, only LB/RB and LT/RT turn the page of a PDF/DjVu, so new
+-- documents should open in page view: continuous view (KOReader's default,
+-- kopt_page_scroll = 1) scrolls into the next page and ignores panning.
+-- Done once per device, the first time kopad runs enabled; switching
+-- continuous view back on in KOReader's settings afterwards sticks.
+-- Documents that already remember continuous view switch on the first pan
+-- (PadNav:_paged_pan).
+function kopad:_default_page_view()
+    if not self.enabled or self.device_settings:isTrue("page_view_default_set") then return end
+    local grs = rawget(_G, "G_reader_settings")
+    if not grs then return end
+    grs:saveSetting("kopt_page_scroll", 0)
+    grs:flush()
+    self.device_settings:saveSetting("page_view_default_set", true)
+    self.device_settings:flush()
+    Trace.log("default page view set (kopt_page_scroll = 0)")
 end
 
 function kopad:_load_subs()

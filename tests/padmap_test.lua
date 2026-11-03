@@ -482,39 +482,69 @@ do
     n:onGamepadButtonDown({ button = 0 }); assert(log.events[1] == "ShowToc", "south -> role b -> toc")
     n:onGamepadButtonDown({ button = 1 }); assert(log.events[2] == "GotoViewRel:1", "east -> role a -> next page")
 
-    -- Paged documents (PDF/DjVu): D-pad = zoom / fit, R-stick = pan
+    -- Paged documents (PDF/DjVu): D-pad / L-stick = pan, R-stick = zoom / fit,
+    -- only LB/RB and LT/RT change the page (GotoPage, a whole page)
     local function paged(ctx)
         local p, plog = nav(nil, ctx)
-        p.ui.paging = {}
+        p.ui.paging = { current_page = 5 }
+        p.ui.handleEvent = function(_, ev)
+            local a = ev.args[1]
+            if type(a) == "table" then a = a[1] .. "," .. a[2] end
+            plog.events[#plog.events + 1] = ev.name .. (a ~= nil and (":" .. tostring(a)) or "")
+        end
         return p, plog
     end
     n, log = paged()
-    for btn, want in pairs({ [11] = "Zoom:in", [12] = "Zoom:out",
-                             [13] = "SetZoomMode:page", [14] = "SetZoomMode:contentwidth" }) do
+    for btn, want in pairs({ [11] = "Panning:0,-1", [12] = "Panning:0,1",
+                             [13] = "Panning:-1,0", [14] = "Panning:1,0" }) do
         log.events = {}
         assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
             "paged D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
     end
-    local pans = {}
-    n.ui.handleEvent = function(_, ev) pans[#pans + 1] = ev.name .. ":" .. ev.args[1][1] .. "," .. ev.args[1][2] end
-    assert(n:onGamepadAxisMotion({ axis = 3, value = 20000 }) == true and pans[1] == "Panning:0,1", "R-stick down")
-    assert(n:onGamepadAxisMotion({ axis = 2, value = -20000 }) == true and pans[2] == "Panning:-1,0", "R-stick left")
-    -- L-stick stays stock in a paged document (passthrough)
-    assert(n:onGamepadAxisMotion({ axis = 1, value = 20000 }) == false and #pans == 2)
-    -- X held: X + D-pad keeps its menu combo, no zoom
+    for _, c in ipairs({ { 0, -20000, "Panning:-1,0" }, { 0, 20000, "Panning:1,0" },
+                         { 1, -20000, "Panning:0,-1" }, { 1, 20000, "Panning:0,1" },
+                         { 3, -20000, "Zoom:in" }, { 3, 20000, "Zoom:out" },
+                         { 2, -20000, "SetZoomMode:page" }, { 2, 20000, "SetZoomMode:contentwidth" } }) do
+        log.events = {}
+        assert(n:onGamepadAxisMotion({ axis = c[1], value = c[2] }) == true and log.events[1] == c[3],
+            "paged stick " .. c[1] .. "/" .. c[2] .. " -> " .. c[3] .. ", got " .. tostring(log.events[1]))
+    end
+    -- page turns: bumpers and triggers, whole page from the current one
+    log.events = {}
+    assert(n:onGamepadButtonDown({ button = 9 }) == true and log.events[1] == "GotoPage:4", "LB")
+    assert(n:onGamepadButtonDown({ button = 10 }) == true and log.events[2] == "GotoPage:6", "RB")
+    n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(log.events[3] == "GotoPage:4" and log.events[4] == "GotoPage:6", "LT / RT")
+    assert(#log.calls == 0, "built-in page handlers (GotoViewRel) not called")
+    -- continuous view: the first pan switches the document to page view
+    n, log = paged()
+    n.ui.view.page_scroll = true
+    n:onGamepadButtonDown({ button = 12 })
+    assert(log.events[1] == "SetScrollMode:false" and log.events[2] == "Panning:0,1", "scroll -> page view")
+    n.ui.view.page_scroll = false
+    n:onGamepadButtonDown({ button = 12 })
+    assert(#log.events == 3, "page view: no second switch")
+    -- a role override still wins over the paged default
+    n, log = paged()
+    n:set_padmap(P.build(acts({ rb = "toc" }), "xbox"))
+    assert(n:onGamepadButtonDown({ button = 10 }) == true and log.events[1] == "ShowToc", "override over paged RB")
+    -- X held: X + D-pad keeps its menu combo, no pan
     n, log = paged()
     n._x_mode = true
     n.onKPUp2 = function() log.calls[#log.calls + 1] = "onKPUp2"; return true end
-    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "X + D-pad is not a zoom")
-    -- dictionary popup open: D-pad passes through
+    assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "X + D-pad is not a pan")
+    -- dictionary popup open: D-pad and sticks pass through
     n, log = paged({ dict = {} })
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0)
+    assert(n:onGamepadAxisMotion({ axis = 1, value = 20000 }) ~= true or #log.events == 0, "dict: no pan")
     -- FileManager (no document) and reflowable documents: D-pad unchanged
     n, log = paged({ doc = false })
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "FileManager list navigation")
     n, log = paged()
     n.ui.rolling = {}
     assert(n:onGamepadButtonDown({ button = 11 }) == false and #log.events == 0, "EPUB keeps word walk")
+    n:onGamepadButtonDown({ button = 10 }); assert(log.calls[1] == "onKPPgFwd", "EPUB keeps its page turn")
 end
 
 print("padmap_test: all tests passed")

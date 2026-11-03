@@ -139,15 +139,18 @@ An override applies only in the idle reading context: a document is open and no 
 
 The selector (word walk / struct / crosshair) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) and in the FileManager no reader keys are suppressed and selector-dependent handlers pass through — only page turns and X-combos remain active there.
 
-Paged documents get their own view controls instead (stock KOReader 2026.07+ `Gamepad*` path):
+Paged documents get their own view controls instead (stock KOReader 2026.07+ `Gamepad*` path). Only the bumpers and the triggers change the page, always by a whole page, so nothing else turns pages by surprise:
 
 | Button | Action |
 |---|---|
-| **D-pad ↑ / ↓** | zoom in / out |
-| **D-pad ← / →** | fit the whole page / fit the text width (margins cropped) |
-| **R-stick** | pan the page (half a screen per step, keeps moving while held) |
+| **D-pad** / **L-stick** | move around the page (half a screen per step, never turns the page; the stick keeps moving while held) |
+| **R-stick ↑ / ↓** | zoom in / out |
+| **R-stick ← / →** | fit the whole page / fit the text width (margins cropped) |
+| **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
-X + D-pad still opens the menus, and the L-stick keeps KOReader's own page navigation. In text-width mode a page turn walks down the page before moving to the next one.
+Moving around needs page view, so the first time kopad runs enabled on a device it makes page view the default for new documents (`kopt_page_scroll = 0`; continuous view is KOReader's own default and scrolls into the next page). A document that still remembers continuous view switches to page view on the first D-pad or L-stick move, and KOReader remembers that per document. Turning continuous view back on in KOReader afterwards is respected. In page view at text width the page already fits sideways, so ← / → only move once you zoom in.
+
+X + D-pad still opens the menus, and role overrides from koligilo still win over these defaults.
 
 ## Technical notes
 

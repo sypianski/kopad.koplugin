@@ -59,10 +59,12 @@ crengine (rolling) documents. In paged documents (PDF/DjVu) and in the
 FileManager no reader keys are suppressed and the selector-dependent
 handlers return false (pass-through) — only LB/RB page turns and X-combos
 remain active there. Paged documents get their own view controls instead
-(PAGED_DPAD, _paged_idle; Gamepad* path only):
-  D-pad ↑ / ↓            Zoom in / out
-  D-pad ← / →            Fit whole page / fit text width (margins cropped)
-  R-stick                Pan the page
+(PAGED_* tables, _paged_idle; Gamepad* path only). Only LB/RB and LT/RT
+change the page, always by a whole page:
+  D-pad / L-stick        Pan the page (never turns it)
+  R-stick ↑ / ↓          Zoom in / out
+  R-stick ← / →          Fit whole page / fit text width (margins cropped)
+  LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 The FileManager keeps the stock list navigation.
 
 Input paths (two, both end in the same on<Key> handlers):
@@ -177,16 +179,21 @@ local BUTTON_SWALLOW = {
     [BTN_L3] = true, [BTN_R3] = true,
 }
 
--- Paged documents (PDF/DjVu) have no selector, so there the D-pad and the
--- R-stick steer the view instead (see PadNav:_paged_idle): D-pad up/down =
--- zoom in/out, left = whole page, right = text width (margins cropped);
--- R-stick = pan the page (stock ReaderPanning, half a screen per step, the
--- stock axis auto-repeat keeps it moving while held).
-local PAGED_DPAD = {
-    [11] = { "Zoom", "in" },
-    [12] = { "Zoom", "out" },
-    [13] = { "SetZoomMode", "page" },
-    [14] = { "SetZoomMode", "contentwidth" },
+-- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
+-- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
+-- the page, always by a whole page (GotoPage, view from the top); every other
+-- control stays on the current page, so nothing turns pages by surprise:
+--   D-pad / L-stick  pan (stock ReaderPanning, half a screen per step, bounded
+--                    by the page; the stick keeps moving while held)
+--   R-stick ↑ / ↓    zoom in / out;  ← / →  whole page / text width
+local PAGED_PAN_DPAD = {
+    [11] = { 0, -1 }, [12] = { 0, 1 }, [13] = { -1, 0 }, [14] = { 1, 0 },
+}
+local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
+-- R-stick: axis -> { negative direction, positive direction } as event + arg
+local PAGED_RSTICK = {
+    [AXIS_RX] = { { "SetZoomMode", "page" }, { "SetZoomMode", "contentwidth" } },
+    [AXIS_RY] = { { "Zoom", "in" }, { "Zoom", "out" } },
 }
 
 -- Trigger auto-repeat filter (see PadNav:_trigger_is_new_press). Stock
@@ -1051,8 +1058,8 @@ function PadNav:_override_action(role)
     return act
 end
 
--- True when the D-pad and the R-stick should steer a paged document's view
--- (PAGED_DPAD): a PDF/DjVu is open (the FileManager has no ui.paging, so its
+-- True when the pad should steer a paged document's view (PAGED_* tables):
+-- a PDF/DjVu is open (the FileManager has no ui.paging, so its
 -- list navigation stays stock), no X-combo pending (X + D-pad keeps its
 -- menus) and no dictionary popup.
 function PadNav:_paged_idle()
@@ -1060,6 +1067,25 @@ function PadNav:_paged_idle()
     if self._x_mode then return false end
     if self:_find_dict_widget() then return false end
     return true
+end
+
+-- Whole page back/forward in a paged document (GotoViewRel would walk the
+-- views of a zoomed page first); _gotoPage clamps to the document.
+function PadNav:_paged_page(dir)
+    local cur = self.ui.paging.current_page
+    if type(cur) ~= "number" then return end
+    self.ui:handleEvent(Event:new("GotoPage", cur + dir))
+end
+
+-- Panning shifts view.visible_area, which continuous view (KOReader's default
+-- for PDF) ignores, and scrolling there would run into the next page anyway.
+-- So the first pan switches the document to page view; KOReader saves that
+-- with the document (kopt_page_scroll).
+function PadNav:_paged_pan(dx, dy)
+    if self.ui.view and self.ui.view.page_scroll then
+        self.ui:handleEvent(Event:new("SetScrollMode", false))
+    end
+    self.ui:handleEvent(Event:new("Panning", { dx, dy }))
 end
 
 -- Run an override. Always consumes the press (true): the user chose this
@@ -1129,10 +1155,10 @@ function PadNav:_button_down(ev)
         if tr then Trace.log("padnav btn=%s: role=%s override=%s", tostring(btn), role, override) end
         return self:_run_action(override, role)
     end
-    local paged = PAGED_DPAD[btn]
-    if paged and self:_paged_idle() then
-        if tr then Trace.log("padnav btn=%s: paged view %s:%s", tostring(btn), paged[1], paged[2]) end
-        self.ui:handleEvent(Event:new(paged[1], paged[2]))
+    local pan, page = PAGED_PAN_DPAD[btn], PAGED_PAGE_BUTTONS[btn]
+    if (pan or page) and self:_paged_idle() then
+        if tr then Trace.log("padnav btn=%s: paged %s", tostring(btn), pan and "pan" or "page") end
+        if pan then self:_paged_pan(pan[1], pan[2]) else self:_paged_page(page) end
         return true
     end
     local method = BUTTON_HANDLERS[btn]
@@ -1342,6 +1368,9 @@ function PadNav:_trigger_event(axis, value, from_button)
         if override then
             handler = "override:" .. override
             self:_run_action(override, role)
+        elseif self:_paged_idle() then
+            handler = "paged page"
+            self:_paged_page(axis == AXIS_LT and -1 or 1)
         elseif axis == AXIS_LT then
             handler = "onKPPgBk2"; self:onKPPgBk2()
         else
@@ -1417,10 +1446,17 @@ function PadNav:onGamepadAxisMotion(ax)
     end
     local method = pair[value < 0 and 1 or 2]
 
-    if (axis == AXIS_RX or axis == AXIS_RY) and self:_paged_idle() then
-        local step = value < 0 and -1 or 1
-        if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
-        self.ui:handleEvent(Event:new("Panning", axis == AXIS_RX and { step, 0 } or { 0, step }))
+    if STICK_HANDLERS[axis] and self:_paged_idle() then
+        local neg = value < 0
+        if axis == AXIS_LX or axis == AXIS_LY then
+            local step = neg and -1 or 1
+            if tr then Trace.log("padnav axis=%s value=%s: paged pan", tostring(axis), tostring(value)) end
+            if axis == AXIS_LX then self:_paged_pan(step, 0) else self:_paged_pan(0, step) end
+        else
+            local ev = PAGED_RSTICK[axis][neg and 1 or 2]
+            if tr then Trace.log("padnav axis=%s value=%s: paged %s:%s", tostring(axis), tostring(value), ev[1], ev[2]) end
+            self.ui:handleEvent(Event:new(ev[1], ev[2]))
+        end
         return true
     end
     if axis == AXIS_RX or axis == AXIS_RY then
@@ -1463,9 +1499,10 @@ local CHEAT_READING = _("Reading mode")
     .. "\nX + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nX + LB: TOC    X + RB: bookmarks"
     .. "\n\n" .. _("PDF / DjVu")
-    .. "\nD-pad \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
-    .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92: whole page / text width"
-    .. "\nR-stick: pan the page"
+    .. "\nD-pad / L-stick: move around the page"
+    .. "\nR-stick \xE2\x86\x91/\xE2\x86\x93: zoom in / out"
+    .. "\nR-stick \xE2\x86\x90/\xE2\x86\x92: whole page / text width"
+    .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
     .. "\nRT / LT: next / previous page"
