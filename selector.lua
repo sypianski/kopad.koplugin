@@ -25,7 +25,6 @@ local Pluginaro  = require("pluginaro")
 local WordSource = require("paginmapo")
 
 local STATUS_FACE = require("ui/font"):getFace("infofont", 14)
-local LABEL_FACE  = require("ui/font"):getFace("infofont", 12)
 
 local SEL_RADIUS = 8
 
@@ -1089,8 +1088,7 @@ function SelectorOverlay:paintTo(bb, x, y)
         self:_draw_walk(bb, x, y)
     else
         self:_draw_struct(bb, x, y)
-        self:_draw_labels(bb, x, y)
-        self:_draw_hl_labels(bb, x, y)
+        self:_draw_hl_marks(bb, x, y)
     end
     self:_draw_status(bb, x, y)
 end
@@ -1184,64 +1182,12 @@ function SelectorOverlay:_draw_struct(bb, ox, oy)
     end
 end
 
-function SelectorOverlay:_draw_labels(bb, ox, oy)
-    if self.sel_word or self.hl_cur > 0 then return end
-    local sh = Screen:getHeight()
-    local page_left = nil
-    for _, sent in ipairs(self.sentences) do
-        if sent.sbox and (not page_left or sent.sbox.x < page_left) then
-            page_left = sent.sbox.x
-        end
-    end
-    if not page_left or page_left < 8 then return end
-
-    local entries = {}
-    for i, sent in ipairs(self.sentences) do
-        local sbox = sent.sbox
-        if sbox and sbox.y >= 0 and sbox.y < sh then
-            local lbl = (#self.sentences > 9 and i < 10) and ("0" .. i) or tostring(i)
-            table.insert(entries, {
-                idx = i, sbox = sbox, lbl = lbl,
-                cy  = oy + sbox.y + math.floor(sbox.h / 2),
-            })
-        end
-    end
-    for ei = 2, #entries do
-        local prev, cur = entries[ei - 1], entries[ei]
-        if math.abs(cur.cy - prev.cy) < prev.sbox.h * 0.6 then
-            local off = math.floor(prev.sbox.h * 0.35)
-            prev.cy = prev.cy - off
-            cur.cy  = cur.cy  + off
-        end
-    end
-    for _, e in ipairs(entries) do
-        local active = (e.idx >= (self.sel_sent or 0)
-            and e.idx <= (self.sel_tail or self.sel_sent or 0))
-        local tw = TextWidget:new{
-            text    = e.lbl,
-            face    = LABEL_FACE,
-            fgcolor = active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
-        }
-        local sz  = tw:getSize()
-        local pad = 4
-        local r   = math.min(
-            math.floor(math.max(sz.w, sz.h) / 2) + pad,
-            math.floor(page_left / 2) - 2)
-        if r >= 4 then
-            local cx = ox + math.floor(page_left / 2)
-            if active then
-                bb:paintCircle(cx, e.cy, r, Blitbuffer.COLOR_BLACK, r)
-            else
-                bb:paintCircle(cx, e.cy, r,     Blitbuffer.COLOR_BLACK, r)
-                bb:paintCircle(cx, e.cy, r - 2, Blitbuffer.COLOR_WHITE, r - 2)
-            end
-            tw:paintTo(bb, cx - math.floor(sz.w / 2), e.cy - math.floor(sz.h / 2))
-        end
-        tw:free()
-    end
-end
-
-function SelectorOverlay:_draw_hl_labels(bb, ox, oy)
+-- Saved highlights on the page: a dot in the right margin next to each one,
+-- the focused one (hl_cur, cycled with R-stick up/down) filled, the others a
+-- ring. No numbers and no sentence labels: the pad has no digit input (visel's
+-- labels are there to be typed), the selection itself is inverted and the
+-- position is in the status line (TASK-14).
+function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     if #self.hl_items == 0 then return end
     if self.sel_word then return end
     local sh = Screen:getHeight()
@@ -1255,31 +1201,18 @@ function SelectorOverlay:_draw_hl_labels(bb, ox, oy)
     end
     local margin = sw - page_right
     if margin < 8 then return end
+    local r = math.min(Screen:scaleBySize(5), math.floor(margin / 2) - 2)
+    if r < 3 then return end
+    local cx = ox + page_right + math.floor(margin / 2)
 
     for i, item in ipairs(self.hl_items) do
         local sbox = item.sbox
         if sbox.y >= 0 and sbox.y < sh then
-            local active = (i == self.hl_cur)
-            local lbl = (#self.hl_items > 9 and i < 10) and ("0"..i) or tostring(i)
-            local tw = TextWidget:new{
-                text    = lbl,
-                face    = LABEL_FACE,
-                fgcolor = active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
-            }
-            local sz = tw:getSize()
-            local r  = math.min(
-                math.floor(math.max(sz.w, sz.h) / 2) + 4,
-                math.floor(margin / 2) - 2)
-            if r >= 4 then
-                local cx = ox + page_right + math.floor(margin / 2)
-                local cy = oy + sbox.y + math.floor(sbox.h / 2)
-                bb:paintCircle(cx, cy, r, Blitbuffer.COLOR_BLACK, r)
-                if not active then
-                    bb:paintCircle(cx, cy, r - 2, Blitbuffer.COLOR_WHITE, r - 2)
-                end
-                tw:paintTo(bb, cx - math.floor(sz.w / 2), cy - math.floor(sz.h / 2))
+            local cy = oy + sbox.y + math.floor(sbox.h / 2)
+            bb:paintCircle(cx, cy, r, Blitbuffer.COLOR_BLACK, r)
+            if i ~= self.hl_cur then
+                bb:paintCircle(cx, cy, r - 2, Blitbuffer.COLOR_WHITE, r - 2)
             end
-            tw:free()
         end
     end
 end
