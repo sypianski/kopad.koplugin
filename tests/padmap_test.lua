@@ -1289,9 +1289,9 @@ do
 end
 
 -- 15. Dictation routing (pluginaro integration B, diktonoti) in context
--- "window": R3 toggles while a text field is focused (is_active) or a
+-- "window": X toggles while a text field is focused (is_active) or a
 -- recording runs, B cancels only a running recording. Toggle off / no
--- focused field: R3 swallowed, B stock, nothing called.
+-- focused field: X and B stock (false), nothing called.
 do
     local PadNav = require("padnav")
     local PL = package.loaded.pluginaro
@@ -1314,22 +1314,22 @@ do
     n:set_padmap(nil)
     assert(n:_context() == "window")
 
-    assert(n:onGamepadButtonDown({ button = 8 }) == true and calls[1] == "toggle", "R3 starts")
+    assert(n:onGamepadButtonDown({ button = 2 }) == true and calls[1] == "toggle", "X starts")
     recording, active = true, false
-    assert(n:onGamepadButtonDown({ button = 8 }) == true and calls[2] == "toggle", "R3 stops while recording")
+    assert(n:onGamepadButtonDown({ button = 2 }) == true and calls[2] == "toggle", "X stops while recording")
     assert(n:onGamepadButtonDown({ button = 1 }) == true and calls[3] == "cancel", "B cancels while recording")
     recording, calls = false, {}
     assert(n:onGamepadButtonDown({ button = 1 }) == false and #calls == 0, "B stock when idle")
-    assert(n:onGamepadButtonDown({ button = 8 }) == true and #calls == 0, "R3 swallowed without a text field")
+    assert(n:onGamepadButtonDown({ button = 2 }) == false and #calls == 0, "X stock without a text field")
     active, toggle = true, false
-    assert(n:onGamepadButtonDown({ button = 8 }) == true and #calls == 0, "toggle off: R3 swallowed, no call")
+    assert(n:onGamepadButtonDown({ button = 2 }) == false and #calls == 0, "toggle off: X stock, no call")
     assert(n:onGamepadButtonDown({ button = 1 }) == false and #calls == 0, "toggle off: B stock")
     -- reading context (nothing on top): never routed
     toggle = true
     stack[2] = nil
     assert(n:_context() == "reading")
-    n:onGamepadButtonDown({ button = 8 })
-    assert(#calls == 0, "reading: R3 not routed")
+    n:onGamepadButtonDown({ button = 2 })
+    assert(#calls == 0, "reading: X not routed (it is the reading modifier)")
     for i = #stack, 1, -1 do stack[i] = nil end
     PL.call_provided = saved_cp
 end

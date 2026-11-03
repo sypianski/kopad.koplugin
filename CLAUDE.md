@@ -321,7 +321,8 @@ The family: `keyreader` (with `visel` and `hilite`), `marjenoti`, `textolimiti`,
 `kotheme`, `frontespico` and kopad. Each is its own GitHub repo. **Today there are two
 gamepad integrations: kopad ↔ visel** (`visel.ext.kopad.gamepad_select`) **and
 kopad ↔ diktonoti** (`diktonoti.ext.kopad.gamepad_dictate`: in context `window`
-R3 toggles dictation into the focused text field, B cancels a running one —
+X toggles dictation into the focused text field (L3 / R3 never reach KOReader
+on the Deck: Steam Input), B cancels a running one —
 `PadNav:_diktonoti_route`, called first in `_menu_button`'s window branch;
 section 15 of `tests/padmap_test.lua`); every
 other plugin's windows simply get stock keys from kopad (context `window`) and

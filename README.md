@@ -181,7 +181,7 @@ Without keyreader, or with the switch off, nothing changes. Windows opened by ot
 
 ### Dictation (diktonoti, opt-in via pluginaro)
 
-With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*), **R3** in a dialog with a focused text field — e.g. the note to a highlight — starts / stops dictation through the Diktilo daemon on the Steam Deck; **B** during a recording cancels it. Without diktonoti, or with the switch off, R3 does nothing there and B is the stock Back.
+With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*), **X** in a dialog with a focused text field — e.g. the note to a highlight — starts / stops dictation through the Diktilo daemon on the Steam Deck; **B** during a recording cancels it. (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, X does nothing there and B is the stock Back.
 
 ### Button remapping (gamepad layouts)
 

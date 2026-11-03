@@ -178,7 +178,7 @@ function kopad:init()
         default_enabled = false,
     })
 
-    -- Integration B (pluginaro): R3 in a text field dictates through
+    -- Integration B (pluginaro): X in a text field dictates through
     -- diktonoti (B cancels). Same shape as above: toggle in diktonoti's menu,
     -- harmless without diktonoti.
     Pluginaro.register("diktonoti", {
@@ -186,7 +186,7 @@ function kopad:init()
         provider        = "kopad",
         section         = "extensions",
         menu_location   = "host",
-        label           = _("Dictate with gamepad R3, B cancels (kopad)"),
+        label           = _("Dictate with gamepad X, B cancels (kopad)"),
         default_enabled = false,
     })
 

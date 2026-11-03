@@ -547,12 +547,14 @@ end
 
 -- Integration B (pluginaro): dictation into the focused text field through
 -- diktonoti (`diktonoti.ext.kopad.gamepad_dictate`). Context "window" only
--- (the note InputDialog, any dialog with a text field): R3 starts / stops a
--- recording, B cancels a running one. With the toggle off, diktonoti absent,
--- or no focused text field (is_active nil/false) nothing is routed: R3 stays
--- swallowed and B stays the stock Back, as before.
+-- (the note InputDialog, any dialog with a text field): X starts / stops a
+-- recording, B cancels a running one. X, not a stick click: on the Steam Deck
+-- Steam Input does not pass L3 / R3 to KOReader at all (none in kopad-trace),
+-- and in windows X has no stock key. With the toggle off, diktonoti absent,
+-- or no focused text field (is_active nil/false) nothing is routed: X and B
+-- stay stock (X = nothing, B = Back), as before.
 function PadNav:_diktonoti_route(btn)
-    if btn ~= BTN_R3 and btn ~= BTN_B then return false end
+    if btn ~= BTN_X and btn ~= BTN_B then return false end
     local recording = Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording")
     if btn == BTN_B then
         if not recording then return false end
