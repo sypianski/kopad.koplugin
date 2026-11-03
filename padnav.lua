@@ -27,8 +27,14 @@ Reading:
                          ←/↑ from the last one
   Y held + D-pad         Select sentences: →/↓ from the first sentence, ←/↑
                          from the last one
-  A tapped               Select sentences from the first one (until TASK-29,
-                         "point from-to")
+  A tapped               "Point from-to" (TASK-29): two-symbol pad labels
+                         (D-pad + A/B/X/Y, by position like the Vivaldi
+                         labels on the Deck) at the starts of the lines; a
+                         label = the start (the line's first word), then
+                         labels at the line ends: a label = the end (the
+                         line's last word), B = no end (one word). Then the
+                         usual word selection (A + arrows adjust the range, A
+                         tapped = action menu). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
                          them); none on the page = a message
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
@@ -103,6 +109,17 @@ FileManager (nothing on top of the file list):
   LB / RB                Stock RPgBack / RPgFwd = previous / next list page
   RT / LT                Next / previous list page (file_chooser)
   Select                 Top menu
+
+Point from-to (kopad's overlay in mode "point", context "selection"; A tapped
+while reading; Gamepad* path):
+  D-pad / A / B / X / Y  Symbols of the labels, on the press (no repeat, no
+                         holds). The first one keeps only the labels starting
+                         with it, the second picks. No label starts with B
+                         (kopad_hints.lua: at most 56 lines get a label).
+  B (nothing typed)      Start labels: close. End labels: no end = one word.
+  B (after a first symbol, when no label goes on with B): drop that symbol.
+  Everything else        As in the selection (LB / RB close and turn the
+                         page, Select / Start close and open the menu)
 
 Selection (kopad's overlay; two levels, sentences "struct" and words "walk",
 plus the saved highlights "hl" opened by Y):
@@ -292,6 +309,13 @@ local BUTTON_HANDLERS = {
 local BUTTON_SWALLOW = {
     [BTN_SELECT] = true, [BTN_GUIDE] = true, [BTN_START] = true,
     [BTN_L3] = true, [BTN_R3] = true,
+}
+
+-- Point from-to (TASK-29): logical button -> kopad_hints.lua symbol.
+local POINT_SYMBOLS = {
+    [BTN_A] = "A", [BTN_B] = "B", [BTN_X] = "X", [BTN_Y] = "Y",
+    [BTN_DPAD_UP] = "up", [BTN_DPAD_DOWN] = "down",
+    [BTN_DPAD_LEFT] = "left", [BTN_DPAD_RIGHT] = "right",
 }
 
 -- Contexts (PadNav:_context) in which PadNav's own handlers drive the pad.
@@ -711,11 +735,41 @@ function PadNav:onKPRight2()
     self:_dpad(1, 0); return true
 end
 
--- The sentence level, from the first sentence of the page (A while reading,
--- the `sentence_select` action).
+-- The sentence level, from the first sentence of the page (the
+-- `sentence_select` action; A on the legacy key path).
 function PadNav:_open_sentence_select()
     local selector = self:_selector()
     if selector and not selector.overlay then selector:_open() end
+end
+
+-- "Point from-to" (A tapped while reading, TASK-29): labels at the line
+-- starts. A page without text = a message.
+function PadNav:_open_point_select()
+    local selector = self:_selector()
+    if not selector or selector.overlay or type(selector._open_point) ~= "function" then return end
+    if selector:_open_point() == false then
+        self:_show_text(_("No text on this page"), 2)
+    end
+end
+
+-- The selection overlay while it shows the labels of "point from-to".
+function PadNav:_point_overlay()
+    local selector = self:_selector()
+    local ov = selector and selector.overlay
+    if ov and ov.mode == "point" and type(ov.point_press) == "function" then return ov end
+end
+
+-- A label symbol in "point from-to": acts on the press, so no hold starts
+-- (A / Y / B would otherwise act again on their release) and the D-pad does
+-- not repeat. "cancel" (B with nothing typed on the start labels) closes.
+function PadNav:_point_button(ov, btn)
+    self:_dpad_stop()
+    self._a_down, self._a_moved, self._a_opened, self._a_reading = false, false, false, false
+    self._y_down, self._b_down = false, false
+    if ov:point_press(POINT_SYMBOLS[btn]) == "cancel" then
+        local selector = self:_selector()
+        if selector then selector:_close() end
+    end
 end
 
 -- R-stick: switches the selection level (TASK-17): ↓ sentence -> its first
@@ -875,8 +929,8 @@ function PadNav:_press_a()
     return true
 end
 
--- A released (Gamepad* path). A tap: while reading the sentences (until
--- TASK-29 gives it the "point from-to" mode), in the selection the action
+-- A released (Gamepad* path). A tap: while reading "point from-to"
+-- (TASK-29; the sentences are on Y + D-pad), in the selection the action
 -- menu. After A + D-pad (words opened, a range selected) nothing.
 function PadNav:_release_a()
     if not self._a_down then return end
@@ -888,7 +942,7 @@ function PadNav:_release_a()
     if not selector then return end
     local ov, ctx = selector.overlay, self:_context()
     if reading then
-        if not ov and ctx == "reading" then self:_open_sentence_select() end
+        if not ov and ctx == "reading" then self:_open_point_select() end
     elseif ov and ctx == "selection" then
         ov:action_menu()
     end
@@ -1353,6 +1407,15 @@ function PadNav:_button_dispatch(ev)
     if btn == nil then
         if tr then Trace.log("padnav btn=nil: no button in event -> result=false") end
         return false
+    end
+    -- "Point from-to" (TASK-29): D-pad and letters are label symbols.
+    if ctx == "selection" and POINT_SYMBOLS[btn] then
+        local pov = self:_point_overlay()
+        if pov then
+            if tr then Trace.log("padnav btn=%s: point symbol %s", tostring(btn), POINT_SYMBOLS[btn]) end
+            self:_point_button(pov, btn)
+            return true
+        end
     end
     -- Role-level action override (PC-014); idle reading context only.
     local role = Padmap and Padmap.role_of("button", btn)
@@ -2231,7 +2294,8 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: back to the previous location"
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 font size  \xE2\x86\x90/\xE2\x86\x92 margins"
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
-    .. "\nA: select sentences    Y: highlights on the page"
+    .. "\nA: point from-to (labels: start, then end; B = one word)"
+    .. "\nY: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\nR-stick: quick actions (A run, B close)"
@@ -2256,7 +2320,12 @@ local CHEAT_READING = _("Reading mode")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
     .. "\nB: parent folder    R-stick: quick actions"
 
-local CHEAT_SELECTION = _("Selection mode")
+local CHEAT_SELECTION = _("Point from-to (A)")
+    .. "\nPress a label's two symbols (D-pad, A B X Y): the start line"
+    .. "\nThen a label at a line end: the end    B: one word"
+    .. "\nB before a label: close"
+    .. "\nThen as words: hold A + arrows = range, A = action menu"
+    .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
     .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: line / paragraph"
     .. "\nRT / LT: next / previous paragraph"

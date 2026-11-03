@@ -661,6 +661,7 @@ do
             selector = {
                 _open = function() log.selector[#log.selector + 1] = "_open" end,
                 _open_walk = function() log.selector[#log.selector + 1] = "_open_walk" end,
+                _open_point = function() log.selector[#log.selector + 1] = "_open_point"; return true end,
                 _close = function() end,
             }
         elseif kind == "pdf" then
@@ -824,7 +825,7 @@ do
     assert(n:_context() == "reading")
     assert(n:onGamepadButtonDown({ button = 0 }) == true, "EPUB: A consumed")
     n:onGamepadButtonUp({ button = 0 })
-    assert(log.selector[1] == "_open", "EPUB: A tapped opens the selector")
+    assert(log.selector[1] == "_open_point", "EPUB: A tapped opens point from-to")
     -- malformed axis events pass without an error (TASK-10)
     for _, a in ipairs({ 1, 3, 4, 5 }) do
         assert(n:onGamepadAxisMotion({ axis = a, value = "x" }) == false, "non-numeric value on axis " .. a)
@@ -1106,6 +1107,21 @@ do
             show("struct")
         end
         selector._open_walk = function(_, from_end) log.sel[#log.sel + 1] = "_open_walk:" .. tostring(from_end); show("walk") end
+        -- point from-to (TASK-29): a scripted pointer -- B first = cancel,
+        -- the 4th symbol (start label + end label) = done, then words
+        selector._open_point = function()
+            log.sel[#log.sel + 1] = "_open_point"
+            show("point")
+            local ov, presses = selector.overlay, 0
+            function ov:point_press(sym)
+                log.ov[#log.ov + 1] = "point(" .. sym .. ")"
+                if presses == 0 and sym == "B" then return "cancel" end
+                presses = presses + 1
+                if presses == 4 then self.mode = "walk"; return "done" end
+                return presses == 2 and "start" or "prefix"
+            end
+            return true
+        end
         selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return false end
         selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
         local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = { selector = selector } } },
@@ -1133,12 +1149,25 @@ do
     end
     assert(#log.events == 0 and #log.sel == 0 and #log.ov == 0, "reading: sticks move nothing")
 
-    -- A tapped while reading opens the sentences on the release (TASK-28),
+    -- A tapped while reading opens "point from-to" on the release (TASK-29),
     -- and that release opens no menu
     assert(down(n, 0) == true and #log.sel == 0, "reading: nothing on the A press")
     up(n, 0)
-    assert(log.sel[1] == "_open" and n:_context() == "selection" and #log.ov == 0,
-        "A tap = sentences, no menu")
+    assert(log.sel[1] == "_open_point" and n:_context() == "selection" and #log.ov == 0,
+        "A tap = point from-to, no menu")
+    -- the labels: D-pad and letters are symbols on the press; a held D-pad
+    -- does not repeat, A / Y / B start no hold (their release does nothing)
+    assert(down(n, 12) == true and #sched == 0, "no D-pad repeat on the labels"); up(n, 12)
+    down(n, 0); up(n, 0)
+    down(n, 3); up(n, 3)
+    assert(down(n, 1) == true); up(n, 1)
+    assert(table.concat(log.ov, " ") == "point(down) point(A) point(Y) point(B)",
+        "symbols, no menu / Vortuyo / close: " .. table.concat(log.ov, " "))
+    assert(n:_selector().overlay.mode == "walk" and n:_context() == "selection" and #log.events == 0,
+        "start + end chosen: the word walk")
+    -- LT / RT and the sticks in the labels reach only the overlay's guarded
+    -- moves (selector.lua ignores them in mode point), X / Y no action
+    log.ov = {}
     -- a tap (down + up, no arrow) = the action menu, on the release
     down(n, 0); assert(#log.ov == 0, "nothing on the press")
     up(n, 0); assert(log.ov[1] == "menu()", "tap = menu")
@@ -1211,11 +1240,11 @@ do
     -- LB / RB close the selection and turn the page; B closes it
     local sel
     n, log, sel = epub()
-    down(n, 0); up(n, 0)
+    sel:_open() -- the sentences (A tapped = point from-to now)
     assert(down(n, 10) == true and log.sel[2] == "_close" and log.events[1] == "GotoViewRel:1", "RB")
-    down(n, 0); up(n, 0)
+    sel:_open()
     assert(down(n, 9) == true and log.events[2] == "GotoViewRel:-1", "LB")
-    down(n, 0); up(n, 0)
+    sel:_open()
     assert(down(n, 1) == true and sel.overlay == nil and #log.events == 2, "B closes, no page turn")
 
     -- LT / RT in the selection (TASK-25): a paragraph, the overlay stays open;
@@ -1223,7 +1252,7 @@ do
     n, log, sel = epub()
     T.now = function() return clock end
     clock = clock + 10
-    down(n, 0); up(n, 0)
+    sel:_open()
     assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and log.ov[1] == "para(1,false)"
         and sel.overlay and #log.events == 0, "RT = next paragraph, no page turn")
     clock = clock + 0.5                                  -- first stock repeat
@@ -1329,11 +1358,20 @@ do
     -- the release is remapped like the press: nintendo, physical east = role A
     n, log = epub(nil)
     n:set_padmap(P.build(nil, "nintendo"))
-    down(n, 1); up(n, 1)                -- role A: opens the sentences
-    down(n, 1); up(n, 1)                -- role A tapped: the menu
-    assert(log.sel[1] == "_open" and log.ov[1] == "menu()", "remapped A release")
-    down(n, 0); up(n, 0)                -- physical south = role B: closes, no menu
-    assert(log.sel[2] == "_close" and #log.ov == 1)
+    down(n, 1); up(n, 1)                -- role A tapped: point from-to (on the release)
+    assert(log.sel[1] == "_open_point" and #log.ov == 0, "remapped A release")
+    down(n, 0); up(n, 0)                -- physical south = role B: the symbol B = cancel
+    assert(log.ov[1] == "point(B)" and log.sel[2] == "_close" and n:_context() == "reading",
+        "remapped B on the labels: " .. table.concat(log.ov, " "))
+    down(n, 1); up(n, 1)                -- role A: point from-to again, no menu
+    assert(log.sel[3] == "_open_point" and #log.ov == 1)
+    -- a page without text: a message, nothing opens
+    local nosel
+    n, log, nosel = epub()
+    nosel._open_point = function() log.sel[#log.sel + 1] = "_open_point"; return false end
+    down(n, 0); up(n, 0)
+    assert(log.sel[1] == "_open_point" and nosel.overlay == nil and log.text[1] == "No text on this page",
+        "no text: " .. tostring(log.text[1]))
 
     -- B held + D-pad in an EPUB (TASK-33): ↑/↓ font size, ←/→ margins (both
     -- sides, clamped), repeated while held; B tapped = back on the release

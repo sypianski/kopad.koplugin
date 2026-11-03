@@ -12,7 +12,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     D-pad                    Next / previous page (TASK-28)
     A held + D-pad           Select words (→/↓ from the first, ←/↑ the last)
     Y held + D-pad           Select sentences (the same)
-    A tapped                 Select sentences
+    A tapped                 Point from-to (TASK-29): pad labels at the line
+                             starts pick the start, then labels at the line
+                             ends the end (B = one word); then words
     Y tapped                 The page's highlights (none = a message)
     B held + D-pad           ↑/↓ font size, ←/→ margins (PDF: zoom / fit)
     B tapped                 Back to the previous location
@@ -29,6 +31,10 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     Lists / dialogs          RT / LT list page (TOC, bookmarks, history, ...)
     File browser             LB / RB, LT / RT list page, Select top menu,
                              R-stick quick-action wheel
+
+  Point from-to (labels, after A tapped):
+    D-pad / A / B / X / Y    The two symbols of a label (first one filters)
+    B                        Start labels: close; end labels: one word
 
   Selection (sentences / words; highlights after Y):
     D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,

@@ -1,8 +1,10 @@
 --[[
 Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
-documents, driven by the handlers in padnav.lua. Three modes: sentences
-("struct", opened by A), words ("walk", D-pad) and the page's saved
-highlights ("hl", Y); R-stick ↓/↑ switches between sentence and word. The
+documents, driven by the handlers in padnav.lua. Four modes: sentences
+("struct", Y + D-pad), words ("walk", A + D-pad), the page's saved
+highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29: pad
+labels at the lines pick the start and the end, then it is a word walk);
+R-stick ↓/↑ switches between sentence and word. The
 arrows move a cursor; while A is held padnav passes range = true and an
 anchor stays where the range began. Without a range the cursor crosses the
 page edge in both directions.
@@ -27,8 +29,10 @@ local Screen         = Device.screen
 
 local Pluginaro  = require("pluginaro")
 local WordSource = require("paginmapo")
+local Hints      = require("kopad_hints")
 
 local STATUS_FACE = require("ui/font"):getFace("infofont", 14)
+local LABEL_FACE  = require("ui/font"):getFace("infofont", 12)
 
 local SEL_RADIUS = 8
 
@@ -66,9 +70,11 @@ function SelectorOverlay:init()
                            w = Screen:getWidth(), h = Screen:getHeight() }
     self.covers_fullscreen = false
 
-    -- "struct" = sentences (A), "walk" = words (D-pad), "hl" = the page's
-    -- saved highlights (Y). Opens as struct; Selector:_open_walk /
-    -- _open_highlights switch before showing it.
+    -- "struct" = sentences (Y + D-pad), "walk" = words (A + D-pad), "hl" =
+    -- the page's saved highlights (Y), "point" = the labels of "point
+    -- from-to" (A tapped; self.pointer, ends as "walk"). Opens as struct;
+    -- Selector:_open_walk / _open_highlights / _open_point switch before
+    -- showing it.
     self.mode = "struct"
 
     self.sel_sent = nil      -- first sentence of the selection
@@ -623,6 +629,7 @@ end
 -- stays, the cursor moves, both directions (back over the anchor shrinks the
 -- range and then grows it on the other side).
 function SelectorOverlay:step(dir, range)
+    if self.mode == "point" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
     elseif self.mode == "walk" then
@@ -635,6 +642,7 @@ end
 
 -- ↑/↓: one line / paragraph / highlight; range as in step().
 function SelectorOverlay:line(dir, range)
+    if self.mode == "point" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
     elseif self.mode == "walk" then
@@ -649,6 +657,7 @@ end
 -- next / this or previous paragraph, the same for sentences as ↑/↓, the
 -- next / previous highlight.
 function SelectorOverlay:para(dir, range)
+    if self.mode == "point" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
     elseif self.mode == "walk" then
@@ -682,10 +691,64 @@ function SelectorOverlay:to_sentences()
 end
 
 ----------------------------------------------------------------------
+-- Point from-to (TASK-29)
+----------------------------------------------------------------------
+-- EPUB adapter of kopad_hints.lua: the lines come from the word boxes of
+-- paginmapo (self.words, reading order), and a line's first / last are
+-- indices into self.words. kopad_hints.lua itself knows no document (TASK-30
+-- feeds it PDF lines the same way).
+
+-- Labels at the line starts of the page. False when the page has no text.
+function SelectorOverlay:_point_begin()
+    local boxes = {}
+    for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
+    local lines = Hints.lines_from_boxes(boxes)
+    if #lines == 0 then return false end
+    self.mode = "point"
+    self.pointer = Hints.Pointer.new(lines, { rtl = self.is_rtl })
+    self.ww_word, self.ww_anchor = nil, nil
+    return true
+end
+
+-- One pad symbol (Hints.SYMBOLS: "up" .. "right", "A", "B", "X", "Y").
+-- Returns the pointer's result (kopad_hints.lua); "cancel" = padnav closes the
+-- overlay. "done" turns the overlay into a word walk.
+function SelectorOverlay:point_press(sym)
+    local p = self.pointer
+    if self.mode ~= "point" or not p then return "ignored" end
+    local res = p:press(sym)
+    if res == "done" then self:_point_finish() end
+    if res ~= "ignored" and res ~= "cancel" then self:_refresh() end
+    return res
+end
+
+-- The chosen lines as a word walk: anchor = the first word of the start
+-- line, cursor = the last word of the end line (A + arrows move the cursor,
+-- A tapped = the action menu); no end = the first word alone.
+function SelectorOverlay:_point_finish()
+    local p = self.pointer
+    self.pointer = nil
+    self.mode = "walk"
+    local L0 = p.lines[p.start]
+    local w0 = L0 and self.words[L0.first]
+    local first = w0 and self:_ww_word_from_xp(w0.xp0)
+    if not first then return end
+    local L1 = p.stop and p.lines[p.stop]
+    local w1 = L1 and self.words[L1.last]
+    local last = w1 and w1 ~= w0 and self:_ww_word_from_xp(w1.xp0)
+    if last then
+        self.ww_anchor, self.ww_word = first, last
+    else
+        self.ww_anchor, self.ww_word = nil, first
+    end
+end
+
+----------------------------------------------------------------------
 -- Action menu (A tapped)
 ----------------------------------------------------------------------
 
 function SelectorOverlay:action_menu()
+    if self.mode == "point" then return end
     local sel = self:_get_selection()
     if not sel then return end
 
@@ -755,6 +818,7 @@ end
 ----------------------------------------------------------------------
 
 function SelectorOverlay:_get_selection()
+    if self.mode == "point" then return nil end
     if self.mode == "hl" then
         local item = self.hl_items[self.hl_cur]
         if not item then return nil end
@@ -974,7 +1038,12 @@ end
 ----------------------------------------------------------------------
 
 function SelectorOverlay:paintTo(bb, x, y)
-    if self.mode == "walk" then
+    if self.mode == "point" then
+        -- status first: the labels of the top line may reach under it
+        self:_draw_status(bb, x, y)
+        self:_draw_point(bb, x, y)
+        return
+    elseif self.mode == "walk" then
         self:_draw_walk(bb, x, y)
     else
         self:_draw_struct(bb, x, y)
@@ -1061,10 +1130,64 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     end
 end
 
+-- Point from-to: the labels (a pill with two badges per line, next to the
+-- line start / end, over the text when the margin is too narrow), and in
+-- the second step the start word. D-pad symbols are rounded squares with an
+-- arrow, letters are circles; a symbol already pressed is grey.
+local POINT_GLYPHS = {
+    up = "\xE2\x86\x91", down = "\xE2\x86\x93", left = "\xE2\x86\x90", right = "\xE2\x86\x92",
+    A = "A", B = "B", X = "X", Y = "Y",
+}
+
+function SelectorOverlay:_draw_point(bb, ox, oy)
+    local p = self.pointer
+    if not p then return end
+    if p.step == "end" and p.start then
+        local L = p.lines[p.start]
+        local w = L and self.words[L.first]
+        local s = w and w.sbox
+        if s then invert_rounded_rect(bb, ox, oy, s.x, s.y, s.w, s.h) end
+    end
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local border = math.max(1, Screen:scaleBySize(1))
+    local gap = Screen:scaleBySize(3)
+    for _, v in ipairs(p:visible()) do
+        local L = p.lines[v.line]
+        local d = math.max(Screen:scaleBySize(14), math.min(L.h, Screen:scaleBySize(22)))
+        local pw, ph = 2 * d + 3 * gap, d + 2 * gap
+        local x = v.side == "left" and (v.x - pw - gap) or (v.x + gap)
+        x = math.max(0, math.min(sw - pw, x))
+        local y = math.max(0, math.min(sh - ph, math.floor(v.y - ph / 2)))
+        bb:paintRect(ox + x, oy + y, pw, ph, Blitbuffer.COLOR_WHITE)
+        bb:paintBorder(ox + x, oy + y, pw, ph, border, Blitbuffer.COLOR_BLACK, math.floor(ph / 3))
+        for k = 1, 2 do
+            local sym = v.label[k]
+            local fg = k <= v.typed and Blitbuffer.COLOR_GRAY or Blitbuffer.COLOR_BLACK
+            local bx, by = ox + x + gap + (k - 1) * (d + gap), oy + y + gap
+            if #sym == 1 then
+                local r = math.floor(d / 2)
+                bb:paintCircle(bx + r, by + r, r, fg, border)
+            else
+                bb:paintBorder(bx, by, d, d, border, fg, math.floor(d / 4))
+            end
+            local tw = TextWidget:new{ text = POINT_GLYPHS[sym] or sym, face = LABEL_FACE,
+                                       bold = true, fgcolor = fg }
+            local sz = tw:getSize()
+            tw:paintTo(bb, bx + math.floor((d - sz.w) / 2), by + math.floor((d - sz.h) / 2))
+            tw:free()
+        end
+    end
+end
+
 -- Status line: the level and the buttons, no counters (TASK-15). ↑ / ↓ after
 -- SENTENCE: the selection runs on past the top / bottom of the page.
 function SelectorOverlay:_status_text()
     local keys = " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+    if self.mode == "point" then
+        local p = self.pointer
+        if p and p.step == "end" then return "TO \xC2\xB7 label = end \xC2\xB7 B one word" end
+        return "FROM \xC2\xB7 label = start \xC2\xB7 B close"
+    end
     if self.mode == "walk" then
         return (self.ww_anchor and "WORDS" or "WORD") .. keys
     end
@@ -1184,7 +1307,8 @@ function Selector:_show(ov)
 end
 
 -- Sentences: the first sentence of the page, or the last one with from_end
--- (Y + D-pad while reading, TASK-28; A tapped opens the first).
+-- (Y + D-pad while reading, TASK-28; the `sentence_select` action opens the
+-- first).
 function Selector:_open(from_end)
     local ov = self:_new_overlay()
     if not ov then return end
@@ -1200,6 +1324,19 @@ function Selector:_open_walk(from_end)
     ov.mode = "walk"
     ov:_ww_land(from_end and -1 or 1)
     self:_show(ov)
+end
+
+-- Point from-to (A tapped while reading, TASK-29): labels at the line
+-- starts. False, with nothing shown, when the page has no text.
+function Selector:_open_point()
+    local ov = self:_new_overlay()
+    if not ov then return nil end
+    if not ov:_point_begin() then
+        Pluginaro.release_overlay(self.ui, "kopad")
+        return false
+    end
+    self:_show(ov)
+    return true
 end
 
 -- The page's saved highlights, the first one focused (Y while reading).

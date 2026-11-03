@@ -301,4 +301,63 @@ assert(claims == 0)
 sel = fresh(3, { { pos0 = "w2", pos1 = "w3e" } })
 assert(sel:_open_highlights() == false and sel.overlay == nil and claims == 0)
 
+-- 10. Point from-to (A tapped, TASK-29): labels at the two lines of the page,
+-- start + end = a word range of whole lines, B = one word, then the usual
+-- word walk. The labels come from kopad_hints.lua (tests/kopad_hints_test.lua).
+local function label_of(ov, line)
+    for _, v in ipairs(ov.pointer:visible()) do if v.line == line then return v.label end end
+end
+sel, doc = fresh()
+assert(sel:_open_point() == true and claims == 1)
+ov = sel.overlay
+assert(ov.mode == "point" and #ov.pointer.lines == 2, "two lines on the page")
+assert(ov.pointer.lines[1].first == 1 and ov.pointer.lines[1].last == 3)
+assert(ov:_status_text():match("^FROM"), ov:_status_text())
+assert(ov:_get_selection() == nil, "no selection while labelling")
+ov:step(1); ov:line(1); ov:para(1); ov:action_menu()
+assert(ov.mode == "point" and doc.page == 1, "arrows / menu do nothing in the labels")
+-- painting the labels: a smoke test with a recording blitbuffer
+local TW = require("ui/widget/textwidget")
+function TW:new(o) return setmetatable(o or {}, { __index = { getSize = function() return { w = 8, h = 10 } end,
+                                                            paintTo = function() end, free = function() end } }) end
+local painted = {}
+local bb = setmetatable({}, { __index = function(_, k) return function() painted[k] = (painted[k] or 0) + 1 end end })
+local function paint() painted = {}; ov:paintTo(bb, 0, 0); return painted end
+paint()
+assert(painted.paintBorder and painted.paintRect and (painted.paintCircle or 0) + painted.paintBorder >= 4,
+    "two labels painted")
+local l = label_of(ov, 1)
+assert(ov:point_press(l[1]) == "prefix" and ov:point_press(l[2]) == "start")
+paint()
+assert(painted.invertRect, "end labels: the start word inverted")
+assert(ov:_status_text():match("^TO") and #ov.pointer:visible() == 2, "end labels: lines 1 and 2")
+l = label_of(ov, 2)
+ov:point_press(l[1])
+assert(ov:point_press(l[2]) == "done")
+assert(ov.mode == "walk" and ov.pointer == nil and text(ov) == "t1 t2 t3 t4 t5 t6", "line 1 start .. line 2 end")
+-- then the usual walk: A + arrows move the end, the anchor stays
+ov:step(-1, true); assert(text(ov) == "t1 t2 t3 t4 t5", "A + ← shrinks from the end")
+sel:_close()
+-- B in the end step = one word (the first of the start line)
+sel, doc = fresh(2)
+sel:_open_point(); ov = sel.overlay
+l = label_of(ov, 2)
+ov:point_press(l[1]); ov:point_press(l[2])
+assert(ov:point_press("B") == "done" and ov.mode == "walk" and ov.ww_anchor == nil and text(ov) == "t10",
+    "B = one word: " .. tostring(text(ov)))
+sel:_close()
+-- the start line as its own end: that line
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+l = label_of(ov, 2); ov:point_press(l[1]); ov:point_press(l[2])
+l = label_of(ov, 2); ov:point_press(l[1]); ov:point_press(l[2])
+assert(text(ov) == "t4 t5 t6", "one line: " .. tostring(text(ov)))
+sel:_close()
+-- B in the start step: cancel (padnav closes the overlay)
+sel = fresh()
+sel:_open_point()
+assert(sel.overlay:point_press("B") == "cancel")
+sel:_close()
+assert(claims == 0)
+
 print("selector_test: all tests passed")

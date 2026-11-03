@@ -14,9 +14,11 @@ edit-Lua → load into KOReader → observe. The repo *is* the plugin source. Th
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
 padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
 `lua tests/padconfirm_test.lua` (button letters on confirmation dialogs), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
-directions, glyphs, controller) and `lua tests/selector_test.lua` (selector.lua
+directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
-highlights); plain `assert`, KOReader stubbed.
+highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
+placement, prefix filter, B, lines from word boxes, the pointer's two
+steps); plain `assert`, KOReader stubbed.
 
 ## Runtime requirements
 
@@ -128,8 +130,18 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   NOT for the A hold that opened the words (`_a_opened`): while that one is
   held the arrows only move the cursor, so the start point (or a single word)
   can be picked; a range needs the next A hold. `_release_a` acts only for a
-  tap: reading = sentences (until TASK-29), selection = action menu. The
-  legacy `Press` key goes to `onKPConfirm` (sentences / menu on the press).
+  tap: reading = "point from-to" (`_open_point_select` ->
+  `Selector:_open_point`, TASK-29; a page without text = a message),
+  selection = action menu. The legacy `Press` key goes to `onKPConfirm`
+  (sentences / menu on the press; the legacy path has no point from-to).
+- **Point from-to (TASK-29)**: while the overlay is in mode `point` (context
+  `selection`), `_button_dispatch` hands D-pad + A/B/X/Y to `_point_button`
+  BEFORE everything else (`POINT_SYMBOLS`): one symbol per press, on the
+  press, so it clears the A / Y / B holds (their release then does nothing)
+  and starts no `_dpad_start` repeat. `ov:point_press(sym) == "cancel"` (B
+  with nothing typed on the start labels) closes the overlay. Other buttons,
+  triggers and sticks take the selection's path; the overlay ignores
+  `step` / `line` / `para` / `action_menu` in mode `point`.
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
@@ -261,6 +273,32 @@ KOReader modules are required lazily. padnav: context `"wheel"` (top window has
 `_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
 `_wheel_button` / `_wheel_call`; every pad event is consumed there.
 
+### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29)
+No KOReader dependencies; tested by `tests/kopad_hints_test.lua`. Port of the
+Vivaldi-on-the-Deck labels (`~/aparati/steamdeck/vivaldi-deck/ext/hints.js`):
+`M.DIRS` = eight symbols (`up down left right` + `A B X Y`) with anchors in a
+region (left half D-pad, right half the letter diamond: Y top, A bottom, X
+left, B right). `M.assign(points, first)` = the hints.js tree split (`split`:
+one group per anchor, at most `cap` each, most obvious items first by regret,
+ties in reading order), always TWO levels -> every label is two symbols (a
+lone item repeats its symbol: `up,up`). Coordinates are snapped to
+1/`M.GRID` of the region, so an indent does not reorder a column. Labels
+never START with `M.BACK` = B (`M.FIRST`), because B with nothing typed is
+back / one word -> at most 7 * 8 = 56 targets, the rest get no label.
+**The line layer is document-independent** (contract with TASK-30's PDF
+adapter): a line is `{ x, y, w, h, first, last }` in SCREEN coordinates, in
+reading order; `first` / `last` are the adapter's word indices, opaque to
+kopad_hints.lua. `M.lines_from_boxes(boxes)` groups word boxes in reading order
+(new line when a word's middle leaves the line's band; nil / false boxes are
+skipped). `M.Pointer.new(lines, {rtl})`: step `start` (labels at the line
+starts: left edge, right in RTL), `press(sym)` -> `prefix` / `unprefix` /
+`start` (step `end`: labels at the line ends, from the start line down) /
+`done` (`self.start`, `self.stop`; stop nil = B = one word) / `cancel` (B on
+the start labels) / `ignored`; `visible()` = the labels to draw (only those
+continuing the typed prefix; `typed`, `side`, anchor `x`, `y`). The EPUB
+adapter is `SelectorOverlay:_point_begin` (paginmapo `sbox` per word, so a
+hyphenated word belongs to the line of its head).
+
 ### `vkb.lua` — no on-screen keyboard while a pad is connected
 `main.lua:_install_vkb()` calls `Vkb.install(state_fn)` (state = kopad
 enabled), which wraps `InputDialog.init` ONCE per run (`ID._kopad_stock_init`;
@@ -312,7 +350,8 @@ Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-g
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
 (`_open` = sentences, `_open_walk(from_end)` = words, `_open_highlights` =
-saved highlights or `false` when the page has none, `_close`; all share
+saved highlights or `false` when the page has none, `_open_point` = point
+from-to or `false` when the page has no text, `_close`; all share
 `_new_overlay`, which holds the pluginaro claim); `SelectorOverlay` is the
 painted widget with a single `self.mode` state machine (no crosshair any more:
 removed in TASK-15; the padmap id `crosshair` stays as an alias of
@@ -328,6 +367,14 @@ removed in TASK-15; the padmap id `crosshair` stays as an alias of
   (`_is_split_word`, `_resolve_split_fragment`).
 - **`hl`** — the page's saved highlights (`hl_items` / `hl_cur`, opened by Y);
   every arrow steps between them (`_hl_step`, wrapping).
+- **`point`** — point from-to (TASK-29, A tapped): `self.pointer` (kopad_hints.lua)
+  over the lines built by `_point_begin`; `point_press(sym)` feeds it, and on
+  `done` `_point_finish` turns the overlay into `walk` with `ww_anchor` = the
+  start line's first word, `ww_word` = the end line's last word (no end = the
+  first word alone, no anchor). `_draw_point` paints the labels (white pill,
+  D-pad symbols as rounded squares with an arrow, letters as circles, a
+  pressed symbol grey; outside the line when the margin allows, else over
+  it) and, on the end labels, the start word inverted. Status `FROM` / `TO`.
 
 Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
 document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:
