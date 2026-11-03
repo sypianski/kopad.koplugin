@@ -85,6 +85,8 @@ Tabs that are actions rather than categories (the reader's "file browser" tab, w
 | Button | Action |
 |---|---|
 | **RT** / **LT** | next / previous page of the list |
+| **LB** / **RB** in the bottom menu | previous / next tab |
+| **D-pad** / **L-stick** ←/→ on the bottom menu's tab bar | previous / next tab at once (no **A** needed) |
 | **Start** in the bottom menu | close it (**Start** opened it) |
 | everything else | stock KOReader keys (**Select**, **Start** and stick clicks are swallowed) |
 

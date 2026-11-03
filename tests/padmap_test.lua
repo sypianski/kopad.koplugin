@@ -732,6 +732,27 @@ do
         assert(n:_context() == "window")
         assert(n:onGamepadButtonDown({ button = 6 }) == true and closed == 1, kind .. ": Start closes the bottom menu")
         assert(#log.events == want, kind .. ": closing sends no event")
+
+        -- bottom menu tabs: LB/RB always, D-pad / L-stick ←/→ on its tab bar
+        -- (the LAST layout row); the focus level is kept, visibly
+        local steps = {}
+        local dlg = { config_options = { {}, {}, {} }, panel_index = 1, closeDialog = function() end,
+                      layout = { {}, {}, {} }, selected = { x = 1, y = 3 } }
+        function dlg:onShowConfigPanel(k)
+            self.panel_index = k; self.selected = { x = k, y = #self.layout }
+            steps[#steps + 1] = "panel:" .. k
+        end
+        function dlg:moveFocusTo(x, y) self.selected = { x = x, y = y }; steps[#steps + 1] = "focus:" .. x .. "," .. y end
+        set_stack(ui, { dlg })
+        assert(n:onGamepadButtonDown({ button = 9 }) == true, kind .. ": LB in the bottom menu")
+        assert(steps[1] == "panel:3" and steps[2] == "focus:3,3", kind .. ": LB wraps, focus stays on the bar")
+        assert(n:onGamepadButtonDown({ button = 14 }) == true and steps[3] == "panel:1", kind .. ": D-pad → on the bar")
+        assert(n:onGamepadAxisMotion({ axis = 0, value = 32767 }) == true and steps[5] == "panel:2", kind .. ": L-stick → on the bar")
+        dlg.selected = { x = 1, y = 2 } -- in the options
+        assert(n:onGamepadButtonDown({ button = 14 }) == false, kind .. ": D-pad → in the options is stock")
+        assert(n:onGamepadButtonDown({ button = 10 }) == true and steps[7] == "panel:3" and steps[8] == "focus:1,1",
+            kind .. ": RB in the options -> first option row of the new tab")
+        assert(#log.events == want, kind .. ": tab switches send no reader event")
     end
 
     -- nothing on top (a toast does not count): the reading controls are back

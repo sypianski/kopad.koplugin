@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-03 17:50'
-updated_date: '2026-11-03 17:51'
+updated_date: '2026-11-03 17:56'
 labels:
   - gamepad
   - ux
@@ -33,4 +33,6 @@ Decyzja usera 2026-11-03 (po teście na Decku): Start przełączał tryb stopki 
 
 <!-- SECTION:NOTES:BEGIN -->
 padnav.lua: onKPStart -> ShowConfigMenu; _menu_button (ctx window) Start zamyka ConfigDialog (is_config_dialog: config_options + closeDialog). padmap.lua DEFAULT_ACTIONS.start = config_menu. koligilo: padmap.go, web/padmap.js (domyślna akcja + etykiety: footer_menu = tryb stopki, config_menu = menu dolne), tests/padmap_test.js. Testy obu stron zielone.
+
+Dopisane na prośbę usera: w dolnym menu LB/RB = poprzednia/następna zakładka (z zawijaniem), D-pad i L-gałka ←/→ na pasku zakładek (ostatni wiersz layoutu) przełączają od razu; poziom kursora zachowany (config_switch_tab).
 <!-- SECTION:NOTES:END -->

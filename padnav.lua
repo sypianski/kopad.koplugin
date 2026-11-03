@@ -55,8 +55,12 @@ Top menu open (TouchMenu, reader AND FileManager):
 Other windows (TOC, bookmarks, history, config dialog, dialogs, book map, ...):
   RT / LT                Next / previous page of the list (Menu:onNextPage /
                          onPrevPage), when the window has pages
-  Start                  In the bottom menu (ConfigDialog): close it (Start
-                         opened it); elsewhere swallowed
+  Bottom menu (ConfigDialog: font, margins, contrast, ...):
+    LB / RB              Previous / next tab (wrapping)
+    D-pad / L-stick ←/→  On its tab bar (the bottom row): previous / next tab
+                         at once; the focus level is kept as in the top menu
+    Start                Close it (Start opened it)
+  Start elsewhere        Swallowed
   Select / Guide / L3 / R3   Swallowed
   Everything else        Stock (the window navigates as without kopad)
 
@@ -1373,6 +1377,11 @@ local function find_touch_menu()
     return top and find_in(top, is_touch_menu, MENU_SEARCH_DEPTH, {}) or nil
 end
 
+local function find_config_dialog()
+    local top = top_window()
+    return top and find_in(top, is_config_dialog, MENU_SEARCH_DEPTH, {}) or nil
+end
+
 function PadNav:_context()
     if not (self.enabled_ref and self.enabled_ref.enabled) then return "off" end
     if Pluginaro.overlay_active(self.ui, "kopad") then return "foreign" end
@@ -1435,6 +1444,30 @@ local function menu_focus_on_bar(menu)
     return not (sel and type(sel.y) == "number" and sel.y > 1)
 end
 
+-- The bottom menu (ConfigDialog): its tab bar (MenuBar icons) is the LAST
+-- FocusManager layout row, the option rows are above it.
+local function config_focus_on_bar(dlg)
+    local sel = type(dlg.selected) == "table" and dlg.selected or nil
+    local rows = type(dlg.layout) == "table" and #dlg.layout or 0
+    return not (sel and type(sel.y) == "number" and sel.y < rows)
+end
+
+-- Switch the bottom menu `dir` tabs (wrapping; ShowConfigPanel, like a tap on
+-- the icon) and keep the focus level, visibly: on the bar -> the new icon, in
+-- the options -> the first option row. (Stock update() parks the focus,
+-- invisibly, on the bar.)
+local function config_switch_tab(dlg, dir)
+    local n = type(dlg.config_options) == "table" and #dlg.config_options or 0
+    if n < 2 or type(dlg.onShowConfigPanel) ~= "function" then return false end
+    local on_bar = config_focus_on_bar(dlg)
+    local k = ((tonumber(dlg.panel_index) or 1) - 1 + dir) % n + 1
+    dlg:onShowConfigPanel(k)
+    if type(dlg.moveFocusTo) == "function" and type(dlg.layout) == "table" and #dlg.layout > 0 then
+        if on_bar or #dlg.layout < 2 then dlg:moveFocusTo(k, #dlg.layout) else dlg:moveFocusTo(1, 1) end
+    end
+    return true
+end
+
 local function menu_switch_tab(menu, dir)
     local on_bar = menu_focus_on_bar(menu)
     if not menu_tab_step(menu, dir) then return false end
@@ -1462,8 +1495,9 @@ end
 --             auto-repeat, so no filter; the stock RPgBack/RPgFwd = menu page
 --             turn is not sent), Select = close the menu (Select opened it).
 --             Start passes: its stock key "Menu" closes a TouchMenu too.
---   window:   Start in the bottom menu (ConfigDialog) closes it (Start opened
---             it; its stock keys only close on Back).
+--   window:   bottom menu (ConfigDialog): LB / RB = previous / next tab, D-pad
+--             ←/→ on its tab bar too (config_switch_tab, focus level kept);
+--             Start closes it (Start opened it; stock closes only on Back).
 --   both:     BUTTON_SWALLOW (stick clicks, Guide, Select / Start elsewhere)
 --             would send surprising stock keys, so they are eaten.
 function PadNav:_menu_button(btn, ctx)
@@ -1497,12 +1531,24 @@ function PadNav:_menu_button(btn, ctx)
             return true
         end
         if btn == BTN_START then return false end
-    elseif ctx == "window" and btn == BTN_START then
-        local top = top_window()
-        local dlg = top and find_in(top, is_config_dialog, MENU_SEARCH_DEPTH, {})
-        if dlg then
+    elseif ctx == "window" then
+        local dlg = find_config_dialog()
+        if not dlg then return BUTTON_SWALLOW[btn] or false end
+        if btn == BTN_START then
             local ok, err = pcall(dlg.closeDialog, dlg)
             if not ok then logger.warn("kopad: config menu close failed: " .. tostring(err)) end
+            return true
+        end
+        local dir
+        if btn == BTN_LB or btn == BTN_RB then
+            dir = btn == BTN_RB and 1 or -1
+        elseif (btn == BTN_DPAD_LEFT or btn == BTN_DPAD_RIGHT) and config_focus_on_bar(dlg) then
+            dir = btn == BTN_DPAD_RIGHT and 1 or -1
+        end
+        if dir then
+            local ok, err = pcall(config_switch_tab, dlg, dir)
+            if not ok then logger.warn("kopad: config tab switch failed: " .. tostring(err)) end
+            Trace.log("padnav btn=%s: config tab step ok=%s err=%s", tostring(btn), tostring(ok), tostring(err))
             return true
         end
     end
@@ -1682,6 +1728,14 @@ function PadNav:onGamepadAxisMotion(ax)
                 Trace.log("padnav axis=%s value=%s: menu tab step (bar) ok=%s", tostring(ax.axis), tostring(ax.value), tostring(ok))
                 return true
             end
+        elseif ctx == "window" and ax.axis == AXIS_LX then
+            local dlg = find_config_dialog()
+            if dlg and config_focus_on_bar(dlg) then
+                local ok, err = pcall(config_switch_tab, dlg, neg and -1 or 1)
+                if not ok then logger.warn("kopad: config tab switch failed: " .. tostring(err)) end
+                Trace.log("padnav axis=%s value=%s: config tab step (bar) ok=%s", tostring(ax.axis), tostring(ax.value), tostring(ok))
+                return true
+            end
         end
     end
     if not PAD_CONTEXTS[ctx] or ctx == "filemanager" then
@@ -1780,7 +1834,9 @@ local CHEAT_READING = _("Reading mode")
     .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92 on the tabs: category"
     .. "\n\n" .. _("Lists (TOC, bookmarks, history, ...)")
     .. "\nRT / LT: next / previous page"
-    .. "\nStart in the bottom menu: close"
+    .. "\n\n" .. _("Bottom menu open")
+    .. "\nRB / LB: next / previous tab    Start: close"
+    .. "\nD-pad \xE2\x86\x90/\xE2\x86\x92 on the tabs: tab"
     .. "\n\n" .. _("File browser")
     .. "\nLB / RB, LT / RT: previous / next page    Select: menu"
     .. "\nB: parent folder"

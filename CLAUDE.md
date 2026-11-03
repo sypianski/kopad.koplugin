@@ -227,9 +227,12 @@ Two input paths end in the same `on<Key>` handlers:
   `TouchMenu:onPrevPage`/`onNextPage` with the auto-repeat filter, Select =
   `closeMenu`, everything else stock (Start's stock key `Menu` closes it).
   Other windows: LT/RT = `onPrevPage`/`onNextPage` of the first pager in the
-  window, Start in the bottom menu (ConfigDialog, duck-typed by
-  `config_options` + `closeDialog`) = close it (TASK-13: reading Start opens it
-  via `ShowConfigMenu`), Select/Start/Guide/L3/R3 otherwise swallowed, the rest stock. Dictionary popup
+  window. Bottom menu (ConfigDialog, duck-typed by `config_options` +
+  `closeDialog`; TASK-13: reading Start opens it via `ShowConfigMenu`): Start =
+  close, LB/RB = previous/next tab, D-pad / L-stick ←/→ on its tab bar (the LAST
+  layout row) = tab at once; `config_switch_tab` (`onShowConfigPanel`) keeps the
+  focus level like `menu_switch_tab`. Select/Start/Guide/L3/R3 otherwise
+  swallowed, the rest stock. Dictionary popup
   (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
   triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`
   page, Select = top menu, B = `FileChooser:onFolderUp` (stock Back asks
