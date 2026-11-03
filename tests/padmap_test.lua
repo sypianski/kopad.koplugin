@@ -892,4 +892,59 @@ do
     T.now = function() return 0 end
 end
 
+-- 12. Visel routing (pluginaro integration A) on KOReader >= 2026.07. The pad
+-- reaches visel in two rounds: with visel's overlay claimed the context is
+-- "foreign", so onGamepadButtonDown passes the event (false); stock then sends
+-- its default key (D-pad Left/Right, LB/RB RPgBack/RPgFwd, B Back) and that
+-- key hits PadNav's key_events handler, whose first step is _visel_route.
+-- Toggle off (call_provided -> nil): the handler stands down and the key
+-- keeps going to visel's own bindings.
+do
+    local PadNav = require("padnav")
+    local PL = package.loaded.pluginaro
+    local saved_oa, saved_cp = PL.overlay_active, PL.call_provided
+    PL.overlay_active = function(u, except) return u._kokb_overlay ~= nil and u._kokb_overlay ~= except end
+    local toggle, calls = true, {}
+    PL.call_provided = function(host, provider, id, method, arg)
+        assert(host == "visel" and provider == "kopad" and id == "gamepad_select", "contract triple")
+        if not toggle then return nil end
+        if method == "is_active" then return true end
+        calls[#calls + 1] = method .. ":" .. tostring(arg)
+        return true
+    end
+    local log = {}
+    local ui = { document = {}, rolling = {}, _kokb_overlay = "visel",
+                 handleEvent = function(_, ev) log[#log + 1] = ev.name end }
+    local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = {} } }, { __index = PadNav })
+    n:set_padmap(nil)
+    assert(n:_context() == "foreign")
+    -- { SDL button, handler of the stock key it becomes, routed call }
+    local routes = {
+        { 13, "onKPLeft2",  "move:-1" },  { 14, "onKPRight2", "move:1" },
+        { 9,  "onKPPgBk",   "extend:-1" }, { 10, "onKPPgFwd", "extend:1" },
+        { 1,  "onKPBack",   "close:nil" },
+    }
+    for _, r in ipairs(routes) do
+        calls = {}
+        assert(n:onGamepadButtonDown({ button = r[1] }) == false, "foreign: button " .. r[1] .. " goes to stock")
+        assert(#calls == 0, "foreign: nothing routed in round 1")
+        assert(n[r[2]](n) == true and calls[1] == r[3], r[2] .. " routes " .. r[3])
+    end
+    -- L-stick: passed to stock as well; both of its key names route
+    assert(n:onGamepadAxisMotion({ axis = 0, value = -20000 }) == false, "foreign: L-stick goes to stock")
+    calls = {}
+    assert(n:onKPLeft() == true and n:onKPRight() == true and calls[1] == "move:-1" and calls[2] == "move:1",
+        "LStickLeft/Right route as move")
+    -- toggle off: no route, handler stands down, the document is untouched
+    toggle, calls = false, {}
+    for _, r in ipairs(routes) do
+        assert(n[r[2]](n) == false, r[2] .. " stands down with the toggle off")
+    end
+    assert(#calls == 0 and #log == 0, "toggle off: nothing routed, nothing moved")
+    -- kopad switched off: no route even with the toggle on
+    toggle, n.enabled_ref.enabled = true, false
+    assert(n:onKPPgFwd() == false and #calls == 0, "kopad off: no route")
+    PL.overlay_active, PL.call_provided = saved_oa, saved_cp
+end
+
 print("padmap_test: all tests passed")

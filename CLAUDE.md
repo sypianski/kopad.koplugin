@@ -244,10 +244,21 @@ optional method in the host's `provide` table, then a route to it from kopad.
    Today `visel / kopad / gamepad_select`: `is_active()`, `move(dir)`,
    `extend(dir)`, `close()`. Change it in both repos and name the other repo's
    commit in each commit message.
-5. **Route before `_is_enabled()`.** A foreign overlay makes the context
-   `foreign`, which disables PadNav's own handlers — and that is exactly the state
-   an opt-in route is for. `PadNav:_visel_route` therefore runs first in the
-   handlers and re-checks the master switch and `is_modal_active()` itself.
+5. **Route before `_is_enabled()`, and know the two rounds.** A foreign overlay
+   makes the context `foreign`, which disables PadNav's own handlers — and that is
+   exactly the state an opt-in route is for. `PadNav:_visel_route` therefore runs
+   first in the `key_events` handlers and re-checks the master switch and
+   `is_modal_active()` itself. On KOReader >= 2026.07 the route is reached in a
+   *second round*: in context `foreign`, `_button_down` / `onGamepadAxisMotion`
+   return `false`, stock (`gamepad.lua` `button_key_names` / `axis_key_names`)
+   then sends its default key — D-pad / L-stick X → `Left`/`Right`, LB/RB →
+   `RPgBack`/`RPgFwd`, B → `Back` — and that key hits `onKPLeft2` / `onKPPgBk` /
+   `onKPBack`, which route. So `foreign` must keep passing those controls
+   through; consuming them there would cut visel off. Side effects of the same
+   mapping: Select / Guide (`RPgBack`/`RPgFwd`) also trim / extend, and R-stick Y
+   does so with auto-repeat. `Back` reaches PadNav before visel's own `ViselBack`
+   only because kopad loads after keyreader and inserts PadNav at the front of
+   `active_widgets`. Section 12 of `tests/padmap_test.lua` covers both rounds.
 6. **One overlay at a time.** `claim_overlay(ui, name)` when opening,
    `release_overlay` when closing, `overlay_active` checked before opening.
    Claim names in use: `kopad`, `visel`, `hilite`. A foreign claim makes kopad
@@ -265,9 +276,9 @@ optional method in the host's `provide` table, then a route to it from kopad.
 2. kopad: `Pluginaro.register(host, {...})` in `main.lua:init` (see the visel
    block), a `PadNav:_<host>_route` next to `_visel_route`, called first in the
    relevant `on<Key>` handlers.
-3. Test: extend the visel-routing cases in `tests/padmap_test.lua` (stub
-   `call_provided`; `ui._kokb_overlay` is set by the tests that need a foreign
-   overlay).
+3. Test: add a case like section 12 of `tests/padmap_test.lua` (stub
+   `call_provided`, set `ui._kokb_overlay`, assert round 1 passes and the stock
+   key's handler routes).
 4. Docs, in the same change pair: this section, the README ("Visel overlay"
    section is the model), and the host's `CLAUDE.md` / `README.md`.
 5. If `pluginaro.lua` itself must change: edit `koreader-konfig` `lib/pluginaro.lua`,
