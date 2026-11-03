@@ -555,24 +555,17 @@ end
 
 -- Integration B (pluginaro): dictation into the focused text field through
 -- diktonoti (`diktonoti.ext.kopad.gamepad_dictate`). Context "window" only
--- (the note InputDialog, any dialog with a text field): X starts / stops a
--- recording, B cancels a running one. X, not a stick click: on the Steam Deck
--- Steam Input does not pass L3 / R3 to KOReader at all (none in kopad-trace),
--- and in windows X has no stock key. With the toggle off, diktonoti absent,
--- or no focused text field (is_active nil/false) nothing is routed: X and B
--- stay stock (X = nothing, B = Back), as before.
+-- (the note InputDialog, any dialog with a text field): RT HELD = recording
+-- (push-to-talk, PadNav:_dictate_hold), B cancels a running one. With the
+-- toggle off, diktonoti absent, or no focused text field (is_active nil/false)
+-- nothing is routed and the controls keep their non-dictation meaning.
+-- Returns true when B cancelled a recording.
 function PadNav:_diktonoti_route(btn)
-    if btn ~= BTN_X and btn ~= BTN_B then return false end
-    local recording = Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording")
-    if btn == BTN_B then
-        if not recording then return false end
-        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "cancel")
-        return true
-    end
-    if not (recording or Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_active")) then
+    if btn ~= BTN_B then return false end
+    if not Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_recording") then
         return false
     end
-    Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "toggle")
+    Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "cancel")
     return true
 end
 
@@ -1631,6 +1624,96 @@ function PadNav:_quiet_tab_focus(ctx)
     if not ok then logger.warn("kopad: tab focus wrap failed: " .. tostring(err)) end
 end
 
+-- The text-input dialog on top (InputDialog / MultiInputDialog, duck-typed:
+-- `_input_widget` + `buttons`) and its focused field, else nil.
+local function text_dialog()
+    local top = top_window()
+    if type(top) ~= "table" then return nil end
+    local input = rawget(top, "_input_widget")
+    if type(input) ~= "table" or input.focused ~= true or type(top.buttons) ~= "table" then return nil end
+    return top, input
+end
+
+-- The dialog's default button (`is_enter_default`: Save of a note, Search, ...).
+local function enter_default_button(dlg)
+    for _, row in ipairs(dlg.buttons) do
+        if type(row) == "table" then
+            for _, b in ipairs(row) do
+                if type(b) == "table" and b.is_enter_default and type(b.callback) == "function" then
+                    return b
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Buttons in a text-input dialog (ctx "window"): X = backspace, A = accept
+-- (the default button, like Enter) while the focus is on the text field; B
+-- keeps the stock Back = close without saving (or cancels a recording, see
+-- _diktonoti_route). Stock gives these dialogs no pad action for X, and A on
+-- the field does nothing. Returns true = consumed.
+function PadNav:_text_field_button(btn)
+    if btn ~= BTN_X and btn ~= BTN_A then return false end
+    local dlg, input = text_dialog()
+    if not dlg then return false end
+    if btn == BTN_X then
+        if type(input.delChar) == "function" then
+            local ok, err = pcall(input.delChar, input)
+            if not ok then logger.warn("kopad: backspace failed: " .. tostring(err)) end
+        end
+        return true
+    end
+    -- A with the D-pad focus moved onto a button row: stock presses that button.
+    local sel = rawget(dlg, "selected")
+    if type(sel) == "table" and type(sel.y) == "number" and sel.y > 1 then return false end
+    local b = enter_default_button(dlg)
+    if not b then return false end
+    local ok, err = pcall(b.callback)
+    if not ok then logger.warn("kopad: accept failed: " .. tostring(err)) end
+    return true
+end
+
+-- RT in a text-input dialog: push-to-talk through diktonoti. Start on the
+-- press, stop on the release. KOReader reports no trigger release, but keeps
+-- Gamepad.held_axis_directions up to date on every SDL motion, so the release
+-- is polled (like _quick_rearm). A remapped button acting as RT has no release
+-- either and no axis to poll: it toggles. Returns true when the press was
+-- used (a focused field and the route on); auto-repeats of a held RT are
+-- consumed while the hold lasts.
+local DICTATE_POLL_S = 0.05
+function PadNav:_dictate_hold(from_button)
+    if self._dictate_holding then return true end
+    if not text_dialog() then return false end
+    if not Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "is_active") then return false end
+    if from_button then
+        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "toggle")
+        return true
+    end
+    local ok, G = pcall(require, "device/sdl/gamepad")
+    local function held()
+        local h = ok and type(G) == "table" and G.held_axis_directions
+        return type(h) == "table" and h[AXIS_RT] ~= nil
+    end
+    if not held() or type(UIManager.scheduleIn) ~= "function" then
+        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "toggle")
+        return true
+    end
+    Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "start")
+    self._dictate_holding = true
+    local poll
+    poll = function()
+        if held() then
+            UIManager:scheduleIn(DICTATE_POLL_S, poll)
+            return
+        end
+        self._dictate_holding = nil
+        Pluginaro.call_provided("diktonoti", "kopad", "gamepad_dictate", "stop")
+    end
+    UIManager:scheduleIn(DICTATE_POLL_S, poll)
+    return true
+end
+
 -- Buttons (logical role id) while a menu or another window is on top
 -- (ctx "top_menu" / "window"). Returns true = consumed, false = the stock key
 -- goes to the menu. Rule: in menus the pad is KOReader's (D-pad / A / B /
@@ -1678,6 +1761,7 @@ function PadNav:_menu_button(btn, ctx)
         if btn == BTN_START then return false end
     elseif ctx == "window" then
         if self:_diktonoti_route(btn) then return true end
+        if self:_text_field_button(btn) then return true end
         local dlg = find_config_dialog()
         if not dlg then return BUTTON_SWALLOW[btn] or false end
         if btn == BTN_START then
@@ -1820,6 +1904,10 @@ function PadNav:_trigger_event(axis, value, from_button)
             self:_wheel_call("page_step", axis == AXIS_RT and 1 or -1)
         end
         if tr then Trace.log("padnav axis=%s value=%s: context wheel, page -> result=true", tostring(axis), tostring(value)) end
+        return true
+    end
+    if ctx == "window" and axis == AXIS_RT and value > 0 and self:_dictate_hold(from_button) then
+        if tr then Trace.log("padnav axis=%s value=%s: context window, dictation -> result=true", tostring(axis), tostring(value)) end
         return true
     end
     if ctx == "top_menu" or ctx == "window" or ctx == "filemanager" then

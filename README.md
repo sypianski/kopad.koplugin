@@ -183,9 +183,11 @@ With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** m
 
 Without keyreader, or with the switch off, nothing changes. Windows opened by other plugins get the pad as stock KOReader keys (see *Menus versus reading*), apart from dictation below.
 
-### Dictation (diktonoti, opt-in via pluginaro)
+### Text fields and dictation (diktonoti, opt-in via pluginaro)
 
-With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*), **X** in a dialog with a focused text field — e.g. the note to a highlight — starts / stops dictation through the Diktilo daemon on the Steam Deck; **B** during a recording cancels it. (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, X does nothing there and B is the stock Back.
+In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **B** = close without saving (stock Back).
+
+With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*): **hold RT** and speak — on release the text is recognized by the Diktilo daemon on the Steam Deck and inserted at the cursor; **B** during a recording cancels it. (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, RT does nothing there.
 
 ### Button remapping (gamepad layouts)
 

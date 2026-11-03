@@ -1325,50 +1325,96 @@ do
     T.now = function() return 0 end
 end
 
--- 15. Dictation routing (pluginaro integration B, diktonoti) in context
--- "window": X toggles while a text field is focused (is_active) or a
--- recording runs, B cancels only a running recording. Toggle off / no
--- focused field: X and B stock (false), nothing called.
+-- 15. Text-input dialogs in context "window": X = backspace, A = accept (the
+-- is_enter_default button) while the focus is on the field, RT held =
+-- dictation through diktonoti (pluginaro integration B; start on the press,
+-- stop when the polled Gamepad.held_axis_directions shows the release), B
+-- cancels a running recording, else stays the stock Back.
 do
     local PadNav = require("padnav")
     local PL = package.loaded.pluginaro
-    local stack = require("ui/uimanager")._window_stack
-    local saved_cp = PL.call_provided
-    local toggle, active, recording, calls = true, true, false, {}
+    local UIM = require("ui/uimanager")
+    local stack = UIM._window_stack
+    local saved_cp, saved_sched = PL.call_provided, UIM.scheduleIn
+    local saved_gp = package.loaded["device/sdl/gamepad"]
+    local held = {}
+    package.loaded["device/sdl/gamepad"] = { held_axis_directions = held }
+    local sched = {}
+    UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = fn end
+    local function run_sched()
+        local list = sched; sched = {}
+        for _, fn in ipairs(list) do fn() end
+    end
+    local toggle, recording, calls = true, false, {}
     PL.call_provided = function(host, provider, id, method)
         assert(host == "diktonoti" and provider == "kopad" and id == "gamepad_dictate", "contract triple")
         if not toggle then return nil end
-        if method == "is_active" then return active end
+        if method == "is_active" then return true end
         if method == "is_recording" then return recording end
         calls[#calls + 1] = method
         return true
     end
+    local log = {}
+    local input = { focused = true, charlist = {}, delChar = function() log[#log + 1] = "del" end }
+    local dlg = { _input_widget = input, buttons = { {
+        { text = "Cancel", callback = function() log[#log + 1] = "cancel_btn" end },
+        { text = "Save", is_enter_default = true, callback = function() log[#log + 1] = "save" end },
+    } } }
     local ui = { document = {}, rolling = {}, handleEvent = function() end }
-    local note_dialog = {}
     for i = #stack, 1, -1 do stack[i] = nil end
-    stack[1], stack[2] = { widget = ui }, { widget = note_dialog }
+    stack[1], stack[2] = { widget = ui }, { widget = dlg }
     local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = {} } }, { __index = PadNav })
     n:set_padmap(nil)
     assert(n:_context() == "window")
 
-    assert(n:onGamepadButtonDown({ button = 2 }) == true and calls[1] == "toggle", "X starts")
-    recording, active = true, false
-    assert(n:onGamepadButtonDown({ button = 2 }) == true and calls[2] == "toggle", "X stops while recording")
-    assert(n:onGamepadButtonDown({ button = 1 }) == true and calls[3] == "cancel", "B cancels while recording")
+    -- X = backspace, A = default button; with the focus on a button row A is stock
+    assert(n:onGamepadButtonDown({ button = 2 }) == true and log[1] == "del", "X = backspace")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and log[2] == "save", "A = Save")
+    dlg.selected = { x = 1, y = 2 }
+    assert(n:onGamepadButtonDown({ button = 0 }) == false and #log == 2, "A on a button row: stock")
+    dlg.selected = nil
+
+    -- RT held: start, auto-repeats consumed without new calls, release -> stop
+    held[5] = "plus"
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and calls[1] == "start", "RT press starts")
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and #calls == 1, "repeat while held")
+    run_sched()
+    assert(#calls == 1 and #sched == 1, "still held: keep polling")
+    held[5] = nil
+    run_sched()
+    assert(calls[2] == "stop" and #sched == 0, "release stops")
+    -- the next press starts again
+    held[5] = "plus"
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(calls[3] == "start", "second hold")
+    held[5] = nil; run_sched()
+
+    -- B: cancels while recording, else stock Back (false)
+    recording, calls = true, {}
+    assert(n:onGamepadButtonDown({ button = 1 }) == true and calls[1] == "cancel", "B cancels")
     recording, calls = false, {}
     assert(n:onGamepadButtonDown({ button = 1 }) == false and #calls == 0, "B stock when idle")
-    assert(n:onGamepadButtonDown({ button = 2 }) == false and #calls == 0, "X stock without a text field")
-    active, toggle = true, false
-    assert(n:onGamepadButtonDown({ button = 2 }) == false and #calls == 0, "toggle off: X stock, no call")
-    assert(n:onGamepadButtonDown({ button = 1 }) == false and #calls == 0, "toggle off: B stock")
-    -- reading context (nothing on top): never routed
+
+    -- toggle off: RT not routed (consumed by the window trigger rule), X / A still work
+    toggle, calls = false, {}
+    held[5] = "plus"
+    assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and #calls == 0 and #sched == 0, "toggle off: no dictation")
+    held[5] = nil
+    assert(n:onGamepadButtonDown({ button = 2 }) == true and log[3] == "del", "toggle off: X still backspace")
+
+    -- a dialog without a focused text field: X / A stock, RT no dictation
     toggle = true
-    stack[2] = nil
-    assert(n:_context() == "reading")
-    n:onGamepadButtonDown({ button = 2 })
-    assert(#calls == 0, "reading: X not routed (it is the reading modifier)")
+    input.focused = false
+    calls = {}
+    assert(n:onGamepadButtonDown({ button = 2 }) == false and n:onGamepadButtonDown({ button = 0 }) == false, "no field: stock")
+    held[5] = "plus"
+    n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+    assert(#calls == 0, "no field: RT not routed")
+    held[5] = nil
+
     for i = #stack, 1, -1 do stack[i] = nil end
-    PL.call_provided = saved_cp
+    PL.call_provided, UIM.scheduleIn = saved_cp, saved_sched
+    package.loaded["device/sdl/gamepad"] = saved_gp
 end
 
 -- 16. The quick-action wheel (TASK-26, PC-021): padmap `quick` and the R-stick.

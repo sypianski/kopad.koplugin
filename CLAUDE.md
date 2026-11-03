@@ -329,10 +329,16 @@ shows they arrive as sync commits.
 The family: `keyreader` (with `visel` and `hilite`), `marjenoti`, `textolimiti`,
 `kotheme`, `frontespico` and kopad. Each is its own GitHub repo. **Today there are two
 gamepad integrations: kopad ↔ visel** (`visel.ext.kopad.gamepad_select`) **and
-kopad ↔ diktonoti** (`diktonoti.ext.kopad.gamepad_dictate`: in context `window`
-X toggles dictation into the focused text field (L3 / R3 never reach KOReader
-on the Deck: Steam Input), B cancels a running one —
-`PadNav:_diktonoti_route`, called first in `_menu_button`'s window branch;
+kopad ↔ diktonoti** (`diktonoti.ext.kopad.gamepad_dictate`: in a text-input
+dialog (context `window`) **RT held** = dictation into the focused field —
+start on the press, stop on the release, which is polled from
+`Gamepad.held_axis_directions` because KOReader reports no trigger release
+(`PadNav:_dictate_hold`, before `_menu_trigger`); B during a recording =
+cancel (`_diktonoti_route`). Not a stick click: on the Deck Steam Input never
+passes L3 / R3 to KOReader. kopad's own text-field controls, with or without
+diktonoti (`_text_field_button`): X = backspace, A = the dialog's
+`is_enter_default` button (Save / Search) while the focus is on the field,
+B stays the stock Back = close;
 section 15 of `tests/padmap_test.lua`); every
 other plugin's windows simply get stock keys from kopad (context `window`) and
 need no pad code. The rules below describe how that integration works and how to
@@ -369,7 +375,7 @@ optional method in the host's `provide` table, then a route to it from kopad.
 4. **The contract is `(host, provider, id)` plus method names and arguments.**
    Today `visel / kopad / gamepad_select`: `is_active()`, `move(dir)`,
    `extend(dir)`, `close()`; `diktonoti / kopad / gamepad_dictate`:
-   `is_active()`, `is_recording()`, `toggle()`, `cancel()`. Change it in both repos and name the other repo's
+   `is_active()`, `is_recording()`, `start()`, `stop()`, `toggle()`, `cancel()`. Change it in both repos and name the other repo's
    commit in each commit message.
 5. **Route before `_is_enabled()`, and know the two rounds.** A foreign overlay
    makes the context `foreign`, which disables PadNav's own handlers — and that is
