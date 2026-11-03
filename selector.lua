@@ -1,6 +1,7 @@
 --[[
 Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
-documents, driven by the handlers in padnav.lua. Four modes: sentences
+documents and, through PagedOverlay below (TASK-30), PDF / DjVu pages with a
+text layer, driven by the handlers in padnav.lua. Four modes: sentences
 ("struct", Y + D-pad), words ("walk", A + D-pad), the page's saved
 highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29: pad
 labels at the lines pick the start and the end, then it is a word walk);
@@ -29,8 +30,9 @@ local Screen         = Device.screen
 
 local Pluginaro  = require("pluginaro")
 local WordSource = require("paginmapo")
-local StatusBar  = require("statusbar")
 local Hints      = require("kopad_hints")
+local PdfWords   = require("pdfwords")
+local StatusBar  = require("statusbar")
 
 local STATUS_FACE = require("ui/font"):getFace("infofont", 14)
 local LABEL_FACE  = require("ui/font"):getFace("infofont", 12)
@@ -757,10 +759,7 @@ function SelectorOverlay:action_menu()
     local overlay = self
 
     local dlg
-    dlg = ButtonDialog:new{
-        -- read only by wheel.lua: the wheel's title (TASK-20)
-        _kopad_snippet = sel.text,
-        buttons = {
+    local buttons = {
             {
                 {
                     text = _("Dictionary"),
@@ -777,7 +776,8 @@ function SelectorOverlay:action_menu()
                     end,
                 },
             },
-            {
+            -- highlights in PDF / DjVu: TASK-31
+            not self.paged and {
                 {
                     text = _("Highlight"),
                     callback = function()
@@ -809,7 +809,16 @@ function SelectorOverlay:action_menu()
                     end,
                 },
             },
-        },
+    }
+    local rows = {}
+    for k = 1, 3 do
+        local row = buttons[k]
+        if row then rows[#rows + 1] = row end
+    end
+    dlg = ButtonDialog:new{
+        -- read only by wheel.lua: the wheel's title (TASK-20)
+        _kopad_snippet = sel.text,
+        buttons = rows,
     }
     UIManager:show(dlg)
 end
@@ -996,18 +1005,21 @@ function SelectorOverlay:_do_note(sel)
     UIManager:show(dlg)
 end
 
+-- The text of the collected page (the AI passage), nil when none.
+function SelectorOverlay:_page_text()
+    if not self.words or #self.words == 0 then return nil end
+    local ok_p, p = pcall(function()
+        return self.doc:getTextFromXPointers(
+            self.words[1].xp0, self.words[#self.words].xp1)
+    end)
+    if ok_p and p and p ~= "" then return p end
+end
+
 function SelectorOverlay:_do_ai(sel)
     local text = util.cleanupSelectedText(sel.text)
     if text == "" then return end
 
-    local passage = sel.text
-    if self.words and #self.words > 0 then
-        local ok_p, p = pcall(function()
-            return self.doc:getTextFromXPointers(
-                self.words[1].xp0, self.words[#self.words].xp1)
-        end)
-        if ok_p and p and p ~= "" then passage = p end
-    end
+    local passage = self:_page_text() or sel.text
 
     local assistant = self.ui and self.ui.assistant
     local lang = (assistant and assistant.ui_language) or "English"
@@ -1184,8 +1196,10 @@ end
 -- SENTENCE: the selection runs on past the top / bottom of the page. `short`
 -- = the shortened bar of statusbar.lua (mode + A / B, for a tight strip).
 function SelectorOverlay:_status_text(short)
+    -- PDF / DjVu: no X highlight toggle until TASK-31
     local keys = short and " \xC2\xB7 A menu \xC2\xB7 B close"
-        or " \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
+        or (self.paged and "" or " \xC2\xB7 X hl")
+            .. " \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close"
     if self.mode == "point" then
         local p = self.pointer
         if p and p.step == "end" then
@@ -1300,6 +1314,331 @@ function SelectorOverlay:_draw_status(bb, ox, oy)
 end
 
 ----------------------------------------------------------------------
+-- PagedOverlay: the same overlay on a PDF / DjVu page (TASK-30)
+----------------------------------------------------------------------
+-- The words come from document:getTextBoxes(page) through pdfwords.lua
+-- (word items with a "pdf/<page>/<idx>" key in place of the xpointers), and
+-- only the methods that talk to crengine are replaced: collecting the page,
+-- the word moves, the order of two positions (index on the page), the page
+-- turn (GotoPage), the selection text (getTextFromPositions) and the
+-- drawing. Sentences, paragraphs, levels, "point from-to" and the actions
+-- run unchanged on the base class. One page at a time: self.page (the top
+-- page in continuous view); a range never leaves it.
+--
+-- Screen boxes (word.sbox) are recomputed from the CURRENT view
+-- (view:pageToScreenTransform) on every paint and every move, never cached:
+-- zoom and pan change the mapping. nil = the word is not on the screen. A
+-- move onto a word outside the view pans the view to it (_reveal).
+-- Highlights and notes are TASK-31, paragraphs TASK-32 (pdfwords.sentences).
+
+local PagedOverlay = SelectorOverlay:extend{
+    name  = "kopad_selector_overlay",
+    paged = true,
+}
+
+-- True when the page on screen is not the native page: reflow (k2pdfopt,
+-- text_wrap == 1) or a reflowable document opened by MuPDF. The native text
+-- boxes do not match what is drawn there, so kopad does not select.
+function PagedOverlay.reflowed(doc)
+    if type(doc) ~= "table" then return false end
+    local cfg = doc.configurable
+    if type(cfg) == "table" and cfg.text_wrap == 1 then return true end
+    return doc.is_reflowable == true
+end
+
+function PagedOverlay:init()
+    self._boxes = {}
+    self.page = self.page or self:_view_page()
+    SelectorOverlay.init(self)
+end
+
+-- The page the overlay starts on: the top one in continuous view (the stock
+-- current_page is the bottom one there), else the view's page.
+function PagedOverlay:_view_page()
+    local ui, view = self.ui, self.ui.view
+    if view and view.page_scroll and ui.paging and ui.paging.getTopPage then
+        local ok, p = pcall(ui.paging.getTopPage, ui.paging)
+        if ok and type(p) == "number" then return p end
+    end
+    if view and view.state and type(view.state.page) == "number" then return view.state.page end
+    local ok, p = pcall(function() return ui:getCurrentPage() end)
+    return (ok and type(p) == "number") and p or 1
+end
+
+function PagedOverlay:_page_count()
+    local ok, n = pcall(function() return self.doc:getPageCount() end)
+    if ok and type(n) == "number" then return n end
+    return self.ui.paging and self.ui.paging.number_of_pages or nil
+end
+
+-- getTextBoxes of a page, nil without a text layer (cached per overlay: the
+-- DjVu wrapper has no cache of its own).
+function PagedOverlay:_page_boxes(page)
+    if type(page) ~= "number" or page < 1 then return nil end
+    local n = self:_page_count()
+    if n and page > n then return nil end
+    local c = self._boxes[page]
+    if c == nil then
+        local ok, b = pcall(self.doc.getTextBoxes, self.doc, page)
+        c = (ok and PdfWords.has_text(b)) and b or false
+        self._boxes[page] = c
+    end
+    return c or nil
+end
+
+function PagedOverlay:_collect()
+    local boxes = self:_page_boxes(self.page)
+    self.words = boxes and PdfWords.words_from_boxes(boxes, self.page) or {}
+    self.sentences = PdfWords.sentences(self.words)
+    local n = #self.words
+    -- a sentence over the page edge (as paginmapo's find_sentence_start/end
+    -- do for an EPUB): decided with the neighbouring page's first / last word
+    if #self.sentences > 0 then
+        local prev = PdfWords.last_text(self:_page_boxes(self.page - 1))
+        if prev and not PdfWords.ends_sentence(prev, self.words[1].text) then
+            self.sentences[1]._extends_before = true
+        end
+        local nxt = PdfWords.first_text(self:_page_boxes(self.page + 1))
+        if nxt and not PdfWords.ends_sentence(self.words[n].text, nxt) then
+            self.sentences[#self.sentences]._extends_after = true
+        end
+    end
+    self._key_idx, self._xp_to_sent, self.word_to_sent = {}, {}, {}
+    for i, w in ipairs(self.words) do self._key_idx[w.pos0] = i end
+    for si, s in ipairs(self.sentences) do
+        for i = s.first, s.last do
+            self._xp_to_sent[self.words[i].pos0] = si
+            self.word_to_sent[i] = si
+        end
+    end
+    self:_screen_boxes()
+end
+
+-- Saved highlights in PDF / DjVu: TASK-31.
+function PagedOverlay:_collect_highlights()
+    self.hl_items, self.hl_cur = {}, 0
+end
+
+-- A native page box on the screen now, nil when it is not visible. In page
+-- view the stock transform ignores the page number, so another page than the
+-- one on screen has no screen box.
+function PagedOverlay:_to_screen(pbox)
+    local view = self.ui and self.ui.view
+    if not (view and pbox and view.pageToScreenTransform) then return nil end
+    if not view.page_scroll and view.state and view.state.page ~= self.page then return nil end
+    local ok, r = pcall(view.pageToScreenTransform, view, self.page,
+        Geom:new{ x = pbox.x, y = pbox.y, w = pbox.w, h = pbox.h })
+    if ok and type(r) == "table" and r.x and r.y and r.w and r.h then
+        return { x = r.x, y = r.y, w = r.w, h = r.h }
+    end
+end
+
+function PagedOverlay:_screen_boxes()
+    for _, w in ipairs(self.words or {}) do w.sbox = self:_to_screen(w.pbox) end
+end
+
+-- Pan the view so that word w is on the screen (no-op when it is). Page
+-- view: the visible area moves just past the word plus a margin (a quarter
+-- of the screen vertically); continuous view: scroll by the overshoot.
+function PagedOverlay:_reveal(w)
+    local view = self.ui and self.ui.view
+    if not (w and view) then return end
+    if view.page_scroll then
+        local s = self:_to_screen(w.pbox)
+        local sh = Screen:getHeight()
+        local paging = self.ui.paging
+        if s and s.y >= 0 and s.y + s.h <= sh then return end
+        if s and paging and paging.onScrollPanRel then
+            local dy = s.y < 0 and (s.y - sh / 4) or (s.y + s.h - sh + sh / 4)
+            pcall(paging.onScrollPanRel, paging, dy)
+        elseif paging and paging.onGotoPage then
+            pcall(paging.onGotoPage, paging, self.page, { x = w.pbox.x, y = w.pbox.y })
+        end
+        return
+    end
+    local va, z = view.visible_area, view.state and view.state.zoom
+    if not (va and type(z) == "number" and view.PanningUpdate) then return end
+    local b = w.pbox
+    local x0, y0, x1, y1 = b.x * z, b.y * z, (b.x + b.w) * z, (b.y + b.h) * z
+    local dx, dy = 0, 0
+    if x0 < va.x then dx = x0 - va.x - va.w / 10
+    elseif x1 > va.x + va.w then dx = x1 - (va.x + va.w) + va.w / 10 end
+    if y0 < va.y then dy = y0 - va.y - va.h / 4
+    elseif y1 > va.y + va.h then dy = y1 - (va.y + va.h) + va.h / 4 end
+    if dx ~= 0 or dy ~= 0 then pcall(view.PanningUpdate, view, dx, dy) end
+end
+
+-- The word the cursor is on (walk) / the cursor sentence's first word.
+function PagedOverlay:_cursor_word()
+    if self.mode == "walk" then return self.ww_word end
+    if self.mode == "struct" and self.sel_cur then
+        local s = self.sentences[self.sel_cur]
+        return s and self.words[s.first]
+    end
+end
+
+-- Every move ends here (base step / line / para / to_words ...): bring the
+-- cursor into view, then the screen boxes of the view now.
+function PagedOverlay:_refresh()
+    self:_reveal(self:_cursor_word())
+    self:_screen_boxes()
+    UIManager:setDirty("all", "ui")
+end
+
+-- The first / last word of the page shown when opening (visible = true: the
+-- first / last word ON THE SCREEN, a zoomed view shows part of the page);
+-- after a page turn the real first / last word of the page.
+function PagedOverlay:_ww_land(dir, visible)
+    local n = #self.words
+    if n == 0 then self.ww_word = nil; return end
+    local from, to = 1, n
+    if dir < 0 then from, to = n, 1 end
+    local w
+    if visible then
+        for i = from, to, dir < 0 and -1 or 1 do
+            if self.words[i].sbox then w = self.words[i]; break end
+        end
+    end
+    self.ww_word = w or self.words[from]
+end
+
+-- Sentences on opening: the sentence of the first / last word on the screen.
+function PagedOverlay:_sent_open(from_end)
+    self:_ww_land(from_end and -1 or 1, true)
+    local w = self.ww_word
+    self.ww_word = nil
+    local i = w and self.word_to_sent[w.idx]
+    if i then self:_set_sent(i) end
+end
+
+function PagedOverlay:_is_split_word() return false end
+
+function PagedOverlay:_ww_word_from_xp(key)
+    local i = key and self._key_idx and self._key_idx[key]
+    return i and self.words[i] or nil
+end
+
+-- Order of two positions = their index on the page (ranges stay on it).
+function PagedOverlay:_xp_before(a, b)
+    local ia, ib = self._key_idx[a], self._key_idx[b]
+    return ia ~= nil and ib ~= nil and ia < ib
+end
+
+-- Turn to the next / previous whole page under the overlay. False on the
+-- first / last page.
+function PagedOverlay:_turn_page(dir)
+    local target = self.page + dir
+    local n = self:_page_count()
+    if target < 1 or (n and target > n) then return false end
+    self.ui:handleEvent(Event:new("GotoPage", target))
+    self.page = target
+    self:_collect()
+    return true
+end
+
+-- Words: one word forward / back; past the page edge the next / previous
+-- page (the range, A held, stays on the page).
+function PagedOverlay:_ww_step(dir, range)
+    local w = self.ww_word
+    if range then self.ww_anchor = self.ww_anchor or w else self.ww_anchor = nil end
+    local nw = w and self.words[w.idx + dir]
+    if nw then self.ww_word = nw; return end
+    if not range and self:_turn_page(dir) then self:_ww_land(dir) end
+end
+
+-- Words: the nearest word on the next / previous line of the page's text
+-- boxes; past the last / first line the next / previous page.
+function PagedOverlay:_ww_line(delta, range)
+    local w = self.ww_word
+    if not w then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
+    if range then self.ww_anchor = self.ww_anchor or w else self.ww_anchor = nil end
+    local i = PdfWords.line_target(self.words, w.idx, delta)
+    if i then self.ww_word = self.words[i]; return end
+    if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+end
+
+-- Word indices of the selection (walk: cursor / anchor..cursor; struct:
+-- the selected sentences), nil when none.
+function PagedOverlay:_span_idx()
+    if self.mode == "walk" then
+        local w, a = self.ww_word, self.ww_anchor
+        if not w then return nil end
+        if not a then return w.idx, w.idx end
+        return math.min(a.idx, w.idx), math.max(a.idx, w.idx)
+    elseif self.mode == "struct" then
+        local head = self.sel_sent and self.sentences[self.sel_sent]
+        local tail = head and self.sentences[self.sel_tail or self.sel_sent]
+        if head and tail then return head.first, tail.last end
+    end
+end
+
+-- The selection for the actions: text (getTextFromPositions joins words
+-- split by a hyphen; else the words), pos0 / pos1 at the centres of the end
+-- words (a later saveHighlight takes these, TASK-31), pboxes (native, one per
+-- line) and sboxes (screen, for the dictionary popup; nil when none shows).
+function PagedOverlay:_get_selection()
+    local i0, i1 = self:_span_idx()
+    if not i0 then return nil end
+    local w0, w1 = self.words[i0], self.words[i1]
+    local state = self.ui.view and self.ui.view.state
+    local pos0, pos1 = PdfWords.pos(w0, state), PdfWords.pos(w1, state)
+    local text, pboxes
+    local ok, r = pcall(self.doc.getTextFromPositions, self.doc, pos0, pos1)
+    if ok and type(r) == "table" and type(r.text) == "string" and r.text:find("%S") then
+        text, pboxes = r.text, r.pboxes
+    end
+    self:_screen_boxes()
+    local sboxes = PdfWords.line_boxes(self.words, i0, i1)
+    return {
+        text = text or PdfWords.text(self.words, i0, i1),
+        pos0 = pos0, pos1 = pos1, page = self.page,
+        pboxes = pboxes or PdfWords.line_boxes(self.words, i0, i1, "pbox"),
+        sboxes = #sboxes > 0 and sboxes or nil,
+    }
+end
+
+function PagedOverlay:_page_text()
+    if #self.words == 0 then return nil end
+    return PdfWords.text(self.words, 1, #self.words)
+end
+
+local function not_yet()
+    UIManager:show(InfoMessage:new{ text = _("Highlights in PDF: not yet"), timeout = 2 })
+end
+function PagedOverlay:_do_highlight() not_yet() end
+function PagedOverlay:_do_toggle_highlight() not_yet() end
+function PagedOverlay:_do_note() not_yet() end
+
+-- Point from-to: the labels go at the lines on the screen now.
+function PagedOverlay:_point_begin()
+    self:_screen_boxes()
+    return SelectorOverlay._point_begin(self)
+end
+
+function PagedOverlay:paintTo(bb, x, y)
+    self:_screen_boxes()
+    SelectorOverlay.paintTo(self, bb, x, y)
+end
+
+local function invert_boxes(bb, ox, oy, boxes)
+    for _, b in ipairs(boxes) do invert_rounded_rect(bb, ox, oy, b.x, b.y, b.w, b.h) end
+end
+
+function PagedOverlay:_draw_walk(bb, ox, oy)
+    local i0, i1 = self:_span_idx()
+    if i0 then invert_boxes(bb, ox, oy, PdfWords.line_boxes(self.words, i0, i1)) end
+end
+
+function PagedOverlay:_draw_struct(bb, ox, oy)
+    if self.mode ~= "struct" then return end
+    local i0, i1 = self:_span_idx()
+    if i0 then invert_boxes(bb, ox, oy, PdfWords.line_boxes(self.words, i0, i1)) end
+end
+
+----------------------------------------------------------------------
 -- Selector (controller — key handling, in active_widgets)
 ----------------------------------------------------------------------
 
@@ -1323,12 +1662,20 @@ end
 -- screen; holding it makes keyboard openers (Space/D/O/I…) stand down over the
 -- gamepad overlay. padnav._is_enabled exempts our own claim, so the gamepad
 -- keeps driving this overlay.
+-- PDF / DjVu (ui.paging, TASK-30): PagedOverlay; nil, "reflow" in reflow
+-- mode, and the openers below return false, "no_text" for a page without a
+-- text layer (a scan), so padnav can say why.
 function Selector:_new_overlay()
     if self.overlay then return nil end
     if not self.ui or not self.ui.document then return nil end
-    if not self.ui.rolling then return nil end
+    local class = SelectorOverlay
+    if not self.ui.rolling then
+        if not self.ui.paging then return nil end
+        if PagedOverlay.reflowed(self.ui.document) then return nil, "reflow" end
+        class = PagedOverlay
+    end
     if not Pluginaro.claim_overlay(self.ui, "kopad") then return nil end
-    local ok, ov = pcall(SelectorOverlay.new, SelectorOverlay, {
+    local ok, ov = pcall(class.new, class, {
         doc  = self.ui.document,
         ui   = self.ui,
     })
@@ -1338,6 +1685,22 @@ function Selector:_new_overlay()
         return nil
     end
     return ov
+end
+
+-- What an opener returns when no overlay could be made: false + reason
+-- (reflow), nil otherwise (already open, claim refused, no document).
+function Selector._refused(why)
+    if why then return false, why end
+    return nil
+end
+
+-- A paged overlay on a page without words: given back, false + reason.
+function Selector:_no_text(ov)
+    if ov.paged and #ov.words == 0 then
+        Pluginaro.release_overlay(self.ui, "kopad")
+        return true
+    end
+    return false
 end
 
 function Selector:_show(ov)
@@ -1350,30 +1713,41 @@ end
 -- (Y + D-pad while reading, TASK-28; the `sentence_select` action opens the
 -- first).
 function Selector:_open(from_end)
-    local ov = self:_new_overlay()
-    if not ov then return end
-    if from_end and #ov.sentences > 0 then ov:_set_sent(#ov.sentences) end
+    local ov, why = self:_new_overlay()
+    if not ov then return Selector._refused(why) end
+    if self:_no_text(ov) then return false, "no_text" end
+    if ov.paged then
+        ov:_sent_open(from_end)
+        ov:_reveal(ov:_cursor_word())
+    elseif from_end and #ov.sentences > 0 then
+        ov:_set_sent(#ov.sentences)
+    end
     self:_show(ov)
+    return true
 end
 
 -- Words: the first word of the page, or the last one with from_end (A +
 -- D-pad ↑/← while reading, TASK-28).
 function Selector:_open_walk(from_end)
-    local ov = self:_new_overlay()
-    if not ov then return end
+    local ov, why = self:_new_overlay()
+    if not ov then return Selector._refused(why) end
+    if self:_no_text(ov) then return false, "no_text" end
     ov.mode = "walk"
-    ov:_ww_land(from_end and -1 or 1)
+    -- PDF: the first / last word on the screen (a zoomed view)
+    ov:_ww_land(from_end and -1 or 1, true)
+    if ov.paged then ov:_reveal(ov.ww_word) end
     self:_show(ov)
+    return true
 end
 
 -- Point from-to (A tapped while reading, TASK-29): labels at the line
 -- starts. False, with nothing shown, when the page has no text.
 function Selector:_open_point()
-    local ov = self:_new_overlay()
-    if not ov then return nil end
+    local ov, why = self:_new_overlay()
+    if not ov then return Selector._refused(why) end
     if not ov:_point_begin() then
         Pluginaro.release_overlay(self.ui, "kopad")
-        return false
+        return false, "no_text"
     end
     self:_show(ov)
     return true
@@ -1414,5 +1788,8 @@ function Selector:getMenuItems()
         },
     }
 end
+
+-- for the tests
+Selector._PagedOverlay = PagedOverlay
 
 return Selector

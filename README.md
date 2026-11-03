@@ -84,7 +84,7 @@ Push the **R-stick** while reading (EPUB or PDF) and a wheel of quick actions op
 | ← | back to the previous location | top menu |
 | ↖ | fulltext search | home folder |
 
-Empty directions are left out, so the wheel has as many sectors as actions. Both sets can be changed in koligilo (`quick` in `padmap`, see Button remapping). After the wheel closes the R-stick does nothing until it is back in the centre, so a stick still held does not open it again. In a PDF the R-stick used to zoom; zoom is now **A** held + D-pad (and the bottom menu).
+Empty directions are left out, so the wheel has as many sectors as actions. Both sets can be changed in koligilo (`quick` in `padmap`, see Button remapping). After the wheel closes the R-stick does nothing until it is back in the centre, so a stick still held does not open it again. In a PDF the R-stick used to zoom; zoom is now **B** held + D-pad (and the bottom menu).
 
 ### Menus versus reading
 
@@ -251,23 +251,26 @@ An override applies only in the idle reading context: the book itself is on top 
 
 ### Scope
 
-The selector (words / sentences / highlights) only exists for crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys are suppressed and selector-dependent handlers pass through.
-
-Paged documents get their own view controls instead (stock KOReader 2026.07+ `Gamepad*` path). Only the bumpers and the triggers change the page, always by a whole page, so nothing else turns pages by surprise:
+The selection works in EPUBs and, on pages with a text layer, in PDF / DjVu (words and sentences from KOReader's text boxes; highlights and notes there come later). In paged documents no reader keys are suppressed and, while no selection is open, the pad steers the view (stock KOReader 2026.07+ `Gamepad*` path). Only the bumpers and the triggers change the page, always by a whole page, so nothing else turns pages by surprise:
 
 | Button | Action |
 |---|---|
 | **D-pad** | move around the page slowly (about a tenth of the screen per press); never turns the page |
 | **L-stick** | move around the page fast (half a screen per step, keeps moving while held); never turns the page |
 | **R-stick** | the quick-action wheel, the same as in an EPUB (it never turns or zooms the page) |
-| **hold A + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
-| **hold A + D-pad ← / →** | fit the whole page / fit the text width |
-| **hold B + D-pad** | the same zoom / fit as A (A + D-pad will select text once PDF selection exists); tap **B** = back |
+| **hold B + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
+| **hold B + D-pad ← / →** | fit the whole page / fit the text width; tap **B** = back |
+| **hold A + D-pad** | select words, as in an EPUB: → / ↓ from the first word on the screen, ← / ↑ from the last |
+| **hold Y + D-pad** | select sentences (the same) |
+| **tap A** | point from-to: labels at the lines on the screen |
+| **tap Y** | nothing yet (highlights in PDF come later) |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
 Moving around needs page view, so the first time kopad runs enabled on a device it makes page view the default for new documents (`kopt_page_scroll = 0`; continuous view is KOReader's own default and scrolls into the next page). A document that still remembers continuous view switches to page view on the first D-pad or L-stick move, and KOReader remembers that per document. Turning continuous view back on in KOReader afterwards is respected. In page view at text width the page already fits sideways, so ← / → only move once you zoom in.
 
 X + D-pad still opens the menus, and role overrides from koligilo still win over these defaults.
+
+The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. The action menu has Dictionary, Copy, AI explain and Vortuyo; Highlight and Note are not there yet (**X** says so). Until paragraphs are detected, ↑ / ↓ in sentences and **LT / RT** step by sentence. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
 
 ## Technical notes
 
@@ -276,7 +279,8 @@ X + D-pad still opens the menus, and role overrides from koligilo still win over
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
 - **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position, the lines of a page from word boxes, and the two-step pointer (start labels, end labels, B). Knows no document type, so the PDF selection can use it as it is.
-- **selector.lua** — the selection overlay: sentence, word, highlight and point from-to modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map").
+- **selector.lua** — the selection overlay: sentence, word, highlight and point from-to modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map"); in PDF / DjVu its `PagedOverlay` takes them from `pdfwords.lua`.
+- **pdfwords.lua** — pure word source for PDF / DjVu: KOReader's `getTextBoxes` lines turned into the overlay's word list (page boxes, sentence ends, lines), sentences grouped by `paginmapo.lua`.
 - **wheel.lua** — turns plain `ButtonDialog`s into a radial menu (wraps `ButtonDialog.init`, replaces only the dialog's content, so button callbacks keep working); glyphs come from KOReader's bundled Nerd Font symbols.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **padconfirm.lua** — puts the pad letters on the buttons of confirmation and value dialogs (wraps the dialogs' `init` once, prefixes `ok_text` / `cancel_text` / `choice*_text`; circled letters when a bundled font has them) and presses the labelled button for **A** / **B** / **X** / **Y**.

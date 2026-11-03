@@ -528,8 +528,8 @@ do
             "paged R-stick " .. c[1] .. "/" .. c[2] .. " is consumed and does not move the page")
     end
     n.ui.zooming.zoom = 1
-    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonDown({ button = 11 })
-    n:onGamepadButtonUp({ button = 11 }); n:onGamepadButtonUp({ button = 0 })
+    n:onGamepadButtonDown({ button = 1 }); n:onGamepadButtonDown({ button = 11 })
+    n:onGamepadButtonUp({ button = 11 }); n:onGamepadButtonUp({ button = 1 })
     assert(n.ui.zooming.mode == "free", "small zoom step switches to free zoom")
     -- zoom_in / zoom_out actions: the same small step; nothing outside a paged document
     n, log = paged()
@@ -576,24 +576,64 @@ do
     n, log = paged()
     n:set_padmap(P.build(acts({ rb = "toc" }), "xbox"))
     assert(n:onGamepadButtonDown({ button = 10 }) == true and log.events[1] == "ShowToc", "override over paged RB")
-    -- A held + D-pad: zoom (↑/↓) and fit (←/→); A alone does nothing, a D-pad
-    -- without A still pans, and the release of A ends the modifier
-    n, log = paged()
-    assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.events == 0, "A alone: consumed, no event")
-    for btn, want in pairs({ [11] = "zoom:1.030", [13] = "SetZoomMode:page", [14] = "SetZoomMode:contentwidth" }) do
-        log.events = {}
-        assert(n:onGamepadButtonDown({ button = btn }) == true and log.events[1] == want,
-            "A + D-pad " .. btn .. " -> " .. want .. ", got " .. tostring(log.events[1]))
-        n:onGamepadButtonUp({ button = btn })
+    -- TASK-30: A / Y held + D-pad = the selection (words / sentences), no
+    -- zoom any more; A tapped = point from-to; the D-pad alone still pans.
+    -- The paged selector is hidden from _selector() while nothing is open.
+    local function paged_sel(opts)
+        local p, plog = paged()
+        local sel = { paged = true, calls = {} }
+        local function rec(name, ret, why)
+            return function(_, arg)
+                sel.calls[#sel.calls + 1] = name .. ":" .. tostring(arg)
+                return ret, why
+            end
+        end
+        sel._open_walk = rec("walk", opts and opts.ret, opts and opts.why)
+        sel._open = rec("sent", opts and opts.ret, opts and opts.why)
+        sel._open_point = rec("point", opts and opts.ret, opts and opts.why)
+        p.enabled_ref.subs = { selector = sel }
+        p._selector = PadNav._selector
+        p._show_text = function(_, t) plog.shown = t end
+        return p, plog, sel
     end
-    log.events = {}
-    n.ui.zooming.zoom = 1
-    n:onGamepadButtonDown({ button = 12 }); n:onGamepadButtonUp({ button = 12 })
-    assert(log.events[1] == "zoom:0.971", "A + D-pad down zooms out: " .. tostring(log.events[1]))
-    n:onGamepadButtonUp({ button = 0 })
-    log.events = {}
+    local sel
+    n, log, sel = paged_sel({ ret = true })
+    assert(n:_selector() == nil and n:_any_selector() == sel, "idle paged selector is hidden")
+    assert(n:onGamepadButtonDown({ button = 0 }) == true and #log.events == 0, "A alone: consumed, no event")
+    assert(n:onGamepadButtonDown({ button = 14 }) == true and #log.events == 0, "A + D-pad: no zoom, no pan")
+    assert(sel.calls[1] == "walk:false", "A + → = words from the first: " .. tostring(sel.calls[1]))
+    n:onGamepadButtonUp({ button = 14 }); n:onGamepadButtonUp({ button = 0 })
+    assert(#sel.calls == 1, "the release after A + D-pad is not a tap")
+    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonDown({ button = 11 })
+    assert(sel.calls[2] == "walk:true", "A + ↑ = words from the last")
+    n:onGamepadButtonUp({ button = 11 }); n:onGamepadButtonUp({ button = 0 })
+    n:onGamepadButtonDown({ button = 3 }); n:onGamepadButtonDown({ button = 12 })
+    assert(sel.calls[3] == "sent:false" and #log.events == 0, "Y + ↓ = sentences")
+    n:onGamepadButtonUp({ button = 12 }); n:onGamepadButtonUp({ button = 3 })
+    -- A tapped = point from-to (context paged), Y tapped = nothing (TASK-31)
+    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonUp({ button = 0 })
+    assert(sel.calls[4] == "point:nil", "A tap = point from-to: " .. tostring(sel.calls[4]))
+    n:onGamepadButtonDown({ button = 3 }); n:onGamepadButtonUp({ button = 3 })
+    assert(#sel.calls == 4 and #log.events == 0, "Y tap: nothing yet")
+    -- after the letters are released the D-pad pans again
     n:onGamepadButtonDown({ button = 11 })
-    assert(log.events[1] == "Panning:0,-0.2", "after A is released the D-pad pans again")
+    assert(log.events[1] == "Panning:0,-0.2", "D-pad alone pans")
+    -- a page without text / reflow: the opener says why, padnav shows it
+    n, log, sel = paged_sel({ ret = false, why = "no_text" })
+    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonDown({ button = 13 })
+    assert(log.shown == "No text on this page", "no text: " .. tostring(log.shown))
+    n:onGamepadButtonUp({ button = 13 }); n:onGamepadButtonUp({ button = 0 })
+    n, log, sel = paged_sel({ ret = false, why = "reflow" })
+    n:onGamepadButtonDown({ button = 0 }); n:onGamepadButtonUp({ button = 0 })
+    assert(sel.calls[1] == "point:nil" and log.shown == "Not in reflow mode", "reflow: " .. tostring(log.shown))
+    -- the overlay open: the selector shows (context selection), and LB / RB
+    -- close it and turn a whole page
+    n, log, sel = paged_sel({ ret = true })
+    sel.overlay = {}
+    sel._close = function(s) s.overlay = nil end
+    assert(n:_selector() == sel, "an open paged overlay is the selection")
+    n:_turn_page(1)
+    assert(sel.overlay == nil and log.events[1] == "GotoPage:6", "PDF selection: RB = whole page, got " .. tostring(log.events[1]))
     -- B held + D-pad (TASK-33): the same zoom / fit; B tapped = back on the
     -- release, never after a B combo
     n, log = paged()

@@ -23,6 +23,10 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
                              the file browser; padmap `quick`, TASK-26)
     X held + D-pad           Combo: ↑menu ↓footer ←history →files
 
+  PDF / DjVu (TASK-30): D-pad pans, L-stick pans fast, B held + D-pad zoom /
+  fit, A / Y held + D-pad and A tapped select as above (pages with a text
+  layer; not in reflow mode), LB / RB / LT / RT whole page.
+
   Menus versus reading (KOReader >= 2026.07, PadNav:_context): the reading
   and selection controls apply only while the book (or kopad's selection) is
   the top window; menus, lists, dialogs, the dictionary popup and the file
@@ -290,13 +294,17 @@ end
 
 function kopad:_ensure_selector()
     if self.subs.selector then return end
-    if not self.ui or not self.ui.rolling then
-        Trace.log("selector: skipped (no ui.rolling)")
+    -- EPUB (ui.rolling) and, since TASK-30, PDF / DjVu (ui.paging). In a
+    -- paged document the selector is `paged`: PadNav:_selector() hides it
+    -- while no overlay is open, so the pad keeps steering the view there.
+    if not self.ui or not (self.ui.rolling or self.ui.paging) then
+        Trace.log("selector: skipped (no ui.rolling / ui.paging)")
         return
     end
     local Selector = safe_require("selector")
     if Selector then
-        self.subs.selector = Selector:new{ ui = self.ui, enabled_ref = self }
+        self.subs.selector = Selector:new{ ui = self.ui, enabled_ref = self,
+                                           paged = not self.ui.rolling }
     end
 end
 

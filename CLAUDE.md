@@ -18,7 +18,10 @@ directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, lines from word boxes, the pointer's two
-steps); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`, KOReader stubbed.
+steps) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
+on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
+over page edges, sentences, point from-to, scan / reflow); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`,
+KOReader stubbed.
 
 ## Runtime requirements
 
@@ -65,9 +68,9 @@ Thin glue. On `init` it opens `LuaSettings`, then lazily loads two sub-modules
 into `self.subs` via `safe_require` (pcall-wrapped so a failure warns instead of
 crashing KOReader):
 - `self.subs.nav` = `PadNav` (always)
-- `self.subs.selector` = `Selector` (only when `ui.rolling` exists, i.e. EPUB/
-  reflowable docs — created lazily in `_ensure_selector`, retried on
-  `onReaderReady`).
+- `self.subs.selector` = `Selector` (when `ui.rolling` or, since TASK-30,
+  `ui.paging` exists; `paged = true` for PDF / DjVu — created lazily in
+  `_ensure_selector`, retried on `onReaderReady`).
 
 The main-menu toggle flips `self.enabled` and calls
 `nav:_suppress_reader_keys()` / `nav:restore_reader_keys()`. Sub-modules
@@ -131,7 +134,8 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   held the arrows only move the cursor, so the start point (or a single word)
   can be picked; a range needs the next A hold. `_release_a` acts only for a
   tap: reading = "point from-to" (`_open_point_select` ->
-  `Selector:_open_point`, TASK-29; a page without text = a message),
+  `Selector:_open_point`, TASK-29; a page without text = a message; also
+  in context `paged`, TASK-30),
   selection = action menu. The legacy `Press` key goes to `onKPConfirm`
   (sentences / menu on the press; the legacy path has no point from-to).
 - **Point from-to (TASK-29)**: while the overlay is in mode `point` (context
@@ -154,7 +158,21 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   with 1) and margins ←/→ (`_margins_step`: `configurable.h_page_margins`
   ±`MARGIN_STEP`, clamped 0..`MARGIN_MAX`, `SetPageHorizMargins`). Repeated by
   `_dpad_start` (EPUB at the fixed `VIEW_REPEAT_S`). `_release_b` goes back
-  (`onKPBack`) only for a tap. A + D-pad zoom in PDF stays until TASK-30.
+  (`onKPBack`) only for a tap. B + D-pad is the ONLY zoom on the pad in a
+  PDF (the A + D-pad zoom, `_a_zoom`, was removed in TASK-30).
+- **A / Y in a PDF / DjVu (TASK-30)**: the paged selector is hidden from
+  `PadNav:_selector()` while no overlay is open (`selector.paged`;
+  `_any_selector()` sees it), so the idle paged pad keeps its view controls
+  and every "no selector -> pass" branch. In `_button_dispatch` (after the
+  B + D-pad branch, before the paged pan) A / Y in `_paged_idle()` only set
+  `_a_down` (+ `_a_reading`) / `_y_down`; A / Y held + D-pad ->
+  `_paged_select(btn)` (`Selector:_open_walk` / `_open`, from the first
+  word on the screen for →/↓, the last for ←/↑; `false, "no_text" |
+  "reflow"` -> `no_select_text` message). A tap -> `_release_a` ->
+  `_open_point_select` (both use `_any_selector`). Y tap: nothing until
+  TASK-31 (highlights). Once the overlay is open the context is `selection`
+  and everything is the EPUB path; `PadNav:_turn_page` (LB / RB in the
+  selection) turns a whole page there (`_paged_page`).
 - **X**: `_button_down` wraps `_button_dispatch`; a press that arms `_x_mode`
   records its role in `_x_hold`, and its release clears the modifier.
   `_x_combo` keeps the modifier armed while `_x_hold` is set. A trigger acting
@@ -193,7 +211,7 @@ time · battery). One action = run at once, none = nothing; X modifier armed =
 nothing. The dialog's `onCloseWidget` is wrapped to call `_quick_rearm`: while
 `Gamepad.held_axis_directions` still holds axis 2 or 3, `_quick_blocked` eats
 the R-stick (the stock auto-repeat would reopen the wheel at once). This
-replaced the PDF R-stick zoom (zoom = A held + D-pad). Tests: section 16 of
+replaced the PDF R-stick zoom (zoom = B held + D-pad since TASK-30). Tests: section 16 of
 `tests/padmap_test.lua`.
 
 ### `padmap.lua` — button remapping (pure, PC-011)
@@ -297,7 +315,9 @@ starts: left edge, right in RTL), `press(sym)` -> `prefix` / `unprefix` /
 the start labels) / `ignored`; `visible()` = the labels to draw (only those
 continuing the typed prefix; `typed`, `side`, anchor `x`, `y`). The EPUB
 adapter is `SelectorOverlay:_point_begin` (paginmapo `sbox` per word, so a
-hyphenated word belongs to the line of its head).
+hyphenated word belongs to the line of its head). The PDF adapter is the same
+method: `PagedOverlay:_point_begin` refreshes the words' screen boxes and
+calls it, so only the lines on the screen get labels.
 
 ### `vkb.lua` — no on-screen keyboard while a pad is connected
 `main.lua:_install_vkb()` calls `Vkb.install(state_fn)` (state = kopad
@@ -347,6 +367,24 @@ ButtonDialog (wheel.lua). diktonoti's label line describes only RT and X
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
 
+### `pdfwords.lua` — word source for PDF / DjVu (pure, TASK-30)
+No KOReader dependency (paginmapo only); tested by `tests/pdfwords_test.lua`.
+`words_from_boxes(document:getTextBoxes(page), page)` -> word items `{text,
+page, idx, line, pos0 = pos1 = xp0 = xp1 = "pdf/<page>/<idx>", pbox (native
+page box: word x, LINE y / h), cx, cy (centre of the word's own box),
+sent_end}`; the overlay adds `sbox` (screen). `ends_sentence(text, next)`
+is paginmapo's rule on the word's own end (`!?؟۔` always, `.` before an
+uppercase word) -- a COPY, because paginmapo's `is_sent_boundary` is local;
+keep the two in step. `sentences(words)` groups through paginmapo's
+`collect_sentences_from_words` (vendored, unchanged) and adds `first` /
+`last` word indices and `para` (= sentence index until TASK-32 wires
+pdfpara.lua in here). Also `has_text` (a scan's optical boxes have no
+`word`), `line_target` (↑/↓: nearest word by centre x on the next line of
+the engine's line order), `line_boxes(words, i0, i1[, field])` (one box per
+line), `pos(w, view.state)` = `{page, x, y, zoom, rotation}` at the word's
+centre, which `getTextFromPositions` snaps to exactly that word (what
+TASK-31 passes to `saveHighlight` as pos0 / pos1).
+
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
 (`_open` = sentences, `_open_walk(from_end)` = words, `_open_highlights` =
@@ -355,7 +393,26 @@ from-to or `false` when the page has no text, `_close`; all share
 `_new_overlay`, which holds the pluginaro claim); `SelectorOverlay` is the
 painted widget with a single `self.mode` state machine (no crosshair any more:
 removed in TASK-15; the padmap id `crosshair` stays as an alias of
-`word_walk`):
+`word_walk`). In a PDF / DjVu (`ui.paging`; main.lua creates the selector
+with `paged = true`) `_new_overlay` makes a **`PagedOverlay`**
+(`SelectorOverlay:extend`, TASK-30) instead, or returns `nil, "reflow"`
+(`text_wrap == 1` / `is_reflowable`); the openers return `false, "no_text"`
+for a page without words (`Selector:_no_text`). PagedOverlay replaces only
+the crengine-specific methods: `_collect` (one page, `self.page` = the top
+page in continuous view; `_extends_before/after` decided with the
+neighbouring page's first / last word), `_ww_step` / `_ww_line` / `_ww_land`
+/ `_ww_word_from_xp` / `_xp_before` (word index on the page), `_turn_page`
+(`GotoPage`), `_get_selection` (`getTextFromPositions`, pboxes native,
+sboxes screen), `_draw_walk` / `_draw_struct`, `_page_text`, and
+highlight / note / toggle = "not yet" (TASK-31; the action menu drops that
+row when `self.paged`, the status line drops "X hl"). Screen boxes
+(`word.sbox`, `{x, y, w, h}` or nil off the screen) come from
+`view:pageToScreenTransform` and are recomputed on every paint and every
+move (`_screen_boxes`), never cached; `_refresh` first pans an off-screen
+cursor into view (`_reveal`: `PanningUpdate` in page view,
+`onScrollPanRel` in continuous view). Sentences, paragraphs, levels, point
+from-to and the dictionary / Vortuyo / AI / copy actions are the base
+class's. One page at a time; a range never leaves it:
 
 - **`struct`** — sentences (`self.sentences[]` from `paginmapo`). Cursor
   `sel_cur`, optional `sel_anchor`; `_set_sent` derives the selected span

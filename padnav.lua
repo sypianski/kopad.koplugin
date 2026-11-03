@@ -165,21 +165,28 @@ Visel overlay (opt-in via pluginaro: visel.ext.kopad.gamepad_select):
   RB / LB               Extend / trim selection (as Shift+→ / Shift+←)
   B                     Close visel
 
-Scope: the selector (words / sentences / highlights) only exists for
-crengine (rolling) documents. In paged documents (PDF/DjVu) no reader keys
-are suppressed and the selector-dependent handlers return false
-(pass-through); paged documents get their own view controls instead
-(PAGED_* tables, _paged_idle; Gamepad* path only). Only LB/RB and LT/RT
-change the page, always by a whole page:
+Scope: in paged documents (PDF/DjVu) no reader keys are suppressed and,
+while no selection is open, the selector is hidden (PadNav:_selector) so the
+selector-dependent handlers return false (pass-through); the idle pad steers
+the view instead (PAGED_* tables, _paged_idle; Gamepad* path only). Only
+LB/RB and LT/RT change the page, always by a whole page:
   D-pad                  Pan the page slowly (never turns it)
   L-stick                Pan the page fast (never turns it)
   R-stick                The quick-action wheel, as in reading (never zoom)
-  A held + D-pad ↑ / ↓   Zoom in / out in small steps (ZOOM_STEP; a held D-pad
-                         keeps zooming)
-  A held + D-pad ← / →   Fit whole page / fit text width
-  B held + D-pad         The same zoom / fit (TASK-33; A + D-pad moves to the
-                         PDF selection with TASK-30); B tapped = back
+  B held + D-pad ↑ / ↓   Zoom in / out in small steps (ZOOM_STEP; a held D-pad
+                         keeps zooming; TASK-33)
+  B held + D-pad ← / →   Fit whole page / fit text width; B tapped = back
+  A held + D-pad         Words (TASK-30, _paged_select): →/↓ from the first
+                         word on the screen, ←/↑ from the last
+  Y held + D-pad         Sentences (the same)
+  A tapped               Point from-to (labels at the lines on the screen)
+  Y tapped               Nothing yet (highlights in PDF: TASK-31)
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
+The selection itself (context "selection") is the EPUB one on the page's
+text boxes (selector.lua PagedOverlay): the same keys, LB / RB close it and
+turn a whole page, no highlights / notes yet (TASK-31), ↑/↓ in sentences and
+LT / RT step by sentence until paragraphs come (TASK-32). Pages without a
+text layer (scans) and reflow mode: a message, nothing opens.
 
 Input paths (two, both end in the same on<Key> handlers):
 
@@ -352,16 +359,17 @@ local function dpad_interval(steps)
         DPAD_REPEAT_EVERY_S * DPAD_ACCEL ^ (steps - DPAD_ACCEL_AFTER + 1))
 end
 
--- Paged documents (PDF/DjVu) have no selector, so there kopad steers the view
--- itself (see PadNav:_paged_idle). Only the bumpers and the triggers change
+-- In paged documents (PDF/DjVu) the idle pad steers the view (see
+-- PadNav:_paged_idle; the selector is hidden until an overlay opens). Only the bumpers and the triggers change
 -- the page, always by a whole page (GotoPage, view from the top); every other
 -- control stays on the current page, so nothing turns pages by surprise:
 --   D-pad            pan slowly (PAGED_DPAD_PAN_STEP of the stock step)
 --   L-stick          pan fast (stock ReaderPanning step = half a screen; the
 --                    stick keeps moving while held); both bounded by the page
 --   R-stick          the quick-action wheel (_quick_stick), never the page
---   A held + D-pad   ↑ / ↓ zoom in / out in small steps (ZOOM_STEP; held, it
+--   B held + D-pad   ↑ / ↓ zoom in / out in small steps (ZOOM_STEP; held, it
 --                    keeps zooming), ← / → whole page / text width (ZOOM_DPAD)
+--   A / Y held + D-pad, A tapped: the selection, as in an EPUB (TASK-30)
 -- ReaderPanning:onPanning moves dx/dy × half the visible area, so 0.2 = a
 -- tenth of the screen per D-pad press.
 local PAGED_DPAD_PAN_STEP = 0.2
@@ -370,8 +378,9 @@ local PAGED_PAN_DPAD = {
     [13] = { -PAGED_DPAD_PAN_STEP, 0 }, [14] = { PAGED_DPAD_PAN_STEP, 0 },
 }
 local PAGED_PAGE_BUTTONS = { [BTN_LB] = -1, [BTN_RB] = 1 }
--- A held + D-pad: ↑ / ↓ zoom in / out in small steps (a held D-pad keeps
--- zooming, _dpad_start), ← / → whole page / text width (margins cropped).
+-- B held + D-pad in a PDF / DjVu (_view_dpad): ↑ / ↓ zoom in / out in small
+-- steps (a held D-pad keeps zooming, _dpad_start), ← / → whole page / text
+-- width (margins cropped). (Was A + D-pad until TASK-30.)
 local ZOOM_DPAD = {
     [BTN_DPAD_UP]    = { zoom = 1 },  [BTN_DPAD_DOWN]  = { zoom = -1 },
     [BTN_DPAD_LEFT]  = { mode = "page" }, [BTN_DPAD_RIGHT] = { mode = "contentwidth" },
@@ -495,9 +504,9 @@ function PadNav:_why_disabled()
 end
 
 function PadNav:_suppress_reader_keys()
-    -- Selector-driven navigation only exists for crengine (rolling) documents
-    -- (main.lua:_ensure_selector requires ui.rolling). In paged documents
-    -- (PDF/DjVu) and in the FileManager there is no ui.rolling, so we leave
+    -- Reader keys are suppressed only in crengine (rolling) documents. In
+    -- paged documents (PDF/DjVu; their selector is hidden by _selector()
+    -- while idle) and in the FileManager there is no ui.rolling, so we leave
     -- every original key binding untouched — the selector-dependent handlers
     -- below return false in that case, letting arrows/Press pass through to
     -- the reader's / file manager's own navigation. Only LB/RB page turns
@@ -567,9 +576,27 @@ function PadNav:restore_reader_keys()
     self._saved_keys = nil
 end
 
+-- The selector, as the handlers see it. In a PDF / DjVu (TASK-30) the
+-- selector exists but is hidden while no overlay is open: there the idle pad
+-- steers the view (PAGED_* tables, _paged_idle) and every "no selector ->
+-- pass through" branch keeps working as before. With an overlay open it is
+-- the same selection as in an EPUB.
 function PadNav:_selector()
+    local s = self:_any_selector()
+    if s and s.paged and not s.overlay then return nil end
+    return s
+end
+
+-- The selector also in an idle paged document (the paged openers).
+function PadNav:_any_selector()
     return self.enabled_ref and self.enabled_ref.subs
         and self.enabled_ref.subs.selector
+end
+
+-- Why a selection could not open (Selector openers: false, reason).
+local function no_select_text(why)
+    if why == "reflow" then return _("Not in reflow mode") end
+    return _("No text on this page")
 end
 
 -- Integration A (pluginaro): route a gamepad event into visel's selection
@@ -745,11 +772,24 @@ end
 -- "Point from-to" (A tapped while reading, TASK-29): labels at the line
 -- starts. A page without text = a message.
 function PadNav:_open_point_select()
-    local selector = self:_selector()
+    local selector = self:_any_selector()
     if not selector or selector.overlay or type(selector._open_point) ~= "function" then return end
-    if selector:_open_point() == false then
-        self:_show_text(_("No text on this page"), 2)
-    end
+    local ok, why = selector:_open_point()
+    if ok == false then self:_show_text(no_select_text(why), 2) end
+end
+
+-- PDF / DjVu (TASK-30): A held + D-pad = words, Y held + D-pad = sentences,
+-- from the first word on the screen (→/↓) or the last one (←/↑), as _dpad
+-- does in an EPUB. A page without text / reflow = a message.
+function PadNav:_paged_select(btn)
+    local words = self._a_down
+    if words then self._a_opened = true else self._y_used = true end
+    local selector = self:_any_selector()
+    if not selector then return end
+    local from_end = btn == BTN_DPAD_UP or btn == BTN_DPAD_LEFT
+    local ok, why
+    if words then ok, why = selector:_open_walk(from_end) else ok, why = selector:_open(from_end) end
+    if ok == false then self:_show_text(no_select_text(why), 2) end
 end
 
 -- The selection overlay while it shows the labels of "point from-to".
@@ -851,6 +891,10 @@ function PadNav:_turn_page(dir)
     local selector = self:_selector()
     if selector and selector.overlay then selector:_close() end
     self._x_mode = false
+    -- PDF / DjVu selection: a whole page, as LB / RB there while reading
+    if self.ui.paging and not self.ui.rolling and type(self.ui.paging.current_page) == "number" then
+        self:_paged_page(dir); return true
+    end
     self.ui:handleEvent(Event:new("GotoViewRel", dir)); return true
 end
 -- LT/RT in the selection (TASK-25): one paragraph back / forward at every
@@ -938,11 +982,11 @@ function PadNav:_release_a()
     local reading = self._a_reading
     self._a_down, self._a_moved, self._a_opened, self._a_reading = false, false, false, false
     if not tap then return end
-    local selector = self:_selector()
+    local selector = self:_any_selector() -- also an idle PDF / DjVu (TASK-30)
     if not selector then return end
     local ov, ctx = selector.overlay, self:_context()
     if reading then
-        if not ov and ctx == "reading" then self:_open_point_select() end
+        if not ov and (ctx == "reading" or ctx == "paged") then self:_open_point_select() end
     elseif ov and ctx == "selection" then
         ov:action_menu()
     end
@@ -1136,10 +1180,7 @@ function PadNav:onGamepadButtonUp(ev)
     if self._x_hold == btn then
         self._x_hold, self._x_mode = nil, false
     end
-    if btn == BTN_A then
-        self._a_zoom = false
-        self:_release_a()
-    end
+    if btn == BTN_A then self:_release_a() end
     if btn == BTN_Y then self:_release_y() end
     if btn == BTN_B then self:_release_b() end
     return false
@@ -1178,8 +1219,8 @@ local function ui_event(name, ...)
     local args = { ... }
     return function(self) self.ui:handleEvent(Event:new(name, unpack(args))) end
 end
--- Openers that need the selector (rolling documents only); without one the
--- press is swallowed, see _run_action.
+-- Openers that need the selector (EPUB; an idle PDF's selector is hidden, so
+-- there the press is swallowed, see _run_action).
 local function with_selector(fn)
     return function(self)
         local selector = self:_selector()
@@ -1432,25 +1473,22 @@ function PadNav:_button_dispatch(ev)
         self:_view_dpad(btn)
         return true
     end
-    -- Paged documents: A held + D-pad = zoom / fit (ZOOM_DPAD). A does nothing
-    -- else there (no selector), so it is consumed.
-    if btn == BTN_A and self:_paged_idle() then
-        self._a_zoom = true
-        if tr then Trace.log("padnav btn=A: paged, zoom modifier held") end
+    -- Paged documents (TASK-30): A / Y are holds as in an EPUB. Nothing on
+    -- the press; A / Y held + D-pad open the words / sentences
+    -- (_paged_select), A tapped = point from-to (_release_a), Y tapped =
+    -- nothing yet (highlights in PDF: TASK-31). The D-pad alone pans (below).
+    if (btn == BTN_A or btn == BTN_Y) and self:_paged_idle() then
+        if btn == BTN_A then
+            self._a_down, self._a_moved, self._a_opened, self._a_reading = true, false, false, true
+        else
+            self._y_down, self._y_used = true, false
+        end
+        if tr then Trace.log("padnav btn=%s: paged, hold", tostring(btn)) end
         return true
     end
-    if self._a_zoom and ZOOM_DPAD[btn] and self:_paged_idle() then
-        local z = ZOOM_DPAD[btn]
-        if tr then Trace.log("padnav btn=%s: paged A + D-pad -> %s", tostring(btn), tostring(z.zoom or z.mode)) end
-        if z.zoom then
-            self:_zoom_step(z.zoom)
-            self:_dpad_start(btn, function()
-                if not self._a_zoom then self:_dpad_stop(); return end
-                self:_zoom_step(z.zoom)
-            end, "paged")
-        else
-            self.ui:handleEvent(Event:new("SetZoomMode", z.mode))
-        end
+    if (self._a_down or self._y_down) and DPAD_HANDLERS[btn] and self:_paged_idle() then
+        if tr then Trace.log("padnav btn=%s: paged letter + D-pad, select", tostring(btn)) end
+        self:_paged_select(btn)
         return true
     end
     local pan, page = PAGED_PAN_DPAD[btn], PAGED_PAGE_BUTTONS[btn]
@@ -2301,7 +2339,8 @@ local CHEAT_READING = _("Reading mode")
     .. "\nR-stick: quick actions (A run, B close)"
     .. "\n\n" .. _("PDF / DjVu")
     .. "\nD-pad: move around the page slowly    L-stick: fast"
-    .. "\nHold A or B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
+    .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
+    .. "\nHold A + D-pad: words    Hold Y + D-pad: sentences    A: point from-to"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
