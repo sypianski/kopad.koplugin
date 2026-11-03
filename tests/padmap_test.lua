@@ -753,6 +753,28 @@ do
         assert(n:onGamepadButtonDown({ button = 10 }) == true and steps[7] == "panel:3" and steps[8] == "focus:1,1",
             kind .. ": RB in the options -> first option row of the new tab")
         assert(#log.events == want, kind .. ": tab switches send no reader event")
+
+        -- the current tab's icon is not inverted on focus (its tab frame marks
+        -- it already); other icons keep the stock invert
+        local function icon(inv)
+            return { image = { invert = inv }, onFocus = function(self) self.image.invert = true; return true end }
+        end
+        local icons = { icon(false), icon(false), icon(true) } -- current tab 3, inverted earlier
+        dlg.config_menubar = { menu_items = icons }
+        assert(n:onGamepadButtonDown({ button = 12 }) == false, kind .. ": D-pad ↓ in the bottom menu is stock")
+        assert(icons[3].image.invert == false, kind .. ": earlier invert on the current tab is undone")
+        icons[3]:onFocus(); icons[1]:onFocus()
+        assert(icons[3].image.invert == false and icons[1].image.invert == true, kind .. ": only the current tab is quiet")
+        local wrapped = icons[1].onFocus
+        n:onGamepadButtonDown({ button = 12 })
+        assert(icons[1].onFocus == wrapped, kind .. ": wrapped once")
+        local top = { tab_item_table = { {}, {} }, cur_tab = 2, switchMenuTab = function() end,
+                      bar = { icon_widgets = { icon(false), icon(false) } } }
+        set_stack(ui, { top })
+        n:onGamepadButtonDown({ button = 12 })
+        top.bar.icon_widgets[2]:onFocus(); top.bar.icon_widgets[1]:onFocus()
+        assert(top.bar.icon_widgets[2].image.invert == false and top.bar.icon_widgets[1].image.invert == true,
+            kind .. ": top menu: only the current tab is quiet")
     end
 
     -- nothing on top (a toast does not count): the reading controls are back

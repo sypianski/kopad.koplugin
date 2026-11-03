@@ -203,6 +203,82 @@ shows they arrive as sync commits.
   `llm_config.lua` with an `api_key` in the plugin root; without it
   `LLM.available()` is false. Never commit that file.
 
+## Coordination with the plugin family
+
+The family: `keyreader` (with `visel` and `hilite`), `marjenoti`, `textolimiti`,
+`kotheme`, `frontespico` and kopad. Each is its own GitHub repo. **Today the only
+gamepad integration is kopad ↔ visel** (`visel.ext.kopad.gamepad_select`); every
+other plugin's windows simply get stock keys from kopad (context `window`) and
+need no pad code. The rules below describe how that integration works and how to
+add the next one. The sibling repos carry the same rules in their own `CLAUDE.md`.
+
+### Who owns what
+
+| Question | Belongs in |
+|---|---|
+| How the pad is read: SDL ids, roles, layouts, contexts, `padmap`, actions | **kopad** (`padnav.lua`, `padmap.lua`) |
+| What a host plugin's feature can do (move / extend / close a selection, jump to a note…) | the **host plugin**, which publishes it |
+| Which pad event calls which published method | **kopad** (`PadNav:_<host>_route`) |
+| Registry, overlay claim, `paginmapo`, `llm` | canonical copy in `koreader-konfig` `lib/`, never edited here |
+
+Rule of thumb: a change about *which button* is a kopad-only change. A change that
+needs *a capability the host does not expose yet* is two changes — first an
+optional method in the host's `provide` table, then a route to it from kopad.
+
+### Rules
+
+1. **No plugin `require`s another.** Cross-plugin contact goes only through
+   `pluginaro` (`_G._pluginaro_registry`, `_G._pluginaro_provided`) and the
+   overlay claim `ui._kokb_overlay`.
+2. **Opt-in.** `default_enabled = false` (literally), flag
+   `<host>.ext.<provider>.<id>` in `G_reader_settings`, toggle in the *host's*
+   menu (for visel: Keyreader → Extensions). kopad's own menu only shows the
+   signpost row that `Pluginaro.build_ext_menu` generates.
+3. **Absence-tolerant in both directions.** `register` / `provide` without a
+   counterpart is harmless; `call_provided` returns `nil` when the toggle is off,
+   nothing was provided, the method is missing or the implementation errors, and
+   kopad then behaves exactly as it did before the integration. Deployment order
+   across devices must not matter, so: new methods are optional, existing ones are
+   never renamed or given a new meaning.
+4. **The contract is `(host, provider, id)` plus method names and arguments.**
+   Today `visel / kopad / gamepad_select`: `is_active()`, `move(dir)`,
+   `extend(dir)`, `close()`. Change it in both repos and name the other repo's
+   commit in each commit message.
+5. **Route before `_is_enabled()`.** A foreign overlay makes the context
+   `foreign`, which disables PadNav's own handlers — and that is exactly the state
+   an opt-in route is for. `PadNav:_visel_route` therefore runs first in the
+   handlers and re-checks the master switch and `is_modal_active()` itself.
+6. **One overlay at a time.** `claim_overlay(ui, name)` when opening,
+   `release_overlay` when closing, `overlay_active` checked before opening.
+   Claim names in use: `kopad`, `visel`, `hilite`. A foreign claim makes kopad
+   stand down unless an opt-in route handles the event.
+7. **Only kopad consumes `Gamepad*` events globally.** A plugin that wants the pad
+   exposes a method through `provide` and lets kopad call it; it does not add its
+   own `GamepadButtonDown` / `GamepadAxisMotion` handler outside its own modal
+   widget (two consumers would both act on one press).
+
+### Adding an integration
+
+1. Agree the `id` and the method list with the host; the host `provide`s them,
+   reusing the handlers its keyboard path already calls (so RTL and mode
+   branching come for free).
+2. kopad: `Pluginaro.register(host, {...})` in `main.lua:init` (see the visel
+   block), a `PadNav:_<host>_route` next to `_visel_route`, called first in the
+   relevant `on<Key>` handlers.
+3. Test: extend the visel-routing cases in `tests/padmap_test.lua` (stub
+   `call_provided`; `ui._kokb_overlay` is set by the tests that need a foreign
+   overlay).
+4. Docs, in the same change pair: this section, the README ("Visel overlay"
+   section is the model), and the host's `CLAUDE.md` / `README.md`.
+5. If `pluginaro.lua` itself must change: edit `koreader-konfig` `lib/pluginaro.lua`,
+   run `bin/sync-pluginaro.fish`, never patch the local copy.
+
+### Working copies
+
+Develop in `~/utensili/koreader/<name>`. `~/modi/koreader/koplugins/<name>.koplugin`
+is a submodule checkout of the same GitHub repo used for deployment to devices:
+pull there after pushing, do not commit there.
+
 ## Key events reference
 
 Two input paths end in the same `on<Key>` handlers:
@@ -231,7 +307,10 @@ Two input paths end in the same `on<Key>` handlers:
   `closeDialog`; TASK-13: reading Start opens it via `ShowConfigMenu`): Start =
   close, LB/RB = previous/next tab, D-pad / L-stick ←/→ on its tab bar (the LAST
   layout row) = tab at once; `config_switch_tab` (`onShowConfigPanel`) keeps the
-  focus level like `menu_switch_tab`. Select/Start/Guide/L3/R3 otherwise
+  focus level like `menu_switch_tab`. On both tab bars the current tab's icon is
+  not inverted for the focus (`quiet_current_tab_focus` wraps each bar icon's
+  `onFocus` once, lazily from `_quiet_tab_focus` on the first pad event); the
+  open-tab frame already marks it. Select/Start/Guide/L3/R3 otherwise
   swallowed, the rest stock. Dictionary popup
   (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
   triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`

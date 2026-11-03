@@ -47,8 +47,10 @@ Top menu open (TouchMenu, reader AND FileManager):
   D-pad / L-stick / A / B / Start / R-stick
                          Otherwise stock: navigate / Press / Back / close
                          (stock "Menu" key) / menu page
-  A category switch keeps the focus level, visibly: on the bar -> the new
-  icon, in the items -> the first item of the new category.
+  A category switch keeps the focus level: on the bar -> the new icon, in
+  the items -> the first item of the new category. The current tab's icon is
+  never inverted for the focus (its open-tab frame marks it already); another
+  icon focused on the bar is (quiet_current_tab_focus, bottom menu too).
   Sticks in menus, lists, the dictionary popup and the FileManager drop
   release bounces (MENU_STICK_LOCK_S), which would move the focus back.
 
@@ -1468,6 +1470,34 @@ local function config_switch_tab(dlg, dir)
     return true
 end
 
+-- Tab bars (top and bottom menu): the current tab is already drawn as an
+-- open tab (frame around its icon); the stock focus invert on top of that
+-- clashes. Wrap each bar icon's onFocus once so the CURRENT tab's icon is not
+-- inverted -- any other icon focused by stock navigation still is, so the
+-- cursor stays visible where it is not on the current tab.
+local function quiet_current_tab_focus(icons, is_current, parent)
+    if type(icons) ~= "table" then return end
+    local cleared = false
+    for k, ib in ipairs(icons) do
+        if type(ib) == "table" and not rawget(ib, "_kopad_quiet_focus") and type(ib.onFocus) == "function" then
+            local stock = ib.onFocus
+            ib._kopad_quiet_focus = true
+            ib.onFocus = function(self, ...)
+                if is_current(k) then
+                    if type(self.image) == "table" then self.image.invert = false end
+                    return true
+                end
+                return stock(self, ...)
+            end
+            -- already inverted by an earlier focus: undo it on the current tab
+            if is_current(k) and type(ib.image) == "table" and ib.image.invert then
+                ib.image.invert = false; cleared = true
+            end
+        end
+    end
+    if cleared and parent then UIManager:setDirty(parent, "ui") end
+end
+
 local function menu_switch_tab(menu, dir)
     local on_bar = menu_focus_on_bar(menu)
     if not menu_tab_step(menu, dir) then return false end
@@ -1487,6 +1517,29 @@ function PadNav:_top_menu()
     return ok and menu or nil
 end
 
+-- No focus invert on the current tab's icon (quiet_current_tab_focus) in the
+-- top menu (ctx "top_menu") and the bottom menu (ConfigDialog, ctx "window").
+-- Installed lazily on the first pad event in the menu, before stock moves the
+-- focus.
+function PadNav:_quiet_tab_focus(ctx)
+    local ok, err = pcall(function()
+        if ctx == "top_menu" then
+            local menu = self:_top_menu()
+            local bar = menu and menu.bar
+            if type(bar) == "table" then
+                quiet_current_tab_focus(bar.icon_widgets, function(k) return menu.cur_tab == k end, menu)
+            end
+        elseif ctx == "window" then
+            local dlg = find_config_dialog()
+            local bar = dlg and dlg.config_menubar
+            if type(bar) == "table" then
+                quiet_current_tab_focus(bar.menu_items, function(k) return dlg.panel_index == k end, dlg)
+            end
+        end
+    end)
+    if not ok then logger.warn("kopad: tab focus wrap failed: " .. tostring(err)) end
+end
+
 -- Buttons (logical role id) while a menu or another window is on top
 -- (ctx "top_menu" / "window"). Returns true = consumed, false = the stock key
 -- goes to the menu. Rule: in menus the pad is KOReader's (D-pad / A / B /
@@ -1501,6 +1554,7 @@ end
 --   both:     BUTTON_SWALLOW (stick clicks, Guide, Select / Start elsewhere)
 --             would send surprising stock keys, so they are eaten.
 function PadNav:_menu_button(btn, ctx)
+    self:_quiet_tab_focus(ctx)
     if ctx == "top_menu" then
         if btn == BTN_LB or btn == BTN_RB then
             local menu = self:_top_menu()
@@ -1720,6 +1774,7 @@ function PadNav:onGamepadAxisMotion(ax)
                 tostring(ax.axis), tostring(ax.value), ctx) end
             return true
         end
+        self:_quiet_tab_focus(ctx)
         if ctx == "top_menu" and ax.axis == AXIS_LX then
             local menu = self:_top_menu()
             if menu and menu_focus_on_bar(menu) then

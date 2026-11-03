@@ -128,7 +128,11 @@ On **older patched builds** there are no such events; buttons arrive as key name
 
 ### Visel overlay (opt-in via pluginaro)
 
+If the [keyreader](https://github.com/sypianski/keyreader.koplugin) plugin is installed, kopad can also drive its **visel** selection. It is off by default; switch it on in keyreader's menu under *Extensions* ("visel: Steer also with gamepad (kopad)"). kopad's own menu only points you there.
+
 With `visel.ext.kopad.gamepad_select` enabled: **D-pad** / **L-stick ←/→** move the selection, **RB** / **LB** extend / trim it, **B** closes it.
+
+Without keyreader, or with the switch off, nothing changes. This is the only plugin kopad talks to; windows opened by other plugins get the pad as stock KOReader keys (see *Menus versus reading*).
 
 ### Button remapping (gamepad layouts)
 
@@ -191,6 +195,10 @@ X + D-pad still opens the menus, and role overrides from koligilo still win over
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
+
+### Working with other plugins
+
+kopad is the only plugin in the family that reads the gamepad. Another plugin that wants pad control publishes the actions it can do through `pluginaro` (the shared opt-in registry, `pluginaro.lua`, vendored here) and kopad calls them; the plugin does not read the pad itself. Every such integration is off by default, is switched on in the *host* plugin's menu, and does nothing if either side is missing. Visel is the only one today. The rules, the visel contract and a checklist for adding another are in [`CLAUDE.md`](CLAUDE.md); to propose one, open an issue.
 
 ### Diagnostics
 
