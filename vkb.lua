@@ -25,6 +25,7 @@ local function is_sdl()
     local ok2, res = pcall(Device.isSDL, Device)
     return ok2 and res and true or false
 end
+M.is_sdl = is_sdl
 
 -- True when SDL reports at least one connected gamepad.
 function M.pad_connected()

@@ -285,6 +285,7 @@ The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, range
 - **wheel.lua** — turns plain `ButtonDialog`s into a radial menu (wraps `ButtonDialog.init`, replaces only the dialog's content, so button callbacks keep working); glyphs come from KOReader's bundled Nerd Font symbols.
 - **keyhints.lua** — while kopad is on, hides KOReader's keyboard-shortcut letter labels (q w e r t y…) on file browser covers/lists by flipping `BookList.is_enable_shortcut`; restored verbatim when kopad is switched off (nothing is persisted).
 - **padconfirm.lua** — puts the pad letters on the buttons of confirmation and value dialogs (wraps the dialogs' `init` once, prefixes `ok_text` / `cancel_text` / `choice*_text`; circled letters when a bundled font has them) and presses the labelled button for **A** / **B** / **X** / **Y**.
+- **padopen.lua** — opens every connected gamepad: KOReader itself opens only the first one, so a second pad (e.g. an 8BitDo next to the Steam Deck's own controller) sent nothing.
 - **kopad_trace.lua** — optional flag-file-gated diagnostic trace (see Diagnostics).
 - **main.lua** — glues the two together as a `WidgetContainer` and relays the `Gamepad*` broadcasts to `padnav.lua`.
 
@@ -320,6 +321,7 @@ The automated tests: the remapping layer (`padmap.lua`) with the pad wiring in `
 ```bash
 lua tests/padmap_test.lua
 lua tests/padconfirm_test.lua
+lua tests/padopen_test.lua
 lua tests/wheel_test.lua
 lua tests/selector_test.lua
 lua tests/kopad_hints_test.lua

@@ -172,6 +172,7 @@ function kopad:init()
     self:_install_wheel()
     self:_install_vkb()
     self:_install_confirm()
+    self:_install_padopen()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
         tostring(self.subs.selector ~= nil))
@@ -291,6 +292,20 @@ function kopad:_install_confirm()
     local ok, res = pcall(PadConfirm.install, function() return self.enabled end, logger.warn)
     if not ok then logger.warn("kopad: confirm install failed: " .. tostring(res)) end
     Trace.log("confirm: installed=%s", tostring(ok and res))
+end
+
+-- Open every connected gamepad, not only the first one koreader-base opens
+-- (padopen.lua: a second pad, e.g. a Bluetooth 8BitDo next to the Deck's
+-- own controller, sent nothing). Once-per-run poll, per-instance state.
+function kopad:_install_padopen()
+    local PadOpen = safe_require("padopen")
+    if not PadOpen then return end
+    local ok, res = pcall(PadOpen.start, function() return self.enabled end, function(msg)
+        logger.info("kopad: " .. msg)
+        Trace.log("%s", msg)
+    end)
+    if not ok then logger.warn("kopad: padopen start failed: " .. tostring(res)) end
+    Trace.log("padopen: started=%s", tostring(ok and res))
 end
 
 function kopad:_ensure_selector()

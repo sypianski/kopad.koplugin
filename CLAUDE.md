@@ -13,7 +13,8 @@ There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
 padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
-`lua tests/padconfirm_test.lua` (button letters on confirmation dialogs), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
+`lua tests/padconfirm_test.lua` (button letters on confirmation dialogs),
+`lua tests/padopen_test.lua` (opening every gamepad), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
@@ -369,6 +370,22 @@ or no need): TextViewer and InfoMessage (B closes), FrontLight /
 NaturalLight, SkimTo, SortWidget, PathChooser, KeyboardLayoutDialog,
 ButtonDialog (wheel.lua). diktonoti's label line describes only RT and X
 (A / B are on the buttons). Tests: `lua tests/padconfirm_test.lua`, section 17 of `tests/padmap_test.lua`.
+
+### `padopen.lua` — every connected gamepad, not only the first
+koreader-base's `openGameController` (ffi/SDL3.lua) opens ONE gamepad (the
+first `SDL_IsGamepad` joystick, then `break`), and SDL sends events only for
+opened gamepads. On the Deck started from Steam, Steam's virtual pad (the
+built-in controller) comes first and a Bluetooth pad Steam Input does not
+manage (8BitDo Ultimate 2C, 2dc8:301b) was never opened = dead.
+`main.lua:_install_padopen()` calls `PadOpen.start(state_fn, log)`: one poll
+per run (`POLL_S` = 3 s, SDL only via `vkb.is_sdl`; KOReader passes nothing on
+`SDL_EVENT_GAMEPAD_ADDED` up to Lua) that, while kopad is enabled, opens
+every gamepad not opened yet (`scan(api)`, pure; SDL refcounts opens).
+Handles live in `M.handles` by joystick id WITHOUT `ffi.gc`: before a fork
+KOReader quits the gamepad subsystem, which closes all gamepads, so a
+finalizer would close a freed handle; a gone pad is closed only when
+`SDL_GetGamepadFromID` (cdef'd here, missing from koreader-base's SDL3_h)
+still returns our handle. Test: `lua tests/padopen_test.lua`.
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
