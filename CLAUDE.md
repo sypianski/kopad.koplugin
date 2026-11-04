@@ -159,7 +159,9 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   tap: reading = "point from-to" (`_open_point_select` ->
   `Selector:_open_point`, TASK-29; a page without text = a message; also
   in context `paged`, TASK-30),
-  selection = action menu. The legacy `Press` key goes to `onKPConfirm`
+  selection = action menu (each action closes the overlay, TASK-45; the
+  words opened by A held + D-pad start at the last action's last word when
+  it is on the page, `Selector:_open_walk`). The legacy `Press` key goes to `onKPConfirm`
   (sentences / menu on the press; the legacy path has no point from-to).
 - **Point from-to (TASK-29; sentence labels only since TASK-42 / PC-024)**:
   while the overlay is in mode `point` (context
@@ -205,7 +207,8 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   `KPDown` = the userpatch's `LStickUp` / `LStickDown`, the same handlers
   as the D-pad's `KPUp2` / `KPDown2` in the selection. Tests: the TASK-43
   block in section 14 of `tests/padmap_test.lua`.
-- **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
+- **Y**: `_press_y` = Vortuyo at once in the selection (`ov:act("vortuyo")`,
+  closes the overlay, TASK-45; the release then does nothing); while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
   `onKPMenu` on the press.
@@ -242,7 +245,9 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   records its role in `_x_hold`, and its release clears the modifier.
   `_x_combo` keeps the modifier armed while `_x_hold` is set. A trigger acting
   as a button (`_trigger_as_button`, no release) and the legacy key path keep
-  the latch.
+  the latch. In the selection X = `onKPExtend` -> `ov:act("toggle_highlight")`,
+  which closes the overlay (TASK-45; before, only removing the last browsed
+  highlight did).
 - **D-pad**: in an EPUB (reading / selection) `_button_dispatch` calls the
   `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
   step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
@@ -582,7 +587,10 @@ PagedOverlay passes to `saveHighlight` as pos0 / pos1, TASK-31).
 
 ### `selector.lua` — stateful overlay widget (`SelectorOverlay` + `Selector`)
 The visual selection engine. `Selector` is the factory/lifecycle wrapper
-(`_open` = sentences, `_open_walk(from_end)` = words, `_open_highlights` =
+(`_open` = sentences, `_open_walk(from_end)` = words -- on the remembered
+last word of the last action when `ov:_resume_land(self.resume)` finds it on
+the page shown (EPUB: within the collected words; PDF: same page and on the
+screen, `sbox`), else the first / last word, TASK-45; `_open_highlights` =
 saved highlights or `false` when the page has none, `_open_point` = point
 from-to or `false` when the page has no text, `_close`; all share
 `_new_overlay`, which holds the pluginaro claim); `SelectorOverlay` is the
@@ -711,7 +719,27 @@ one. Status line (`_status_text(short)`): level + buttons, no counters. It never
 
 Actions on the current selection (`_get_selection`): `_do_dict`, `_do_ai`,
 `_do_vortuyo`, `_do_highlight`/`_do_toggle_highlight`, `_do_copy`, `_do_note`.
-`_hook_dict_widget` patches the open dictionary popup so Y → AI explain and
+**Every action closes the overlay (TASK-45).** The callers (action menu, X =
+`onKPExtend`, Y = `onKPMenu`) go through `SelectorOverlay:act(name[, sel])`
+(names in `ACTIONS`: `dict copy highlight toggle_highlight note ai
+vortuyo`): it takes the selection first (none = false, nothing happens,
+the overlay stays), then `Selector:_acted(ov, sel, name)` remembers it and
+calls `_close` (claim released, `ov.closed = true`), then the `_do_*` method
+runs on the closed overlay (its words, highlights and positions are still
+there; `_refresh` on a closed overlay only marks the reader dirty, no pan),
+so a popup it opens (dictionary, note dialog, AI window, Vortuyo card,
+"Copied") is shown after the overlay is gone. Call the `_do_*` methods
+directly only in tests. Session memory on the Selector (never saved):
+`resume` = `ov:_resume_token(sel)` (EPUB `{xp = pos1}`; PDF `{page, idx}`
+of the last word, a browsed highlight's end snapped by `_word_at`), used by
+`_open_walk`; `dict_from` = `{ov, sel, before, popup}` of a Dictionary
+action: `Selector:dict_selection(top)` takes the first DictQuickLookup not
+open before the lookup as kopad's popup and returns `ov, sel` only for it,
+which `PadNav:_dict_button` (asked on every button, `_any_selector`, so
+also in a PDF) uses for Y = AI explain; `_new_overlay` and the next action
+forget it.
+`_hook_dict_widget` patches the open dictionary popup so Y → AI explain (of
+the captured `sel`) and
 LB/RB cycle dictionaries — LEGACY key path only (on >= 2026.07
 `PadNav:_dict_button` handles Y and LB/RB are the popup's own stock keys); it
 finds the popup via `DictQuickLookup.window_list`. Painting is done with manual blitbuffer inversion
@@ -892,7 +920,7 @@ Two input paths end in the same `on<Key>` handlers:
   `onFocus` once, lazily from `_quiet_tab_focus` on the first pad event); the
   open-tab frame already marks it. Select/Start/Guide/L3/R3 otherwise
   swallowed, the rest stock. Dictionary popup
-  (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain,
+  (`dict`): stock (LB/RB = its own RPgBack/RPgFwd, B closes), Y = AI explain of the looked-up selection (`Selector:dict_selection`, TASK-45),
   triggers eaten. FileManager: stock list navigation, LT/RT = `file_chooser`
   page, Select = top menu, B = `FileChooser:onFolderUp` (stock Back asks
   "Exit KOReader?"). Reading without a selection: B = `ReaderLink:onGoBackLink`

@@ -550,4 +550,107 @@ do
     sel11:_close()
 end
 
+-- 12. TASK-45: every action closes the overlay (claim given back), the
+-- action still runs on the closed overlay; A held + D-pad (_open_walk) then
+-- starts at the last word of the last action when it is on the page shown.
+do
+    local UIM = require("ui/uimanager")
+    UIM.nextTick = function(_, f) f() end
+    local done, shown = {}, {}
+    local old_show = UIM.show
+    UIM.show = function(_, w) shown[#shown + 1] = w end
+    package.preload["ui/widget/inputdialog"] = function()
+        return { new = function(_, t) t.getInputText = function() return "my note" end; return t end }
+    end
+    package.preload["ui/widget/buttondialog"] = function() return { new = function(_, t) return t end } end
+    package.loaded.llm = { ask = function(_, msgs) done[#done + 1] = "ai:" .. msgs[2].content:match("Passage:\n(.*)$") end }
+    require("device").input.setClipboardText = function(t) done[#done + 1] = "copy:" .. t end
+    local old_dql = { name = "old popup" }
+    package.loaded["ui/widget/dictquicklookup"] = { window_list = { old_dql } }
+
+    local anns = {}
+    local s, d, u = fresh(1, anns)
+    u.dictionary = { onLookupWord = function(_, w) done[#done + 1] = "dict:" .. w end }
+    u.highlight = { saveHighlight = function(rh)
+        local t = rh.selected_text
+        anns[#anns + 1] = { pos0 = t.pos0, pos1 = t.pos1, text = t.text }
+        done[#done + 1] = "hl:" .. t.text
+        return #anns
+    end }
+    u.vortpaf = { _vortpafLookup = function(_, w) done[#done + 1] = "vortuyo:" .. w end }
+
+    -- open words on t2, the action, then: closed, claim back, action ran
+    local function act(name, range_to)
+        assert(s:_open_walk(false) == true and claims == 1)
+        local o = s.overlay
+        o:step(1)                                         -- cursor t2 (or the resume word)
+        for _ = 1, range_to or 0 do o:step(1, true) end
+        assert(o:act(name) == true, name)
+        assert(s.overlay == nil and o.closed and claims == 0, name .. " closes the overlay")
+        return o
+    end
+    -- copy t2: the words open there again
+    act("copy")
+    assert(done[#done] == "copy:t2" and shown[#shown].text == "Copied", "copied, message after the close")
+    s:_open_walk(false); assert(text(s.overlay) == "t2", "resume at the copied word")
+    assert(s.overlay:act("dict") == true and s.overlay == nil and done[#done] == "dict:t2")
+    -- the dictionary popup: the first new one is kopad's, Y = AI there
+    local dql = { name = "kopad popup" }
+    package.loaded["ui/widget/dictquicklookup"].window_list[2] = dql
+    assert(s:dict_selection(old_dql) == nil, "a popup open before the lookup is not kopad's")
+    local o2, s2 = s:dict_selection(dql)
+    assert(o2 and s2.text == "t2", "kopad's popup -> the looked-up selection")
+    assert(s:dict_selection({}) == nil, "a popup opened from it is not")
+    o2:_do_ai(s2); assert(done[#done] == "ai:t1 t2 t3 t4 t5 t6", "AI on the closed overlay: the page passage")
+    -- highlight: the words open on t2 (resume), → t3, range to t5
+    act("highlight", 2)
+    assert(done[#done] == "hl:t3 t4 t5", tostring(done[#done]))
+    assert(s.dict_from == nil, "another action forgets the lookup")
+    s:_open_walk(true); assert(text(s.overlay) == "t5", "resume at the range's end, also for ←/↑")
+    s:_close()
+    -- X toggles the highlight just made: removed, closed
+    s:_open_highlights(); assert(s.overlay.mode == "hl")
+    local nb = #anns
+    assert(s.overlay:act("toggle_highlight") and s.overlay == nil and #anns == nb - 1 and claims == 0)
+    -- note: a new highlight, the note dialog shown after the close, Save reaches it
+    act("note")
+    local dlg = shown[#shown]
+    assert(dlg.title == "Note" and s.overlay == nil, "note dialog after the close")
+    dlg.buttons[1][2].callback()
+    assert(anns[#anns].note == "my note", "the note is saved on its highlight")
+    -- Vortuyo, AI
+    act("vortuyo"); assert(done[#done]:match("^vortuyo:"))
+    act("ai"); assert(done[#done]:match("^ai:"))
+    -- no selection: nothing happens, the overlay stays
+    s:_open_walk(false); s.overlay.ww_word = nil
+    assert(s.overlay:act("copy") == false and s.overlay ~= nil and claims == 1)
+    s:_close()
+    -- another page: the first / last word as before; sentences never resume
+    d.page, s.resume = 1, nil
+    s:_open_walk(false); s.overlay:step(1); s.overlay:act("copy")   -- t2
+    local resume_word = s.resume and s.resume.xp
+    assert(resume_word == "w2e", tostring(resume_word))
+    d.page = 2
+    s:_open_walk(false); assert(text(s.overlay) == "t7", "other page: first word")
+    s:_close(); s:_open_walk(true); assert(text(s.overlay) == "t12", "other page: last word")
+    s:_close()
+    d.page = 1
+    s:_open(); assert(text(s.overlay) == "t1 t2 t3 t4", "Y + D-pad (sentences) unaffected")
+    s:_close()
+    s:_open_walk(false)
+    assert(resume_word and s.overlay.ww_word.pos1 == resume_word, "back on the page: resumed")
+    s:_close()
+    -- the action menu runs the actions through act (the overlay closes)
+    s:_open_walk(false)
+    s.overlay:action_menu()
+    local menu = shown[#shown]
+    assert(menu._kopad_snippet, "the action menu")
+    menu.buttons[1][2].callback()                       -- Copy
+    assert(s.overlay == nil and claims == 0 and done[#done]:match("^copy:"), "menu Copy closes")
+
+    UIM.show, UIM.nextTick = old_show, nil
+    package.loaded["ui/widget/dictquicklookup"] = nil
+    package.loaded.llm = nil
+end
+
 print("selector_test: all tests passed")

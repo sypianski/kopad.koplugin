@@ -10,7 +10,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     RB / LB                  Next / previous page (X+RB bookmarks, X+LB TOC)
     Select / Start           Top menu / bottom menu
     D-pad                    Next / previous page (TASK-28)
-    A held + D-pad           Select words (→/↓ from the first, ←/↑ the last)
+    A held + D-pad           Select words (→/↓ from the first, ←/↑ the last;
+                             the last action's last word when it is on the
+                             page, TASK-45)
     Y held + D-pad           Select sentences (the same)
     A tapped                 Point from-to (TASK-29 / TASK-42): pad labels at
                              the sentence starts; a label = the words, the
@@ -57,6 +59,7 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     R-stick ↓ / ↑            Sentence -> its first word / word -> its sentence
     Y                        Vortuyo lookup
     X                        Toggle highlight
+                             (every action closes the selection, TASK-45)
     B                        Back: a range off, then the sentence labels
                              (when opened from them), then close
     RB / LB                  Close and turn the page

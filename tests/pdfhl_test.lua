@@ -396,4 +396,51 @@ assert(reinits == 1, "large is the last step")
 sel:_close()
 assert(claims == 0)
 
+----------------------------------------------------------------------
+-- TASK-45: an action closes the overlay; A held + D-pad then starts at the
+-- action's last word when it is on this page and on the screen
+----------------------------------------------------------------------
+sel, ui = fresh()
+assert(sel:_open_walk(false) == true)
+ov = sel.overlay
+ov:step(1); ov:step(1, true)                  -- beta .. gamma.
+assert(ov:act("toggle_highlight") == true, "X")
+assert(sel.overlay == nil and ov.closed and claims == 0, "X closes the overlay")
+anns = ui.annotation.annotations
+assert(#anns == 1 and anns[1].text == "T:beta gamma.", "the highlight is saved")
+assert(sel.resume and sel.resume.page == 1 and sel.resume.idx == 3, "resume = gamma. on page 1")
+assert(sel:_open_walk(false) == true and sel.overlay.ww_word.text == "gamma.", "words open at gamma.")
+-- Highlight from the action menu: the same, after the menu closes
+sel.overlay:step(1)                           -- Delta
+sel.overlay:action_menu()
+menus[#menus].buttons[2][1].callback()        -- Highlight
+assert(sel.overlay == nil and claims == 0 and #anns == 2 and sel.resume.idx == 4, "menu Highlight closes")
+-- Note: the dialog after the close, Save reaches the new highlight
+sel:_open_walk(true); assert(sel.overlay.ww_word.text == "Delta", "resume also for ←/↑")
+sel.overlay:act("note")
+local nd = dialogs[#dialogs]
+assert(sel.overlay == nil and nd.title == "Note")
+nd._typed = "pdf note"; nd.buttons[1][2].callback()
+local noted
+for _, x in ipairs(anns) do if x.note == "pdf note" then noted = x end end
+assert(noted and log.pdf[#log.pdf] == "content:pdf note", "note saved on its highlight, into the PDF")
+-- another page: the first word on the screen, as before
+ui.view.state.page = 2
+assert(sel:_open_walk(false) == true and sel.overlay.ww_word.text == "eta", "page 2: first word")
+sel:_close()
+-- back on page 1 but zoomed so the word is off the screen: as before
+ui.view.state.page = 1
+ui.view.state.zoom, ui.view.visible_area.y = 2, 200
+ui.view.visible_area.h = 100                  -- only the first line shows
+sel:_open_walk(false)
+assert(sel.overlay.ww_word.text == "Alpha" and sel.overlay.ww_word.sbox
+    and not sel.overlay.words[4].sbox, "the resume word off the screen: first word on it")
+sel:_close()
+ui.view.state.zoom, ui.view.visible_area.h = 1, 760
+ui.view.visible_area.x, ui.view.visible_area.y = 0, 0
+sel:_open_walk(false)
+assert(sel.overlay.ww_word.text == "Delta", "on the screen again: resumed")
+sel:_close()
+assert(claims == 0)
+
 print("pdfhl_test: all tests passed")

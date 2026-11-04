@@ -964,6 +964,8 @@ do
     -- B closes, A / D-pad / sticks), nothing moves underneath, overrides
     -- never run; Y = AI explanation of the selection, the popup is closed.
     -- kind "pdf" = popup opened by KOReader itself, no kopad selection.
+    -- TASK-45: the Dictionary action closed the overlay, the selector
+    -- remembers the lookup (dict_selection), only for kopad's popup.
     for _, kind in ipairs({ "epub", "pdf" }) do
         local d, dlog, dui, dsel = reader(kind, { version = 1, actions = { a = "next_page", rb = "toc" } })
         local ai, closed = {}, {}
@@ -972,9 +974,11 @@ do
         local uim = require("ui/uimanager")
         uim.close = function(_, w) closed[#closed + 1] = w end
         if dsel then
-            dsel.overlay = { _get_selection = function() return { text = "verbum" } end,
-                             _do_ai = function(_, s) ai[#ai + 1] = s.text end }
-            set_stack(dui, dsel.overlay, dpopup)
+            local closed_ov = { _do_ai = function(_, s) ai[#ai + 1] = s.text end }
+            dsel.dict_selection = function(_, top)
+                if top == dpopup then return closed_ov, { text = "verbum" } end
+            end
+            set_stack(dui, dpopup)
         else
             set_stack(dui, dpopup)
         end
@@ -991,6 +995,12 @@ do
         if dsel then
             assert(d:onGamepadButtonDown({ button = 3 }) == true and ai[1] == "verbum" and closed[1] == dpopup,
                 "Y = AI explain, popup closed")
+            -- another popup (not kopad's lookup): Y passes
+            local other = {}
+            package.loaded["ui/widget/dictquicklookup"] = { window_list = { other } }
+            set_stack(dui, other)
+            assert(d:onGamepadButtonDown({ button = 3 }) == false and #ai == 1, "Y passes on a popup kopad did not open")
+            dsel.dict_selection = nil
         else
             assert(d:onGamepadButtonDown({ button = 3 }) == false and #ai == 0, "Y passes without a kopad selection")
         end
@@ -1160,6 +1170,16 @@ do
                 log.ov[#log.ov + 1] = "toggle"
                 if self.mode == "hl" then self.hl_cur = 0 end
             end
+            -- SelectorOverlay:act (TASK-45): the selection, the selector
+            -- closes the overlay, then the action runs
+            local methods = { toggle_highlight = "_do_toggle_highlight", vortuyo = "_do_vortuyo" }
+            function ov:act(name)
+                local s = self:_get_selection()
+                if not s then return false end
+                if selector.overlay == self then selector:_close() end
+                self[methods[name]](self, s)
+                return true
+            end
             selector.overlay = ov
             set_stack(ui, ov)
         end
@@ -1197,7 +1217,7 @@ do
     local function up(n, b) return n:onGamepadButtonUp({ button = b }) end
 
     -- reading: both sticks are consumed and do nothing (TASK-12 / TASK-15)
-    local n, log = epub()
+    local n, log, sel = epub()
     assert(n:_context() == "reading")
     for _, a in ipairs({ { 0, -20000 }, { 0, 20000 }, { 1, -20000 }, { 1, 20000 },
                          { 2, -20000 }, { 2, 20000 }, { 3, -20000 }, { 3, 20000 } }) do
@@ -1269,11 +1289,19 @@ do
     n:onGamepadAxisMotion({ axis = 3, value = -20000 })
     n:onGamepadAxisMotion({ axis = 2, value = 20000 })
     assert(log.ov[1] == "to_words()" and log.ov[2] == "to_sentences()" and #log.ov == 2, table.concat(log.ov, " "))
-    -- Y = Vortuyo, X = toggle highlight
-    log.ov = {}
-    down(n, 3); down(n, 2)
-    assert(log.ov[1]:find("^vortuyo"), "Y = Vortuyo")
+    -- Y = Vortuyo, X = toggle highlight; each closes the selection (TASK-45)
+    log.ov, log.sel = {}, {}
+    down(n, 3)
+    assert(log.ov[1]:find("^vortuyo") and sel.overlay == nil and log.sel[1] == "_close", "Y = Vortuyo, closed")
+    up(n, 3)
+    assert(#log.sel == 1, "the Y release after Vortuyo opens nothing")
+    sel._open_walk(); log.sel = {}
+    down(n, 2)
     assert(log.ov[2] == "toggle" and not n._x_mode, "X = highlight, not the modifier")
+    assert(sel.overlay == nil and log.sel[1] == "_close", "X closes the selection")
+    up(n, 2)
+    assert(not n._x_mode and #log.sel == 1, "the X release after the highlight arms nothing")
+    sel._open_walk()
 
     -- held D-pad repeats (TASK-16): first after the delay, then every step;
     -- the release stops it
@@ -1532,7 +1560,7 @@ do
     assert(down(n, 3) == true and #log.sel == 0, "nothing on the Y press")
     up(n, 3)
     assert(log.sel[1] == "_open_highlights" and log.text[1] == "No highlights on this page")
-    -- browsing highlights: X removing the last one closes the overlay
+    -- browsing highlights: X removing one closes the overlay (TASK-45: any action)
     n, log, sel = epub()
     sel._open_highlights = function()
         log.sel[#log.sel + 1] = "_open_highlights"

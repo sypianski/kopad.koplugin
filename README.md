@@ -55,7 +55,7 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **Select** | top menu |
 | **Start** | bottom menu (font, margins, contrast); **Start** again closes it |
 | **D-pad** | next page (→ / ↓) / previous page (← / ↑; in right-to-left books ← / → follow the screen) |
-| hold **A** + D-pad | select words: → / ↓ start at the first word of the page, ← / ↑ at the last one |
+| hold **A** + D-pad | select words: → / ↓ start at the first word of the page, ← / ↑ at the last one; after an action on this page (see *Selection mode*) both start at the last word of that action |
 | hold **Y** + D-pad | select sentences: → / ↓ start at the first sentence of the page, ← / ↑ at the last one |
 | tap **A** | point from-to: labels at the sentences; a label puts the word cursor at the start of that sentence, then the arrows move it and **RT** held selects (see below) |
 | tap **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
@@ -187,15 +187,17 @@ The selection has two levels: sentences (opened with **Y** + D-pad) and words (o
 | **RB** / **LB** | close the selection and turn the page | same |
 | **Select** / **Start** | close the selection and open the top / bottom menu | same |
 
+Every action closes the selection at once: highlight or remove a highlight (**X** or the menu), note, dictionary, AI, Vortuyo (**Y** or the menu) and copy. The dictionary popup, the note window, the AI answer and the Vortuyo card open over the page, and there is no selection left to close with **B** afterwards. kopad remembers where the last action ended (only while the book stays open; nothing is saved): the next time you open the words with **A** held + D-pad on that page (in a PDF: with that word on the screen), the cursor starts on the last word of that action instead of the first / last word of the page. Elsewhere, and for the sentences (**Y** + D-pad), it starts as before.
+
 The **A** you hold to open the words is not a range yet: while it is still down the arrows only move the cursor, so you can pick the word where the range starts (or a single word). Let go, then hold **A** again and move to select from there.
 
 The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the next page's first word, ↑ on the first line to the previous page's last word. A sentence that runs over the edge counts once. A range (RT or A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second; a held **L-stick** repeats as well (KOReader's own stick repeat), with **RT** held too. On the sentence level **RT** / **LT** jump by paragraph, over the page edge too; held, they keep jumping, and with **A** held they grow the range by paragraphs. On the word level they do not move the cursor (**RT** held is the range there). With the highlights (**Y**) they go to the next / previous one. The status line shows the level (WORD / WORDS, START right after a label, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters. It never covers the text of the page: it sits in the free strip above the first line or below the last one, shrinks to the level and A / B when the strip is tight, and is not drawn at all when there is no room.
 
-While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
+While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (and closes the selection, as every action), and **A**, **Y** and **B** work as above.
 
 On older patched builds there are no button releases, so **A** opens the action menu at once and **RB** / **LB** grow / shrink the selection at its moving end instead of turning the page.
 
-In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to explain the selection (when the popup was opened from kopad's selection) and **B** closes the popup. Everything else reaches the popup as stock keys; the triggers do nothing there.
+In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to explain the looked-up words (when the popup was opened by kopad's Dictionary action) and **B** closes the popup. Everything else reaches the popup as stock keys; the triggers do nothing there.
 
 ### Input paths, Select / Start and the triggers
 
@@ -274,7 +276,7 @@ The selection works in EPUBs and, on pages with a text layer, in PDF / DjVu (wor
 | **R-stick** | the quick-action wheel, the same as in an EPUB (it never turns or zooms the page) |
 | **hold B + D-pad ↑ / ↓** | zoom in / out in small steps, 3 % each (hold the D-pad to keep zooming) |
 | **hold B + D-pad ← / →** | fit the whole page / fit the text width; tap **B** = back |
-| **hold A + D-pad** | select words, as in an EPUB: → / ↓ from the first word on the screen, ← / ↑ from the last |
+| **hold A + D-pad** | select words, as in an EPUB: → / ↓ from the first word on the screen, ← / ↑ from the last; after an action on this page, from its last word when that is on the screen |
 | **hold Y + D-pad** | select sentences (the same) |
 | **tap A** | point from-to: labels at the sentences on the screen; a label = the word cursor at that sentence's start |
 | **tap Y** | the page's highlights, as in an EPUB: the D-pad steps between them (the view pans to each), **X** removes one; none = a message |
@@ -284,7 +286,7 @@ Moving around needs page view, so the first time kopad runs enabled on a device 
 
 X + D-pad still opens the menus, and role overrides from koligilo still win over these defaults.
 
-The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with RT or A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** back / close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Paragraphs are guessed from the layout (line spacing, indent, short last line, two columns), so ↑ / ↓ and **LT / RT** in sentences jump by paragraph as in an EPUB; on an unusual layout the guess can be off. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
+The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with RT or A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** back / close); **LB / RB** close it and turn a whole page, every action closes it as in an EPUB, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Paragraphs are guessed from the layout (line spacing, indent, short last line, two columns), so ↑ / ↓ and **LT / RT** in sentences jump by paragraph as in an EPUB; on an unusual layout the guess can be off. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
 
 ## Technical notes
 

@@ -210,7 +210,15 @@ function SelectorOverlay:_nearest_word(px, py)
 end
 
 function SelectorOverlay:_refresh()
+    if self.closed then return SelectorOverlay._closed_refresh(self) end
     UIManager:setDirty("all", "ui")
+end
+
+-- An action runs after Selector:_close (TASK-45): the overlay is no window
+-- any more, so a move / repaint of its own is pointless; only the reader is
+-- repainted (a highlight added / removed).
+function SelectorOverlay:_closed_refresh()
+    pcall(UIManager.setDirty, UIManager, self.ui, "ui")
 end
 
 ----------------------------------------------------------------------
@@ -805,14 +813,14 @@ function SelectorOverlay:action_menu()
                     text = _("Dictionary"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_dict(sel)
+                        overlay:act("dict", sel)
                     end,
                 },
                 {
                     text = _("Copy"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_copy(sel)
+                        overlay:act("copy", sel)
                     end,
                 },
             },
@@ -821,14 +829,14 @@ function SelectorOverlay:action_menu()
                     text = _("Highlight"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_highlight(sel)
+                        overlay:act("highlight", sel)
                     end,
                 },
                 {
                     text = _("Note"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_note(sel)
+                        overlay:act("note", sel)
                     end,
                 },
             },
@@ -837,14 +845,14 @@ function SelectorOverlay:action_menu()
                     text = _("AI explain"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_ai(sel)
+                        overlay:act("ai", sel)
                     end,
                 },
                 {
                     text = _("Vortuyo"),
                     callback = function()
                         UIManager:close(dlg)
-                        overlay:_do_vortuyo(sel)
+                        overlay:act("vortuyo", sel)
                     end,
                 },
             },
@@ -907,6 +915,61 @@ end
 -- Actions
 ----------------------------------------------------------------------
 
+-- The actions on the selection (action menu, X, Y), by name.
+local ACTIONS = {
+    dict = "_do_dict", copy = "_do_copy", highlight = "_do_highlight",
+    toggle_highlight = "_do_toggle_highlight", note = "_do_note",
+    ai = "_do_ai", vortuyo = "_do_vortuyo",
+}
+SelectorOverlay.ACTIONS = ACTIONS
+
+-- Run action `name` on `sel` (default: the current selection). TASK-45:
+-- every action closes the overlay right away. The selection is taken
+-- first, the Selector remembers it (the resume point of the words, the
+-- dictionary popup's Y = AI) and closes the overlay, then the action runs on
+-- this (now closed) overlay: its words, highlights and positions are still
+-- there, and a popup it opens (dictionary, note, AI, Vortuyo card, "Copied")
+-- is shown after the overlay is gone, so nothing paints over it. False when
+-- there is no selection (nothing happens, the overlay stays).
+function SelectorOverlay:act(name, sel)
+    local method = ACTIONS[name]
+    if not method then return false end
+    sel = sel or self:_get_selection()
+    if not sel then return false end
+    local s = self.selector
+    if s and s.overlay == self then s:_acted(self, sel, name) end
+    self[method](self, sel)
+    return true
+end
+
+-- The resume point of the words (TASK-45): where the selection `sel` ends.
+-- EPUB: its end xpointer (pos1); nil when there is none.
+function SelectorOverlay:_resume_token(sel)
+    if sel and type(sel.pos1) == "string" then return { xp = sel.pos1 } end
+end
+
+-- Put the word cursor on the remembered end word when it is on the page
+-- shown now: the last word starting at or before the end xpointer, the end
+-- lying within the page's words. True when it landed.
+function SelectorOverlay:_resume_land(tok)
+    local words = self.words
+    local n = words and #words or 0
+    if not (tok and type(tok.xp) == "string") or n == 0 then return false end
+    if self:_xp_before(tok.xp, words[1].xp0) then return false end
+    if words[n].xp1 and self:_xp_before(words[n].xp1, tok.xp) then return false end
+    for i = n, 1, -1 do
+        if not self:_xp_before(tok.xp, words[i].xp0) then
+            local w = self:_ww_word_from_xp(words[i].xp0)
+            if not w then return false end
+            -- a hyphenated word: its end is on the later line
+            if self:_is_split_word(w) then w.is_split_fragment = "tail" end
+            self.ww_word, self.ww_anchor = w, nil
+            return true
+        end
+    end
+    return false
+end
+
 function SelectorOverlay:_do_dict(sel)
     local word = util.cleanupSelectedText(sel.text)
     if word == "" then return end
@@ -943,12 +1006,12 @@ function SelectorOverlay:_hook_dict_widget(sel)
             if not w.key_events then w.key_events = {} end
             local overlay = self
 
-            -- Y → AI explain (close dict first so AI viewer can open)
+            -- Y → AI explain (close dict first so AI viewer can open); the
+            -- overlay is closed already (TASK-45), so the looked-up selection
             w.key_events.KopadDictAI = { { "ContextMenu" } }
             function w:onKopadDictAI()
-                local s = overlay:_get_selection()
                 UIManager:close(self)
-                if s then overlay:_do_ai(s) end
+                if sel then overlay:_do_ai(sel) end
                 return true
             end
 
@@ -1000,7 +1063,7 @@ function SelectorOverlay:_do_toggle_highlight(sel)
                 -- Rebuild hl_items so the deleted highlight is no longer drawn,
                 -- focusable or actionable (otherwise X could re-add it and Y
                 -- would run on a now-gone annotation). Browsing highlights,
-                -- the focus stays in place; 0 = none left (padnav closes).
+                -- the focus stays in place; 0 = none left (the action closed the overlay already, TASK-45).
                 local cur = self.hl_cur
                 self:_collect_highlights()
                 if self.mode == "hl" then self.hl_cur = math.min(cur, #self.hl_items) end
@@ -1718,6 +1781,7 @@ end
 -- Every move ends here (base step / line / para / to_words ...): bring the
 -- cursor into view, then the screen boxes of the view now.
 function PagedOverlay:_refresh()
+    if self.closed then return self:_closed_refresh() end
     self:_reveal(self:_cursor_word())
     self:_screen_boxes()
     UIManager:setDirty("all", "ui")
@@ -1916,7 +1980,7 @@ function PagedOverlay:_highlight_of(sel)
 end
 
 -- Recollect the page's highlights after a change; browsing them, the focus
--- stays in place (0 = none left: padnav closes).
+-- stays in place (0 = none left; the action closed the overlay already, TASK-45).
 function PagedOverlay:_highlights_changed()
     local cur = self.hl_cur
     self:_collect_highlights()
@@ -1976,6 +2040,29 @@ function PagedOverlay:_note_saved(a, note)
     self:_highlights_changed()
 end
 
+-- The resume point of the words (TASK-45): the page and the index of the
+-- selection's last word (a browsed highlight: the word its end snaps to,
+-- when that end is on this page).
+function PagedOverlay:_resume_token(sel)
+    local i
+    if self.mode == "hl" then
+        local p = sel and sel.pos1
+        if type(p) == "table" and (p.page == nil or p.page == self.page) then i = self:_word_at(p) end
+    else
+        i = select(2, self:_span_idx())
+    end
+    if i then return { page = self.page, idx = i } end
+end
+
+-- The remembered word, when it is on this page and on the screen.
+function PagedOverlay:_resume_land(tok)
+    if not (tok and tok.page and tok.page == self.page) then return false end
+    local w = self.words[tok.idx]
+    if not (w and w.sbox) then return false end
+    self.ww_word, self.ww_anchor = w, nil
+    return true
+end
+
 -- Point from-to: the labels go at the sentences on the screen now.
 function PagedOverlay:_point_begin()
     self:_screen_boxes()
@@ -2020,6 +2107,14 @@ local Selector = InputContainer:extend{
 function Selector:init()
     self.overlay = nil
     self.key_events = {}
+    -- TASK-45, memory of this reader session only (never saved):
+    -- resume = where the last action's selection ended (the overlay's
+    -- _resume_token: EPUB {xp}, PDF {page, idx}), where A held + D-pad opens
+    -- the words when it is on the page shown; dict_from = the dictionary
+    -- lookup of the last action ({ov, sel, before, popup}), for Y = AI in
+    -- its popup after the overlay is gone.
+    self.resume = nil
+    self.dict_from = nil
 end
 
 ----------------------------------------------------------------------
@@ -2044,9 +2139,12 @@ function Selector:_new_overlay()
         class = PagedOverlay
     end
     if not Pluginaro.claim_overlay(self.ui, "kopad") then return nil end
+    -- a new selection: the popup of the previous lookup is gone
+    self.dict_from = nil
     local ok, ov = pcall(class.new, class, {
         doc  = self.ui.document,
         ui   = self.ui,
+        selector = self,
     })
     if not ok then
         Pluginaro.release_overlay(self.ui, "kopad")
@@ -2096,14 +2194,17 @@ function Selector:_open(from_end)
 end
 
 -- Words: the first word of the page, or the last one with from_end (A +
--- D-pad ↑/← while reading, TASK-28).
+-- D-pad ↑/← while reading, TASK-28). TASK-45: the last word of the last
+-- action instead, when it is on the page shown (PDF: on the screen).
 function Selector:_open_walk(from_end)
     local ov, why = self:_new_overlay()
     if not ov then return Selector._refused(why) end
     if self:_no_text(ov) then return false, "no_text" end
     ov.mode = "walk"
     -- PDF: the first / last word on the screen (a zoomed view)
-    ov:_ww_land(from_end and -1 or 1, true)
+    if not ov:_resume_land(self.resume) then
+        ov:_ww_land(from_end and -1 or 1, true)
+    end
     if ov.paged then ov:_reveal(ov.ww_word) end
     self:_show(ov)
     return true
@@ -2140,8 +2241,39 @@ function Selector:_open_highlights()
     return true
 end
 
+-- An action on the selection of `ov` (SelectorOverlay:act, TASK-45):
+-- remember where it ended and, for the dictionary, the lookup and the popups
+-- open before it (the next new one is kopad's); then close the overlay.
+function Selector:_acted(ov, sel, name)
+    local ok, tok = pcall(ov._resume_token, ov, sel)
+    self.resume = ok and tok or nil
+    self.dict_from = nil
+    if name == "dict" then
+        local before = {}
+        local okq, DQL = pcall(require, "ui/widget/dictquicklookup")
+        local list = okq and type(DQL) == "table" and DQL.window_list
+        for _, w in ipairs(type(list) == "table" and list or {}) do before[w] = true end
+        self.dict_from = { ov = ov, sel = sel, before = before }
+    end
+    self:_close()
+end
+
+-- The overlay and selection behind the dictionary popup `top` when kopad's
+-- last action opened it (Y = AI explain there, PadNav:_dict_button), else
+-- nil. The first popup seen that was not open before the lookup is kopad's
+-- (a lookup may show its popup late); a popup opened from it (a word in the
+-- definition) is not.
+function Selector:dict_selection(top)
+    local d = self.dict_from
+    if not d or type(top) ~= "table" then return nil end
+    if d.popup == nil and not d.before[top] then d.popup = top end
+    if d.popup ~= top then return nil end
+    return d.ov, d.sel
+end
+
 function Selector:_close()
     if self.overlay then
+        self.overlay.closed = true
         -- pcall: _close may run during document teardown (onCloseDocument),
         -- where UIManager stack / widget refs can already be partly gone.
         pcall(UIManager.close, UIManager, self.overlay)

@@ -25,7 +25,9 @@ Reading:
                          path has no release, so there A / Y act on the
                          press and the D-pad only turns pages):
   A held + D-pad         Select words: →/↓ from the first word of the page,
-                         ←/↑ from the last one
+                         ←/↑ from the last one; from the last word of the
+                         last action instead when it is on this page
+                         (TASK-45)
   Y held + D-pad         Select sentences: →/↓ from the first sentence, ←/↑
                          from the last one
   A tapped               "Point from-to" (TASK-29; sentences TASK-35;
@@ -171,8 +173,11 @@ plus the saved highlights "hl" opened by Y):
   R-stick ↑              Word -> the sentence containing it (struct)
   R-stick ←/→            Nothing
   Y                      Vortuyo lookup
-  X                      Toggle highlight (highlights: remove; the last one
-                         removed closes the overlay)
+  X                      Toggle highlight (highlights: remove)
+  After an action        Every action (X, Y, the action menu) closes the
+                         selection at once (TASK-45); the next A held +
+                         D-pad starts the words at the action's last word
+                         when it is on the page shown (PDF: on the screen)
   B                      One step back (TASK-42): words with a range = drop
                          it (the cursor stays at its moving end); words
                          opened from a sentence label = the labels again;
@@ -184,7 +189,8 @@ plus the saved highlights "hl" opened by Y):
 
 Dictionary popup:
   LB / RB                Cycle dictionaries (the popup's own RPgBack/RPgFwd)
-  Y                      AI explain of kopad's selection (closes the popup;
+  Y                      AI explain of kopad's looked-up selection (closes
+                         the popup; the selection is closed already;
                          passes when the popup was not opened from kopad)
   B / A / D-pad / sticks Stock (B closes the popup); RT / LT swallowed
 
@@ -205,7 +211,9 @@ LB/RB and LT/RT change the page, always by a whole page:
                          keeps zooming; TASK-33)
   B held + D-pad ← / →   Fit whole page / fit text width; B tapped = back
   A held + D-pad         Words (TASK-30, _paged_select): →/↓ from the first
-                         word on the screen, ←/↑ from the last
+                         word on the screen, ←/↑ from the last (the last
+                         action's last word when it is on the screen,
+                         TASK-45)
   Y held + D-pad         Sentences (the same)
   A tapped               Point from-to (labels at the sentences on the screen)
   Y tapped               The page's highlights (TASK-31; as in an EPUB: the
@@ -888,16 +896,14 @@ function PadNav:onKPRStickDown()  return self:_rstick(1) end
 function PadNav:onKPRStickLeft()  return self:_rstick(0) end
 function PadNav:onKPRStickRight() return self:_rstick(0) end
 
--- X: highlight toggle (overlay) or combo modifier (reading)
+-- X: highlight toggle (overlay; the action closes it, TASK-45) or combo
+-- modifier (reading)
 function PadNav:onKPExtend()
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if ov then
-        local sel = ov:_get_selection()
-        if sel then ov:_do_toggle_highlight(sel) end
-        -- browsing highlights and the page's last one removed: done
-        if ov.mode == "hl" and ov.hl_cur == 0 then selector:_close() end
+        ov:act("toggle_highlight")
         return true
     end
     -- The modifier only exists in a document: in the FileManager the stock
@@ -1178,8 +1184,7 @@ function PadNav:onKPMenu()
     if not selector then return false end
     local ov = selector.overlay
     if ov then
-        local sel = ov:_get_selection()
-        if sel then ov:_do_vortuyo(sel) end
+        ov:act("vortuyo") -- closes the overlay (TASK-45)
         return true
     end
     self:_open_highlights(selector)
@@ -2291,16 +2296,21 @@ end
 -- Buttons (logical role id) while the dictionary popup is on top (ctx
 -- "dict"). The popup handles the stock keys itself: LB / RB (RPgBack /
 -- RPgFwd) = previous / next dictionary, B (Back) closes it, A / D-pad /
--- L-stick as stock. kopad adds Y = AI explanation of the current selection
--- when the popup was opened from kopad's selector (the overlay stays under
--- it); otherwise Y passes. BUTTON_SWALLOW as in menus. Returns true = consumed.
+-- L-stick as stock. kopad adds Y = AI explanation of the looked-up selection
+-- when the popup was opened by kopad's Dictionary action (the overlay is
+-- closed by then, TASK-45: Selector:dict_selection remembers it); otherwise
+-- Y passes. BUTTON_SWALLOW as in menus. Returns true = consumed.
 function PadNav:_dict_button(btn)
+    local selector = self:_any_selector() -- also a paged document's
+    local top = top_window()
+    -- every button asks, so the popup is recognised before Y (a later one,
+    -- opened from it, is not kopad's)
+    local ov, sel
+    if selector and type(selector.dict_selection) == "function" then
+        ov, sel = selector:dict_selection(top)
+    end
     if btn == BTN_Y then
-        local selector = self:_selector()
-        local ov = selector and selector.overlay
-        local sel = ov and ov:_get_selection()
-        if not sel then return false end
-        local top = top_window()
+        if not (ov and sel) then return false end
         if top then UIManager:close(top) end
         ov:_do_ai(sel)
         return true
