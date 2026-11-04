@@ -251,22 +251,28 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
 - **Letter holds (TASK-46)**: `_hold_start(btn)` from `_press_y` / `_press_b`
   (idle reading / paged only; the selection keeps Y / B on the press), the
   paged Y branch and `_button_down` (the press that arms `_x_hold`).
-  `UIManager:scheduleIn(HOLD_S = 0.6)` -> `h.ready` + `_show_hint` (a
-  Notification toast: `top_window` skips toasts, so the context stays
-  `reading` / `paged`). Any other button (`_button_down` -> `_hold_spend`) or
+  `UIManager:scheduleIn(HOLD_S = 0.6)` -> `h.ready`, silently (0.1.20: no
+  toast, nothing shown on the way in; only an empty page gets its "No ... on
+  this page" message). Any other button (`_button_down` -> `_hold_spend`) or
   trigger press (`_trigger_event`) cancels the hold, so the D-pad modes and
   X combos win. `onGamepadButtonUp` -> `_hold_end(btn)`: a ready hold marks
   `_y_used` / `_b_used` (no tap) and `_run_hold` runs the action through
   `_run_action` (idle reading only). Actions from `res.hold`
   (`Padmap.build_hold`, default `DEFAULT_HOLD`). Default runners (0.1.19,
   on the page shown): `page_glosses` / `page_highlights` / `page_notes` =
-  `page_mode(kind)` -> `PadNav:_open_highlights(selector, kind)` ->
-  `Selector:_open_highlights(kind)`: the overlay's mode "hl" with
+  `page_mode(kind, true)` -> `PadNav:_open_highlights(selector, kind,
+  {once=true})` -> `Selector:_open_highlights(kind, opts)`: the overlay's
+  mode "hl" with `ov.hl_once` (0.1.20: the first completed action leaves the
+  whole mode; Y tapped = `highlights` = `page_mode(nil)`, no once) and
   `ov.hl_kind` nil / "note" (`hl_kind_ok`: non-empty `ann.note`, also in
   `PagedOverlay:_collect_highlights`) / "gloss" (`_collect_glosses` from
   Vortpaf's plain `pageGlosses()`, >= 0.7.1; A = `vp:openGloss(item, cb)`,
   X = `vp:openGlossRemove(item, cb)` via `_gloss_card`, the card is a window
-  on top of the overlay, `cb` recollects and clamps, none left = close; no
+  on top of the overlay; Vortpaf calls `cb` after Keep / Discard / Back
+  (= Keep) / a removal, not after Back on the removal choice (Vortpaf
+  0.7.2: a word with no other occurrence is removed with no card, `cb`
+  runs before openGlossRemove returns); `cb` closes the
+  overlay when `hl_once`, else recollects and clamps, none left = close; no
   dots, status "GLOSS"; PDF = none). Missing page API = a message
   (`callable()`). The book-wide runners stay actions: `vortpaf_glosses`
   (event `VortpafGlosses` when `ui.vortpaf.onVortpafGlosses` exists, else a

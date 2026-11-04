@@ -425,6 +425,58 @@ do
     u.vortpaf = vortpaf(d)
     u.paging, u.rolling = { current_page = 1 }, nil
     assert(s:_open_highlights("gloss") == false and claims == 0, "PDF: no glosses")
+
+    -- entered by a hold (opts.once, padnav page_* actions): the first
+    -- completed action leaves the whole mode, no stepping on to the next one
+    calls = {}
+    s, d, u = fresh(1, { { pos0 = "w3", pos1 = "w3e" } })
+    u.vortpaf = vortpaf(d)
+    assert(s:_open_highlights("gloss", { once = true }) == true and s.overlay.hl_once == true and s.overlay.hl_cur == 1)
+    ov = s.overlay
+    -- X: the removal card; Back there closes it with no callback: the mode stays
+    assert(ov:act("toggle_highlight") == true and calls[1][1] == "remove" and s.overlay == ov)
+    -- a removal (on_done): the whole overlay closes though a gloss is left
+    table.remove(gl, 1); calls[1][3]()
+    assert(s.overlay == nil and claims == 0, "once: gloss removed = mode closed")
+    -- A: the card; Keep / Discard / Back (= Keep) / Remove… call on_close: closed
+    s:_open_highlights("gloss", { once = true }); ov = s.overlay
+    ov:step(1); ov:action_menu()
+    assert(calls[2][1] == "open" and calls[2][2].word == "t5" and s.overlay == ov, "card over the overlay")
+    calls[2][3]()
+    assert(s.overlay == nil and claims == 0, "once: card kept = mode closed")
+    calls[2][3]() -- a late second callback: nothing
+    -- Y tapped (no once): the same card closing keeps the mode (as above)
+    s:_open_highlights("gloss"); ov = s.overlay
+    assert(ov.hl_once == nil)
+    ov:action_menu(); calls[3][3]()
+    assert(s.overlay == ov and ov.hl_cur == 1, "no once: the mode stays")
+    s:_close()
+    -- a sole occurrence: Vortpaf removes it with no card and calls back
+    -- before openGlossRemove returns; the mode closes all the same
+    u.vortpaf = vortpaf(d)
+    u.vortpaf.openGlossRemove = function(_, _item, cb) table.remove(gl, 1); cb(); return true end
+    s:_open_highlights("gloss", { once = true }); ov = s.overlay
+    assert(ov:act("toggle_highlight") == true and s.overlay == nil and claims == 0, "once: removed at once = mode closed")
+    -- without once: recollected at once, the rest stays
+    s:_open_highlights("gloss"); ov = s.overlay
+    assert(#ov.hl_items == 1 and ov:act("toggle_highlight") == true and s.overlay == nil,
+        "no once: the last one removed at once = closed")
+    u.vortpaf = vortpaf(d)
+    s:_open_highlights("gloss"); ov = s.overlay
+    u.vortpaf.openGlossRemove = function(_, _item, cb) table.remove(gl, 1); cb(); return true end
+    assert(ov:act("toggle_highlight") == true and s.overlay == ov and #ov.hl_items == 1 and ov.hl_cur == 1,
+        "no once: removed at once, the rest stays")
+    s:_close()
+    -- highlights / notes: X deletes and the mode closes (every selection
+    -- action closes, TASK-45), held or tapped alike
+    local ha = { { pos0 = "w2", pos1 = "w3e" }, { pos0 = "w5", pos1 = "w5e", note = "n" } }
+    s = fresh(1, ha)
+    assert(s:_open_highlights(nil, { once = true }) == true and s.overlay.hl_once == true)
+    assert(s.overlay:act("toggle_highlight") == true and s.overlay == nil and #ha == 1 and claims == 0,
+        "once: highlight deleted = mode closed")
+    assert(s:_open_highlights("note", { once = true }) == true and #s.overlay.hl_items == 1)
+    assert(s.overlay:act("toggle_highlight") == true and s.overlay == nil and #ha == 0 and claims == 0,
+        "once: note deleted = mode closed")
 end
 
 -- 10. Point from-to (A tapped, TASK-29; sentences TASK-35; sentence labels

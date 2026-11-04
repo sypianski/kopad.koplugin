@@ -2056,7 +2056,9 @@ end
 -- 18. Letter holds (TASK-46): Y / X / B held past HOLD_S and released alone
 -- open their hold action (padmap `hold`, DEFAULT_HOLD: on the page shown,
 -- Vortpaf's glosses / the highlights / the notes, the first one focused; the
--- mode itself is in tests/selector_test.lua 9a); the tap, the letter + D-pad
+-- mode itself is in tests/selector_test.lua 9a), silently (nothing shown at
+-- the threshold or on the way in) and once (opts.once: an action leaves the
+-- whole mode; Y tapped has no once); the tap, the letter + D-pad
 -- modes and the X combos stay as they were; the selection keeps Y / B on the
 -- press. The book-wide lists stay as actions (padmap `hold` override).
 do
@@ -2079,6 +2081,7 @@ do
     local PadNav = require("padnav")
     local UIM = require("ui/uimanager")
     local stack = UIM._window_stack
+    local orig_show = UIM.show
     local sched = {}
     UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = { s = s, fn = fn } end
     UIM.unschedule = function(_, fn)
@@ -2100,7 +2103,7 @@ do
     -- finds nothing), annotations, padmap
     local function reader(opts)
         opts = opts or {}
-        local log = { events = {}, sel = {}, ov = {}, text = {}, hint = {}, bm = {} }
+        local log = { events = {}, sel = {}, ov = {}, text = {}, shown = {}, once = {}, bm = {} }
         local ui = { document = {},
                      handleEvent = function(_, ev)
                          log.events[#log.events + 1] = ev.name .. (ev.args[1] ~= nil and (":" .. tostring(ev.args[1])) or "")
@@ -2145,8 +2148,9 @@ do
         selector._open_paged = function(_, words, from_end)
             log.sel[#log.sel + 1] = "_open_paged:" .. tostring(words) .. ":" .. tostring(from_end); show("struct")
         end
-        selector._open_highlights = function(_, kind)
+        selector._open_highlights = function(_, kind, o)
             log.sel[#log.sel + 1] = "_open_highlights" .. (kind and (":" .. kind) or "")
+            log.once[#log.once + 1] = type(o) == "table" and o.once == true
             return not opts.none
         end
         selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
@@ -2154,8 +2158,8 @@ do
             { __index = PadNav })
         n:set_padmap(opts.padmap and P.build(opts.padmap, "xbox") or nil)
         n._show_text = function(_, text) log.text[#log.text + 1] = text end
-        n._show_hint = function(_, text) log.hint[#log.hint + 1] = text end
-        n._hide_hint = function() end
+        -- anything put on the screen (a toast, a menu, a message widget)
+        UIM.show = function(_, wd) log.shown[#log.shown + 1] = wd end
         set_stack(ui)
         sched = {}
         return n, log, selector
@@ -2167,15 +2171,18 @@ do
     local n, log = reader()
     assert(down(n, 3) == true and #sched == 1 and sched[1].s == 0.6, "Y press arms the hold timer")
     up(n, 3)
-    assert(log.sel[1] == "_open_highlights" and #log.events == 0 and #log.hint == 0 and #sched == 0,
+    assert(log.sel[1] == "_open_highlights" and #log.events == 0 and #log.shown == 0 and #sched == 0,
         "Y tap = page highlights, no glosses")
-    -- Y held alone: a hint after the threshold, the page's glosses on the release
+    assert(log.once[1] == false, "Y tap: no once, the mode steps on after an action (TASK-31)")
+    -- Y held alone: nothing at the threshold (no toast), the page's glosses on
+    -- the release, straight on the first one, once
     n, log = reader()
     down(n, 3); elapse()
-    assert(#log.hint == 1 and log.hint[1]:find("glosses on the page", 1, true), "hint names the hold action: " .. tostring(log.hint[1]))
+    assert(#log.shown == 0 and #log.text == 0, "nothing shown at the threshold")
     up(n, 3)
     assert(log.sel[1] == "_open_highlights:gloss" and #log.sel == 1 and #log.events == 0 and #log.text == 0,
         "Y held = the gloss mode on the page, no book browser: " .. tostring(log.sel[1]))
+    assert(#log.shown == 0 and log.once[1] == true, "Y held: no menu / message on the way in, once")
     -- the page API wrapped like a sandboxed on* method still counts
     n, log = reader({ sandboxed = true })
     down(n, 3); elapse(); up(n, 3)
@@ -2213,9 +2220,10 @@ do
     down(n, 2); assert(n._x_mode and #sched == 1, "X arms the modifier and the hold")
     up(n, 2); assert(not n._x_mode and #log.sel == 0 and #log.events == 0, "short X: nothing")
     down(n, 2); elapse()
-    assert(log.hint[1] and log.hint[1]:find("highlights on the page", 1, true), "X hint")
+    assert(#log.shown == 0, "X: nothing shown at the threshold")
     up(n, 2)
     assert(log.sel[1] == "_open_highlights" and #log.bm == 0 and not n._x_mode, "X held = page highlights: " .. tostring(log.sel[1]))
+    assert(#log.shown == 0 and #log.text == 0 and log.once[1] == true, "X held: straight in, once")
     n, log = reader({ none = true })
     down(n, 2); elapse(); up(n, 2)
     assert(log.text[1] == "No highlights on this page", "no highlights = message")
@@ -2228,7 +2236,7 @@ do
     -- X + LB (TOC) before the threshold, then a long wait: no mode
     n, log = reader()
     down(n, 2); down(n, 9); elapse(); up(n, 9); up(n, 2)
-    assert(log.events[1] == "ShowToc" and #log.sel == 0 and #log.hint == 0, "X + LB = TOC only")
+    assert(log.events[1] == "ShowToc" and #log.sel == 0 and #log.shown == 0, "X + LB = TOC only")
     -- X + a trigger spends it too
     n, log = reader()
     down(n, 2); n:onGamepadAxisMotion({ axis = 5, value = 32767 }); elapse(); up(n, 2)
@@ -2241,9 +2249,10 @@ do
     -- B held alone: the page's notes; B tapped = back; B + D-pad = view size, no mode
     n, log = reader()
     down(n, 1); elapse()
-    assert(log.hint[1] and log.hint[1]:find("notes on the page", 1, true), "B hint")
+    assert(#log.shown == 0, "B: nothing shown at the threshold")
     up(n, 1)
     assert(log.sel[1] == "_open_highlights:note" and #log.events == 0, "B held = page notes, not back: " .. tostring(log.sel[1]))
+    assert(#log.shown == 0 and #log.text == 0 and log.once[1] == true, "B held: straight in, once")
     n, log = reader()
     down(n, 1); up(n, 1)
     assert(log.events[1] == nil and #log.sel == 0, "B tap: no mode") -- back = ui.link (absent here)
@@ -2287,7 +2296,7 @@ do
     assert(n:_context() == "selection")
     assert(down(n, 3) == true and log.ov[1] == "act:vortuyo" and #sched == 0, "selection: Y = Vortuyo on the press")
     elapse(); up(n, 3)
-    assert(#log.events == 0 and #log.hint == 0, "selection: no glosses on the release")
+    assert(#log.events == 0 and #log.shown == 0, "selection: no glosses on the release")
     selector:_open(false)
     assert(down(n, 1) == true and log.ov[2] == "back" and #sched == 0, "selection: B = back on the press")
     up(n, 1)
@@ -2296,8 +2305,9 @@ do
     -- a context change before the threshold (a menu on top) drops the hold
     n, log = reader()
     down(n, 3); set_stack(n.ui, { menu = true }); elapse(); set_stack(n.ui); up(n, 3)
-    assert(#log.events == 0 and #log.hint == 0, "no hint / glosses after a menu")
+    assert(#log.events == 0 and #log.shown == 0, "no toast / glosses after a menu")
     for i = #stack, 1, -1 do stack[i] = nil end
+    UIM.show = orig_show
 end
 
 print("padmap_test: all tests passed")

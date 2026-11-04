@@ -120,6 +120,9 @@ function SelectorOverlay:init()
     -- boxes, sbox }; A / X open Vortpaf's cards, see _gloss_card). Set by
     -- Selector:_open_highlights before it recollects.
     self.hl_kind  = nil
+    -- Entered by a letter hold (TASK-46, opts.once): the first completed
+    -- action closes the whole overlay, no stepping on to the next item.
+    self.hl_once  = nil
 
     -- RTL: reverse ↔ direction for right-to-left scripts
     local rtl_langs = { ar=true, he=true, fa=true, ur=true }
@@ -239,10 +242,15 @@ function SelectorOverlay:_collect_glosses()
 end
 
 -- A / X on the focused gloss: Vortpaf's definition card ("open") or its
--- removal card ("remove"), on top of the overlay, which stays (context
--- "window" while the card is up, padconfirm drives it). Once the card is
--- gone (open) or after a removal the glosses are recollected, the focus
--- kept in place; none left = the overlay closes.
+-- removal ("remove"), on top of the overlay, which stays (context "window"
+-- while a card is up, padconfirm drives it). The removal of a word with no
+-- other occurrence opens no card at all: Vortpaf removes it and calls back
+-- before openGlossRemove returns. Vortpaf calls back once the card is gone
+-- by an action (definition card: Keep, Back = Keep, Discard, a removal;
+-- removal choice: a removal only, its Back closes it with no call). Then:
+-- entered by a hold (hl_once) the whole overlay closes;
+-- else the glosses are recollected, the focus kept in place, none left =
+-- the overlay closes.
 function SelectorOverlay:_gloss_card(what)
     local item = self.hl_items[self.hl_cur]
     local vp = self.ui and self.ui.vortpaf
@@ -250,6 +258,10 @@ function SelectorOverlay:_gloss_card(what)
     local overlay = self
     local function changed()
         if overlay.closed then return end
+        if overlay.hl_once then
+            if overlay.selector then overlay.selector:_close() end
+            return
+        end
         local cur = overlay.hl_cur
         overlay:_collect_highlights()
         if #overlay.hl_items == 0 then
@@ -2310,14 +2322,17 @@ end
 -- continuous view), the view pans to the focused one; reflow = false,
 -- "reflow". `kind` (TASK-46, hold B / Y): "note" = only the noted
 -- highlights, "gloss" = Vortpaf's glosses on the screen (EPUB; none in a
--- PDF: false before any overlay is made).
-function Selector:_open_highlights(kind)
+-- PDF: false before any overlay is made). `opts.once` (the hold page modes):
+-- hl_once, an action leaves the whole mode (_gloss_card; the selection
+-- actions close it anyway, TASK-45). Nothing else is shown on the way in.
+function Selector:_open_highlights(kind, opts)
     if kind == "gloss" and (self.ui.paging and not self.ui.rolling
             or #(page_glosses(self.ui) or {}) == 0) then
         return false
     end
     local ov, why = self:_new_overlay()
     if not ov then return Selector._refused(why) end
+    ov.hl_once = opts and opts.once and true or nil
     if kind then
         ov.hl_kind = kind
         ov:_collect_highlights()

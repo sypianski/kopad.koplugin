@@ -19,9 +19,9 @@ Reading:
                          (Gamepad* path; legacy key path: on the press)
   B held + D-pad         ↑/↓ font size +/-1, ←/→ margins narrower / wider
                          (both sides, MARGIN_STEP); held = repeated (TASK-33)
-  B held (no D-pad)      Held past HOLD_S (0.6 s; a toast then names what
-                         the release opens) and released without the D-pad
-                         or another control: the notes on the page, as Y
+  B held (no D-pad)      Held past HOLD_S (0.6 s; nothing shows meanwhile)
+                         and released without the D-pad or another
+                         control: the notes on the page, as Y
                          tapped but only highlights with a note (TASK-46);
                          none = a message. padmap `hold`
   D-pad                 Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
@@ -48,10 +48,14 @@ Reading:
                          the screen (Vortpaf >= 0.7.1 pageGlosses), the first
                          glossed word inverted; D-pad = next / previous
                          (wrapping), A = Vortpaf's card, X = its removal
-                         card (this occurrence / device / Vortuyo), B
-                         closes. None = a message, no Vortpaf (or older) =
-                         a message. The D-pad after the threshold still
-                         opens the sentences (TASK-46)
+                         (a sole occurrence at once, no card; else the
+                         choice only this spot / everywhere), B closes; a
+                         card or removal ending in an action
+                         (Keep, Discard, a removal) closes the whole mode,
+                         as X deleting a highlight / note does (opts.once).
+                         Nothing shows on the way in. None = a message, no
+                         Vortpaf (or older) = a message. The D-pad after
+                         the threshold still opens the sentences (TASK-46)
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
   R-stick                The quick-action wheel (TASK-26, PC-021): a
                          ButtonDialog of padmap's `quick.reading` set, drawn
@@ -1229,8 +1233,8 @@ local NONE_ON_PAGE = {
     note  = _("No notes on this page"),
     gloss = _("No glosses on this page"),
 }
-function PadNav:_open_highlights(selector, kind)
-    local ok, why = selector:_open_highlights(kind)
+function PadNav:_open_highlights(selector, kind, opts)
+    local ok, why = selector:_open_highlights(kind, opts)
     if ok == false then
         self:_show_text(why and no_select_text(why) or NONE_ON_PAGE[kind]
             or _("No highlights on this page"), 2)
@@ -1378,8 +1382,10 @@ end
 -- The page modes of the letter holds (TASK-46): the overlay in mode "hl"
 -- over the page's highlights / noted highlights / Vortpaf glosses, also in
 -- an idle PDF / DjVu (glosses there: a message). Glosses need Vortpaf's
--- plain pageGlosses / openGloss / openGlossRemove (0.7.1).
-local function page_mode(kind)
+-- plain pageGlosses / openGloss / openGlossRemove (0.7.1). `once` (the
+-- holds' page_* actions): the first completed action leaves the whole mode
+-- (Selector:_open_highlights opts.once); Y tapped (`highlights`) has none.
+local function page_mode(kind, once)
     return function(self)
         local selector = self:_selector() or self:_any_selector()
         if not selector or selector.overlay then return false end
@@ -1391,7 +1397,7 @@ local function page_mode(kind)
                 return
             end
         end
-        self:_open_highlights(selector, kind)
+        self:_open_highlights(selector, kind, once and { once = true } or nil)
     end
 end
 local function bookmark_list(types, none_text)
@@ -1457,9 +1463,9 @@ local ACTION_RUNNERS = {
     -- also in an idle PDF / DjVu, whose selector _selector() hides (TASK-31)
     highlights        = page_mode(nil),
     -- the letter holds' defaults (TASK-46)
-    page_highlights   = page_mode(nil),
-    page_notes        = page_mode("note"),
-    page_glosses      = page_mode("gloss"),
+    page_highlights   = page_mode(nil, true),
+    page_notes        = page_mode("note", true),
+    page_glosses      = page_mode("gloss", true),
     -- the book-wide lists, no longer hold defaults
     vortpaf_glosses   = vortpaf_glosses,
     -- a noted highlight is a highlight too (ReaderBookmark types it "note")
@@ -2850,11 +2856,13 @@ local ACTION_LABELS = {
 -- Letter holds (TASK-46). A letter pressed in idle reading (Y / B: their
 -- press handlers; X: the press that arms the modifier, _button_down) starts
 -- a hold. Any other control pressed while it is down (D-pad = the Y / B
--- modes, an X combo, a trigger) spends it; HOLD_S after the press a toast
--- names the hold action (_show_hint); the release after that, unspent, runs
--- the action instead of the tap (onGamepadButtonUp). Nothing happens on the
--- release before HOLD_S: the tap stays the tap. Selection, menus and the
--- legacy key path never start one (Y / B act on the press there).
+-- modes, an X combo, a trigger) spends it; HOLD_S after the press it is
+-- ready (silently: no toast, menu or message on the way in), and the
+-- release after that, unspent, runs the action instead of the tap
+-- (onGamepadButtonUp): the page mode opens straight on its first item.
+-- Nothing happens on the release before HOLD_S: the tap stays the tap.
+-- Selection, menus and the legacy key path never start one (Y / B act on
+-- the press there).
 function PadNav:_hold_action(role)
     local res = self._padmap
     local t = type(res) == "table" and type(res.hold) == "table" and res.hold
@@ -2875,7 +2883,6 @@ function PadNav:_hold_start(btn)
         local ctx = self:_context()
         if ctx ~= "reading" and ctx ~= "paged" then h.spent = true; return end
         h.ready = true
-        self:_show_hint("\xE2\x86\x92 " .. (ACTION_LABELS[act] or act))
     end
     self._hold = h
     UIManager:scheduleIn(HOLD_S, h.tick)
@@ -2891,7 +2898,6 @@ function PadNav:_hold_cancel()
     local h = self._hold
     self._hold = nil
     if h and h.tick and type(UIManager.unschedule) == "function" then UIManager:unschedule(h.tick) end
-    self:_hide_hint()
 end
 
 -- The release of `btn`: the hold action to run, or nil (no hold, released
@@ -2902,25 +2908,6 @@ function PadNav:_hold_end(btn)
     local act = h.ready and not h.spent and h.action or nil
     self:_hold_cancel()
     return act
-end
-
--- The hold hint: a toast (Notification), which neither changes the pad's
--- context (top_window skips toasts) nor takes the next press.
-function PadNav:_show_hint(text)
-    self:_hide_hint()
-    local ok, Notification = pcall(require, "ui/widget/notification")
-    if not (ok and type(Notification) == "table" and type(Notification.new) == "function") then return end
-    local ok2, w = pcall(Notification.new, Notification, { text = text, timeout = 3 })
-    if ok2 and w then
-        self._hint = w
-        UIManager:show(w)
-    end
-end
-
-function PadNav:_hide_hint()
-    local w = self._hint
-    self._hint = nil
-    if w and type(UIManager.close) == "function" then pcall(UIManager.close, UIManager, w) end
 end
 
 -- The reading cheat sheet plus, when koligilo gave some roles other reading
