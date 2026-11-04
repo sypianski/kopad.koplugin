@@ -36,11 +36,15 @@ local SpinWidget = class({ ok_text = "Apply", cancel_text = "Close" }, function(
              button(self.ok_text, function() log[#log + 1] = "apply" end, self.changed or false) }
 end)
 local InputDialog = { init = function(self) self[1] = { { self.buttons[1][1] and {} or nil } } end }
-local VortpafCard = class({ keep_text = "Keep", regenerate_text = "Regenerate", discard_text = "Discard" }, function(self)
+local VortpafCard = class({ keep_text = "Keep", regenerate_text = "Regenerate", discard_text = "Discard",
+                           sense_text = "Other sense" }, function(self)
     local ready = not self.loading
-    return { button(self.discard_text, function() log[#log + 1] = "discard" end, ready),
-             button(self.regenerate_text, function() log[#log + 1] = "regenerate" end, ready),
-             button(self.keep_text, function() log[#log + 1] = "keep" end, ready) }
+    local row = { button(self.discard_text, function() log[#log + 1] = "discard" end, ready),
+                  button(self.regenerate_text, function() log[#log + 1] = "regenerate" end, ready),
+                  button(self.keep_text, function() log[#log + 1] = "keep" end, ready) }
+    -- Other sense only when Vortuyo answered (can_fix)
+    if self.can_fix then row[4] = button(self.sense_text, function() log[#log + 1] = "sense" end, ready) end
+    return row
 end)
 
 local mods = {
@@ -125,7 +129,11 @@ assert(d.seen.keep_text == "A · Keep" and d.seen.regenerate_text == "X · Regen
     and d.seen.discard_text == "B · Discard", "vortpaf card labels")
 assert(C.press(d, "X") and C.press(d, "A") and C.press(d, "B"), "vortpaf card presses")
 assert(table.concat(log, ",") == "regenerate,keep,discard", table.concat(log, ","))
-assert(C.press(d, "Y") == false, "vortpaf card: no Y")
+assert(d.seen.sense_text == "Y · Other sense", "vortpaf card: Y label")
+assert(C.press(d, "Y") == false, "vortpaf card without Other sense: Y goes to stock")
+log = {}
+d = new(VortpafCard, { can_fix = true })
+assert(C.press(d, "Y") == true and log[1] == "sense", "vortpaf card: Y = Other sense")
 log = {}
 d = new(VortpafCard, { loading = true })
 assert(C.press(d, "A") == true and #log == 0, "vortpaf card loading: consumed, no action")

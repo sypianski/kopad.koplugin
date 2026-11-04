@@ -53,7 +53,9 @@ M.SPECS = {
     ["ui/widget/radiobuttonwidget"] = OK_CANCEL,
     -- Vortpaf's definition card (vortpaf.koplugin/vortpaf_card.lua); not
     -- loadable = Vortpaf not installed, skipped like any missing class.
-    ["vortpaf_card"] = { A = "keep_text", X = "regenerate_text", B = "discard_text" },
+    -- Y = Other sense (Vortpaf with TASK-5, shown only when Vortuyo answered; no
+    -- such button = Y goes on to stock, see press).
+    ["vortpaf_card"] = { A = "keep_text", X = "regenerate_text", B = "discard_text", Y = "sense_text" },
 }
 M.INPUT_DIALOG = "ui/widget/inputdialog"
 M.LETTERS = { "A", "X", "Y", "B" }
