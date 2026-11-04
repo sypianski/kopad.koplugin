@@ -64,8 +64,13 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | hold **X** + D-pad | ↑ menu, ↓ footer, ← history, → files |
 | hold **B** + D-pad | ↑ / ↓ font size one step bigger / smaller, ← / → margins narrower / wider (both sides, 5 at a time); hold the D-pad to keep going |
 | tap **B** | back to the previous location (after a TOC entry, a link, skimming); never "Exit KOReader?" |
+| hold **Y** alone | Vortpaf's gloss browser (needs Vortpaf 0.7.0+; without it a short message) |
+| hold **X** alone | the book's highlights (the bookmark list filtered to highlights, noted ones included) |
+| hold **B** alone | the book's notes (the bookmark list filtered to notes) |
 
 The letters follow one rule: a letter held with the D-pad is a mode, a tapped letter is its action, so **A**, **Y** and **B** act when you let go, and only if no arrow was pressed meanwhile. On older patched builds (no button releases) **A**, **Y** and **B** act on the press and the D-pad only turns pages.
+
+**Y**, **X** and **B** held alone for more than about 0.6 s and then let go open a list instead of their tap (the same in a PDF / DjVu). Once the 0.6 s are up a short note (e.g. "→ Vortpaf glosses") says what letting go will open; the D-pad or an **X** combo still works after that and then nothing opens. Which action each hold runs can be changed in koligilo (`padmap` key `hold`; `none` turns a hold off).
 
 **X** is a modifier you hold: the combos work while it is down and stop when you let go. On older patched builds (no button releases) and when a trigger is mapped to X, it is a latch instead: press X, then one combo. It is dropped as soon as the pad is used anywhere but plain reading (a menu, a dialog, the selection, the file browser), so it cannot fire as a surprise combo later.
 

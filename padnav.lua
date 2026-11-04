@@ -19,6 +19,10 @@ Reading:
                          (Gamepad* path; legacy key path: on the press)
   B held + D-pad         ↑/↓ font size +/-1, ←/→ margins narrower / wider
                          (both sides, MARGIN_STEP); held = repeated (TASK-33)
+  B held (no D-pad)      Held past HOLD_S (0.6 s; a toast then names what
+                         the release opens) and released without the D-pad
+                         or another control: the book's notes (bookmark
+                         list, notes filter; TASK-46). padmap `hold`
   D-pad                 Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
                          books; TASK-28). Letter + D-pad = a mode, a tapped
                          letter = its action (Gamepad* path; the legacy key
@@ -39,6 +43,10 @@ Reading:
                          below). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
                          them); none on the page = a message
+  Y held (no D-pad)      Past HOLD_S, released alone: Vortpaf's gloss browser
+                         (event VortpafGlosses; without Vortpaf a message).
+                         The D-pad after the threshold still opens the
+                         sentences (TASK-46)
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
   R-stick                The quick-action wheel (TASK-26, PC-021): a
                          ButtonDialog of padmap's `quick.reading` set, drawn
@@ -52,6 +60,10 @@ Reading:
                          trigger acting as X: a latch, spent by one combo.
                          Documents only; dropped as soon as the pad is used
                          anywhere but plain reading.
+  X held (no combo)      Past HOLD_S, released with no combo: the book's
+                         highlights (bookmark list, highlights + notes
+                         filter; TASK-46). A combo after the threshold still
+                         fires and cancels it. Holds: Gamepad* path only
 
 Context (PadNav:_context; Gamepad* path = KOReader >= 2026.07): what the pad
 drives depends on the topmost non-toast window of the UIManager stack. The
@@ -219,6 +231,8 @@ LB/RB and LT/RT change the page, always by a whole page:
   Y tapped               The page's highlights (TASK-31; as in an EPUB: the
                          D-pad steps between them, the view pans to each,
                          X removes one); none = a message
+  Y / X / B held alone   As in an EPUB (TASK-46): Vortpaf glosses (Vortpaf
+                         itself says it has none in a PDF), highlights, notes
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 The selection itself (context "selection") is the EPUB one on the page's
 text boxes (selector.lua PagedOverlay): the same keys, LB / RB close it and
@@ -342,6 +356,9 @@ local BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT = 11, 12, 13, 14
 local AXIS_LX, AXIS_LY, AXIS_RX, AXIS_RY = 0, 1, 2, 3
 local AXIS_LT, AXIS_RT = 4, 5
 
+-- Letters with a hold action (TASK-46; padmap HOLD_ROLES): logical id -> role.
+local HOLD_ROLE_BY_BTN = { [BTN_B] = "b", [BTN_X] = "x", [BTN_Y] = "y" }
+
 -- button id -> on<Key> handler (return value true = consumed).
 local BUTTON_HANDLERS = {
     [BTN_A]      = "_press_a", -- a hold control (TASK-16); legacy Press = onKPConfirm
@@ -389,6 +406,8 @@ local DPAD_HANDLERS = {
     [BTN_DPAD_LEFT] = "onKPLeft2", [BTN_DPAD_RIGHT] = "onKPRight2",
 }
 local DPAD_REPEAT_DELAY_S = 0.45
+-- A letter held this long and released alone opens its hold action (TASK-46).
+local HOLD_S = 0.6
 local DPAD_REPEAT_EVERY_S = 0.15
 local DPAD_REPEAT_MAX     = 200
 local DPAD_ACCEL_AFTER    = 5
@@ -867,6 +886,7 @@ function PadNav:_point_button(ov, btn)
     self:_dpad_stop()
     self._a_down, self._a_moved, self._a_opened, self._a_reading = false, false, false, false
     self._y_down, self._b_down = false, false
+    self:_hold_cancel()
     if ov:point_press(POINT_SYMBOLS[btn]) == "cancel" then
         local selector = self:_selector()
         if selector then selector:_close() end
@@ -1066,6 +1086,7 @@ function PadNav:_press_y()
     if not selector then return false end
     if selector.overlay then return self:onKPMenu() end
     self._y_down, self._y_used = true, false
+    self:_hold_start(BTN_Y)
     return true
 end
 
@@ -1089,6 +1110,7 @@ function PadNav:_press_b()
     local reading = selector and not selector.overlay and self:_context() == "reading"
     if reading or self:_paged_idle() then
         self._b_down, self._b_used = true, false
+        self:_hold_start(BTN_B)
         return true
     end
     return self:onKPBack()
@@ -1248,13 +1270,30 @@ function PadNav:onGamepadButtonUp(ev)
     end
     if self._dpad_held == btn then self:_dpad_stop() end
     if self._text_held == btn then self._text_held = nil end
+    -- a hold past HOLD_S replaces the tap (TASK-46)
+    local hold = self:_hold_end(btn)
+    if hold then
+        if btn == BTN_Y then self._y_used = true end
+        if btn == BTN_B then self._b_used = true end
+    end
     if self._x_hold == btn then
         self._x_hold, self._x_mode = nil, false
     end
     if btn == BTN_A then self:_release_a() end
     if btn == BTN_Y then self:_release_y() end
     if btn == BTN_B then self:_release_b() end
+    if hold then self:_run_hold(hold, btn) end
     return false
+end
+
+-- The hold action of a released letter, only in idle reading (no overlay).
+function PadNav:_run_hold(action, btn)
+    local ctx = self:_context()
+    if ctx ~= "reading" and ctx ~= "paged" then return end
+    local selector = self:_selector()
+    if selector and selector.overlay then return end
+    Trace.log("padnav btn=%s up: hold action=%s", tostring(btn), tostring(action))
+    self:_run_action(action, HOLD_ROLE_BY_BTN[btn] and (HOLD_ROLE_BY_BTN[btn] .. " held") or "hold")
 end
 
 -- ---------------------------------------------------------------------------
@@ -1297,6 +1336,44 @@ local function with_selector(fn)
         local selector = self:_selector()
         if not selector then return false end
         fn(self, selector)
+    end
+end
+-- Vortpaf's gloss browser (TASK-46): the event its Dispatcher action
+-- vortpaf_glosses sends (Vortpaf >= 0.7.0, Vortpaf:onVortpafGlosses), through
+-- the reader as the Dispatcher's UIManager:sendEvent would. Without the
+-- plugin (not installed, disabled, older) a message instead.
+local function vortpaf_glosses(self)
+    local vp = self.ui and self.ui.vortpaf
+    if type(vp) == "table" and type(vp.onVortpafGlosses) == "function" then
+        self.ui:handleEvent(Event:new("VortpafGlosses"))
+    else
+        self:_show_text(_("Vortpaf is not available (glosses need Vortpaf 0.7.0 or newer)."), 3)
+    end
+end
+-- The book's bookmark list filtered to the annotation types in `types`
+-- (TASK-46): stock ReaderBookmark, its own filter (match_table, reset by the
+-- list's close_callback) as its "Filter by type" buttons set it. None of
+-- those types in the book = a message instead of an empty list.
+local function bookmark_list(types, none_text)
+    return function(self)
+        local bm = self.ui and self.ui.bookmark
+        if type(bm) ~= "table" or type(bm.onShowBookmark) ~= "function" then return false end
+        local ann = self.ui.annotation and self.ui.annotation.annotations
+        if type(ann) == "table" and type(bm.getBookmarkType) == "function" then
+            local n = 0
+            for _i, item in ipairs(ann) do
+                if types[bm.getBookmarkType(item)] then n = n + 1 end
+            end
+            if n == 0 then self:_show_text(none_text, 2); return end
+        end
+        local match = {}
+        for k, v in pairs(types) do match[k] = v end
+        bm.match_table = match
+        local ok, err = pcall(bm.onShowBookmark, bm)
+        if not ok then
+            bm.match_table = nil -- a later stock list must not stay filtered
+            error(err)
+        end
     end
 end
 local ACTION_RUNNERS = {
@@ -1343,6 +1420,10 @@ local ACTION_RUNNERS = {
         if not selector or selector.overlay then return false end
         self:_open_highlights(selector)
     end,
+    vortpaf_glosses   = vortpaf_glosses,
+    -- a noted highlight is a highlight too (ReaderBookmark types it "note")
+    bookmarks_highlights = bookmark_list({ highlight = true, note = true }, _("No highlights in this book")),
+    bookmarks_notes   = bookmark_list({ note = true }, _("No notes in this book")),
     word_walk         = with_selector(function(self, selector) selector:_open_walk(false) end),
     -- The crosshair is gone (TASK-15); the id stays in the vocabulary (the
     -- koligilo contract) and opens the word level.
@@ -1482,10 +1563,15 @@ end
 -- acting as a button, which never reports a release: the modifier stays a
 -- latch then.
 function PadNav:_button_down(ev, latch)
+    local btn = type(ev) == "table" and ev.button or nil
+    self:_hold_spend(btn)
     local x_before = self._x_mode
     local res = self:_button_dispatch(ev)
     if self._x_mode and not x_before then
-        self._x_hold = (not latch) and type(ev) == "table" and ev.button or nil
+        self._x_hold = (not latch) and btn or nil
+        -- X held alone = its hold action (TASK-46); a combo spends it
+        local ctx = self:_context()
+        if self._x_hold and (ctx == "reading" or ctx == "paged") then self:_hold_start(self._x_hold) end
     end
     return res
 end
@@ -1558,6 +1644,7 @@ function PadNav:_button_dispatch(ev)
             self._a_down, self._a_moved, self._a_opened, self._a_reading = true, false, false, true
         else
             self._y_down, self._y_used = true, false
+            self:_hold_start(BTN_Y)
         end
         if tr then Trace.log("padnav btn=%s: paged, hold", tostring(btn)) end
         return true
@@ -2351,6 +2438,7 @@ end
 -- per press, so the auto-repeat filter is skipped.
 function PadNav:_trigger_event(axis, value, from_button)
     local tr = Trace.active()
+    if type(value) == "number" and value > 0 then self:_hold_spend(nil) end -- a trigger while a letter is held
     local ctx = self:_context()
     self:_drop_x_mode(ctx)
     if ctx == "dict" then
@@ -2600,6 +2688,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
     .. "\nA: point from-to (sentence labels, then words; RT held = select)"
     .. "\nY: highlights on the page"
+    .. "\nHold alone (0.6 s): Y Vortpaf glosses  X book highlights  B notes"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\nR-stick: quick actions (A run, B close)"
@@ -2608,6 +2697,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
     .. "\nHold A + D-pad: words    Hold Y + D-pad: sentences    A: point from-to"
     .. "\nY: highlights on the page    X in a selection: highlight / remove"
+    .. "\nHold alone: Y Vortpaf glosses  X book highlights  B notes"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
@@ -2689,6 +2779,9 @@ local ACTION_LABELS = {
     collections       = _("collections"),
     sentence_select   = _("sentence selector"),
     highlights        = _("highlights"),
+    vortpaf_glosses   = _("Vortpaf glosses"),
+    bookmarks_highlights = _("highlights in the book"),
+    bookmarks_notes   = _("notes in the book"),
     word_walk         = _("word walk"),
     crosshair         = _("word walk"),
     dict_lookup       = _("dictionary lookup"),
@@ -2709,6 +2802,82 @@ local ACTION_LABELS = {
     x_modifier        = _("X modifier"),
     none              = _("nothing"),
 }
+
+-- Letter holds (TASK-46). A letter pressed in idle reading (Y / B: their
+-- press handlers; X: the press that arms the modifier, _button_down) starts
+-- a hold. Any other control pressed while it is down (D-pad = the Y / B
+-- modes, an X combo, a trigger) spends it; HOLD_S after the press a toast
+-- names the hold action (_show_hint); the release after that, unspent, runs
+-- the action instead of the tap (onGamepadButtonUp). Nothing happens on the
+-- release before HOLD_S: the tap stays the tap. Selection, menus and the
+-- legacy key path never start one (Y / B act on the press there).
+function PadNav:_hold_action(role)
+    local res = self._padmap
+    local t = type(res) == "table" and type(res.hold) == "table" and res.hold
+        or (Padmap and Padmap.DEFAULT_HOLD) or {}
+    local act = t[role]
+    if act and act ~= "x_modifier" and ACTION_RUNNERS[act] then return act end
+    return nil
+end
+
+function PadNav:_hold_start(btn)
+    self:_hold_cancel()
+    local role = HOLD_ROLE_BY_BTN[btn]
+    local act = role and self:_hold_action(role)
+    if not act or type(UIManager.scheduleIn) ~= "function" then return end
+    local h = { btn = btn, action = act, ready = false, spent = false }
+    h.tick = function()
+        if self._hold ~= h or h.spent then return end
+        local ctx = self:_context()
+        if ctx ~= "reading" and ctx ~= "paged" then h.spent = true; return end
+        h.ready = true
+        self:_show_hint("\xE2\x86\x92 " .. (ACTION_LABELS[act] or act))
+    end
+    self._hold = h
+    UIManager:scheduleIn(HOLD_S, h.tick)
+end
+
+-- Another control while a letter is held: no hold action on its release.
+function PadNav:_hold_spend(btn)
+    local h = self._hold
+    if h and h.btn ~= btn then self:_hold_cancel() end
+end
+
+function PadNav:_hold_cancel()
+    local h = self._hold
+    self._hold = nil
+    if h and h.tick and type(UIManager.unschedule) == "function" then UIManager:unschedule(h.tick) end
+    self:_hide_hint()
+end
+
+-- The release of `btn`: the hold action to run, or nil (no hold, released
+-- before HOLD_S, spent). Always ends the hold.
+function PadNav:_hold_end(btn)
+    local h = self._hold
+    if not h or h.btn ~= btn then return nil end
+    local act = h.ready and not h.spent and h.action or nil
+    self:_hold_cancel()
+    return act
+end
+
+-- The hold hint: a toast (Notification), which neither changes the pad's
+-- context (top_window skips toasts) nor takes the next press.
+function PadNav:_show_hint(text)
+    self:_hide_hint()
+    local ok, Notification = pcall(require, "ui/widget/notification")
+    if not (ok and type(Notification) == "table" and type(Notification.new) == "function") then return end
+    local ok2, w = pcall(Notification.new, Notification, { text = text, timeout = 3 })
+    if ok2 and w then
+        self._hint = w
+        UIManager:show(w)
+    end
+end
+
+function PadNav:_hide_hint()
+    local w = self._hint
+    self._hint = nil
+    if w and type(UIManager.close) == "function" then pcall(UIManager.close, UIManager, w) end
+end
 
 -- The reading cheat sheet plus, when koligilo gave some roles other reading
 -- actions (PC-014), one extra line per such role: the static text above
@@ -2744,7 +2913,8 @@ end
 local ACTION_GLYPHS = {
     toc = "\u{F03A}", toggle_bookmark = "\u{F02E}", bookmarks = "\u{F097}", book_map = "\u{F279}",
     page_browser = "\u{F00A}", fulltext_search = "\u{F002}", reading_progress = "\u{F200}",
-    book_status = "\u{F046}", book_info = "\u{F05A}", highlights = "\u{F1FC}", dict_lookup = "\u{F02D}",
+    book_status = "\u{F046}", book_info = "\u{F05A}", highlights = "\u{F1FC}",
+    vortpaf_glosses = "\u{F27B}", bookmarks_highlights = "\u{F0CA}", bookmarks_notes = "\u{F249}", dict_lookup = "\u{F02D}",
     back_location = "\u{F112}", forward_location = "\u{F064}", goto_page = "\u{F18E}", skim = "\u{F07E}",
     next_chapter = "\u{F051}", prev_chapter = "\u{F048}",
     history = "\u{F1DA}", file_browser = "\u{F07C}", last_book = "\u{F0E2}", favorites = "\u{F005}",

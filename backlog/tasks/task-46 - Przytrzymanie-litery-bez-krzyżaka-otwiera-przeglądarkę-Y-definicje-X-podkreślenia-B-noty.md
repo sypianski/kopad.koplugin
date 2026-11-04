@@ -3,10 +3,11 @@ id: TASK-46
 title: >-
   Przytrzymanie litery bez krzyżaka otwiera przeglądarkę: Y definicje, X
   podkreślenia, B noty
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-04 09:49'
-updated_date: '2026-11-04 09:49'
+updated_date: '2026-11-04 11:12'
 labels: []
 dependencies: []
 priority: medium
@@ -34,8 +35,20 @@ Do rozważenia w padmap: akcje przytrzymania jako konfigurowalne (np. , addytywn
 - [ ] #4 Brak Vortpafa = komunikat zamiast błędu
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Bump 0.1.16 -> 0.1.17 (_meta.lua).
+2. padmap.lua: three new action ids (vortpaf_glosses, bookmarks_highlights, bookmarks_notes) + optional additive key `hold` (role b/x/y -> action, merged over DEFAULT_HOLD, none = off, bad data skipped with a warning); build() returns res.hold.
+3. padnav.lua: generic letter hold (_hold_start/_hold_end, HOLD_S 0.6 s via UIManager:scheduleIn): started only in idle reading/paged (Y/B press, X arming the modifier); any other button / trigger during the hold spends it (D-pad modes, X combos); after the threshold a toast hint "-> <action>"; release after the threshold without another control = the hold action instead of the tap. Runners: VortpafGlosses event (message without Vortpaf), ReaderBookmark list with match_table filter (highlight+note / note).
+4. Docs: padnav header, cheat sheet, README/CLAUDE.md.
+5. Tests: padmap hold parsing + padnav wiring (tap Y, hold Y, Y+D-pad, X combo after threshold, X/B hold, no Vortpaf, selection Y/B on the press).
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Uzupełnienie opisu (fragment wypadł przy zakładaniu): akcje przytrzymania jako konfigurowalne w padmap, np. klucz hold = { y = "vortpaf_glosses", x = "bookmarks_highlights", b = "bookmarks_notes" }, addytywnie w version 1.
+
+Zgoda usera na wdrożenie (2026-11-04), z wydaniem na Decka; push publicznego repo za osobną zgodą.
 <!-- SECTION:NOTES:END -->

@@ -248,6 +248,22 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   the latch. In the selection X = `onKPExtend` -> `ov:act("toggle_highlight")`,
   which closes the overlay (TASK-45; before, only removing the last browsed
   highlight did).
+- **Letter holds (TASK-46)**: `_hold_start(btn)` from `_press_y` / `_press_b`
+  (idle reading / paged only; the selection keeps Y / B on the press), the
+  paged Y branch and `_button_down` (the press that arms `_x_hold`).
+  `UIManager:scheduleIn(HOLD_S = 0.6)` -> `h.ready` + `_show_hint` (a
+  Notification toast: `top_window` skips toasts, so the context stays
+  `reading` / `paged`). Any other button (`_button_down` -> `_hold_spend`) or
+  trigger press (`_trigger_event`) cancels the hold, so the D-pad modes and
+  X combos win. `onGamepadButtonUp` -> `_hold_end(btn)`: a ready hold marks
+  `_y_used` / `_b_used` (no tap) and `_run_hold` runs the action through
+  `_run_action` (idle reading only). Actions from `res.hold`
+  (`Padmap.build_hold`, default `DEFAULT_HOLD`). Runners: `vortpaf_glosses`
+  (event `VortpafGlosses` when `ui.vortpaf.onVortpafGlosses` exists, else a
+  message), `bookmarks_highlights` / `bookmarks_notes` (`ReaderBookmark`
+  `match_table` = {highlight, note} / {note}, stock's own type filter, reset
+  by the list's close_callback; none in the book = a message). Tests:
+  section 18 of `tests/padmap_test.lua`.
 - **D-pad**: in an EPUB (reading / selection) `_button_dispatch` calls the
   `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
   step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
@@ -313,6 +329,11 @@ sets (`M.QUICK_SETS`): a set in the data replaces `M.DEFAULT_QUICK[set]` whole
 default. Directions `M.QUICK_DIRS` (clockwise from `up`); `x_modifier` never,
 `files` only `M.QUICK_FILES_ACTIONS` (`quick_allowed`). Contract with koligilo
 (`padmapQuick*` in `padmap.go`, `QUICK_*` in `web/padmap.js`).
+**Letter holds (TASK-46):** `res.hold` (`build_hold`) = `M.DEFAULT_HOLD`
+(y vortpaf_glosses, x bookmarks_highlights, b bookmarks_notes) with the
+data's `hold` entries on top, per role (`M.HOLD_ROLES` b / x / y; `none`
+removes one; `x_modifier` never). Not yet known to koligilo (nor the three
+new action ids) — its side has to follow.
 The vocabulary (physical names, roles, layouts, actions) is a contract with koligilo's
 panel editor (TASK-25 there) — change both sides together. Layout ids are a
 closed list kept in `M.LAYOUTS` / `M.LAYOUT_ORDER` (`xbox`, `playstation`,

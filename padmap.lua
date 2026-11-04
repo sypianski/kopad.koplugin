@@ -25,6 +25,7 @@ Shared, synced data (settings/kopad.lua, top-level key `padmap`):
       quick = {
           reading = { up = "toc", right = "forward_location", left = "back_location" },
       },
+      hold = { y = "vortpaf_glosses", b = "none" },
   }
   A layout table holds overrides on top of that layout's built-in default;
   physical controls it does not mention keep the built-in default.
@@ -50,6 +51,15 @@ Shared, synced data (settings/kopad.lua, top-level key `padmap`):
   `x_modifier` is never a quick action, and the `files` set takes only the
   actions that work without a document (QUICK_FILES_ACTIONS). An old kopad
   ignores the key.
+
+  `hold` (TASK-46, optional, additive within version 1): what a LETTER does
+  when it is held past the hold threshold (padnav.lua HOLD_S) and released
+  without the D-pad or any other control, in idle reading (EPUB and
+  PDF/DjVu). Roles: HOLD_ROLES (b, x, y; A's release is point from-to and
+  its hold the word modes, so it has none). Merged over DEFAULT_HOLD per
+  role, like `actions`: a role it does not mention keeps the built-in hold,
+  `none` = no hold (a long press then acts as a tap, as before TASK-46).
+  `x_modifier` is never a hold action. An old kopad ignores the key.
 
 Device-local data (settings/kopad_device.lua, NOT synced by koligilo):
   padmap_layout = "nintendo"   -- which layout this device's pad uses
@@ -159,6 +169,12 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --  Selection and dictionary
 --   sentence_select         open the sentence selector (A today)
 --   highlights              browse the page's highlights, a message if none (Y today)
+--   vortpaf_glosses         Vortpaf's gloss browser (Dispatcher action
+--                           vortpaf_glosses, event VortpafGlosses; a message
+--                           without Vortpaf). Y held today (TASK-46)
+--   bookmarks_highlights / bookmarks_notes
+--                           the book's bookmark list filtered to highlights
+--                           (with or without a note) / to notes. X / B held
 --   word_walk / crosshair   open the word walk (crosshair: kept for old data,
 --                           the crosshair itself was removed in kopad TASK-15)
 --   dict_lookup             the "look up a word" input dialog
@@ -187,7 +203,8 @@ M.ACTION_ORDER = {
     "book_map", "page_browser", "fulltext_search", "book_status", "book_info",
     "reading_progress",
     "history", "file_browser", "last_book", "favorites", "collections",
-    "sentence_select", "highlights", "word_walk", "crosshair", "dict_lookup",
+    "sentence_select", "highlights", "vortpaf_glosses", "bookmarks_highlights", "bookmarks_notes",
+    "word_walk", "crosshair", "dict_lookup",
     "font_bigger", "font_smaller",
     "zoom_in", "zoom_out", "zoom_fit_width", "zoom_fit_page",
     "night_mode", "rotate", "full_refresh",
@@ -234,6 +251,12 @@ M.DEFAULT_QUICK = {
         down = "last_book", left = "top_menu", up_left = "file_browser",
     },
 }
+
+-- Letter holds (TASK-46): roles that have one, and the built-in actions.
+M.HOLD_ROLES = { "b", "x", "y" }
+local HOLD_ROLE_OK = {}
+for _, r in ipairs(M.HOLD_ROLES) do HOLD_ROLE_OK[r] = true end
+M.DEFAULT_HOLD = { y = "vortpaf_glosses", x = "bookmarks_highlights", b = "bookmarks_notes" }
 
 -- Logical (kind, id) -> role name; nil for controls outside the vocabulary.
 local ROLE_BY_CONTROL = { button = {}, axis = {} }
@@ -323,11 +346,40 @@ function M.build_quick(padmap, warn)
     return out
 end
 
+-- The letter holds from the shared `padmap` value (already known to be a
+-- table of the right version, or nil). Returns { [role] = action }: DEFAULT_HOLD
+-- with the data's entries on top; `none` removes the role's hold. Bad entries
+-- are skipped with a warning (the role keeps its built-in hold).
+function M.build_hold(padmap, warn)
+    warn = warn or noop
+    local out = {}
+    for role, a in pairs(M.DEFAULT_HOLD) do out[role] = a end
+    local raw = type(padmap) == "table" and padmap.hold or nil
+    if raw == nil then return out end
+    if type(raw) ~= "table" then
+        warn("padmap: hold is not a table, ignored")
+        return out
+    end
+    for role, a in pairs(raw) do
+        if type(role) ~= "string" or not HOLD_ROLE_OK[role] then
+            warn("padmap: role " .. tostring(role) .. " has no hold, ignored")
+        elseif type(a) ~= "string" or not M.ACTIONS[a] or a == "x_modifier" then
+            warn("padmap: action " .. tostring(a) .. " not allowed in hold." .. role .. ", ignored")
+        elseif a == "none" then
+            out[role] = nil
+        else
+            out[role] = a
+        end
+    end
+    return out
+end
+
 -- Build the resolution tables for `layout` from the shared `padmap` value.
 -- `warn` (optional) receives one string per skipped entry.
 -- Returns { buttons = {[phys_id] = {kind,id}}, axes = {[phys_id] = {kind,id}},
 --           layout = <name>, actions = {[role] = action},
---           quick = {reading = {[dir] = action}, files = {...}} }.
+--           quick = {reading = {[dir] = action}, files = {...}},
+--           hold = {[role] = action} }.
 function M.build(padmap, layout, warn)
     warn = warn or noop
     local map = {}
@@ -342,7 +394,7 @@ function M.build(padmap, layout, warn)
 
     local user
     local actions = {}
-    local quick
+    local quick, hold
     if padmap ~= nil then
         if type(padmap) ~= "table" then
             warn("padmap: not a table, ignored")
@@ -353,6 +405,7 @@ function M.build(padmap, layout, warn)
             -- discard valid `actions` and vice versa
             actions = M.build_actions(padmap, warn)
             quick = M.build_quick(padmap, warn)
+            hold = M.build_hold(padmap, warn)
             if padmap.layouts ~= nil and type(padmap.layouts) ~= "table" then
                 warn("padmap: layouts is not a table, ignored")
             elseif padmap.layouts then
@@ -382,7 +435,7 @@ function M.build(padmap, layout, warn)
     end
 
     local res = { buttons = {}, axes = {}, layout = layout, actions = actions,
-                  quick = quick or M.build_quick(nil, warn) }
+                  quick = quick or M.build_quick(nil, warn), hold = hold or M.build_hold(nil, warn) }
     for phys, role in pairs(map) do
         local p = M.PHYSICAL[phys]
         local r = M.ROLES[role]

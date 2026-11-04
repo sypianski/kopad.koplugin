@@ -407,7 +407,8 @@ do
     -- the rest of the vocabulary is exactly the non-event actions tested below
     local other = { footer_menu = true, sentence_select = true, highlights = true, word_walk = true,
                     crosshair = true, cheat_sheet = true, x_modifier = true, none = true,
-                    zoom_in = true, zoom_out = true }
+                    zoom_in = true, zoom_out = true,
+                    vortpaf_glosses = true, bookmarks_highlights = true, bookmarks_notes = true } -- TASK-46: section 18
     for _, id in ipairs(P.ACTION_ORDER) do
         assert((EVENTS[id] ~= nil) ~= (other[id] ~= nil), id .. " is covered by exactly one test group")
     end
@@ -2048,6 +2049,204 @@ do
     stack[2] = { widget = { { { btn("OK", "plain") } } } }
     assert(n:onGamepadButtonDown({ button = 0 }) == false and n:onGamepadButtonDown({ button = 1 }) == false, "unlabelled: stock")
     assert(n:onGamepadButtonDown({ button = 6 }) == true and #log == 3, "unlabelled: Start swallowed")
+    for i = #stack, 1, -1 do stack[i] = nil end
+end
+
+-- 18. Letter holds (TASK-46): Y / X / B held past HOLD_S and released alone
+-- open their hold action (padmap `hold`, DEFAULT_HOLD: Vortpaf glosses, the
+-- book's highlights, its notes); the tap, the letter + D-pad modes and the X
+-- combos stay as they were; the selection keeps Y / B on the press.
+do
+    -- padmap: `hold` parsing (additive, merged over DEFAULT_HOLD, robust)
+    local h = P.build(nil, "xbox").hold
+    assert(h.y == "vortpaf_glosses" and h.x == "bookmarks_highlights" and h.b == "bookmarks_notes" and h.a == nil,
+        "default holds")
+    h = P.build({ version = 1, hold = { y = "toc", b = "none" } }, "xbox").hold
+    assert(h.y == "toc" and h.b == nil and h.x == "bookmarks_highlights", "merge: override, none, untouched")
+    local w, warn = warns()
+    h = P.build({ version = 1, hold = { a = "toc", y = "jump", x = "x_modifier", b = 7, [1] = "toc" } }, "xbox", warn).hold
+    assert(#w == 5, "five bad entries, five warnings, got " .. #w)
+    assert(h.y == "vortpaf_glosses" and h.x == "bookmarks_highlights" and h.b == "bookmarks_notes" and h.a == nil,
+        "bad entries keep the defaults")
+    w, warn = warns()
+    h = P.build({ version = 1, hold = "nope", actions = { rb = "toc" } }, "xbox", warn)
+    assert(#w == 1 and h.hold.y == "vortpaf_glosses" and h.actions.rb == "toc", "broken hold keeps defaults and actions")
+    assert(P.build({ version = 2, hold = { y = "toc" } }, "xbox").hold.y == "vortpaf_glosses", "wrong version ignored")
+
+    local PadNav = require("padnav")
+    local UIM = require("ui/uimanager")
+    local stack = UIM._window_stack
+    local sched = {}
+    UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = { s = s, fn = fn } end
+    UIM.unschedule = function(_, fn)
+        for i = #sched, 1, -1 do if sched[i].fn == fn then table.remove(sched, i) end end
+    end
+    local function set_stack(...)
+        for i = #stack, 1, -1 do stack[i] = nil end
+        for i, wd in ipairs({ ... }) do stack[i] = { widget = wd } end
+    end
+    -- fire the pending hold timer (HOLD_S elapsed)
+    local function elapse()
+        local list = sched
+        sched = {}
+        UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = { s = s, fn = fn } end
+        for _, e in ipairs(list) do e.fn() end
+    end
+    -- opts: paged (PDF), no_vortpaf, annotations, padmap
+    local function reader(opts)
+        opts = opts or {}
+        local log = { events = {}, sel = {}, ov = {}, text = {}, hint = {}, bm = {} }
+        local ui = { document = {},
+                     handleEvent = function(_, ev)
+                         log.events[#log.events + 1] = ev.name .. (ev.args[1] ~= nil and (":" .. tostring(ev.args[1])) or "")
+                     end }
+        if opts.paged then ui.paging = { current_page = 3 } else ui.rolling = {} end
+        if not opts.no_vortpaf then ui.vortpaf = { onVortpafGlosses = function() end } end
+        ui.annotation = { annotations = opts.annotations or { { drawer = "lighten" }, { drawer = "lighten", note = "n" } } }
+        ui.bookmark = {
+            getBookmarkType = function(item)
+                if item.drawer then return item.note and "note" or "highlight" end
+                return "bookmark"
+            end,
+            onShowBookmark = function(self)
+                local keys = {}
+                for k in pairs(self.match_table or {}) do keys[#keys + 1] = k end
+                table.sort(keys)
+                log.bm[#log.bm + 1] = table.concat(keys, "+")
+            end,
+        }
+        local selector = { paged = opts.paged or nil }
+        local function show(mode)
+            local ov = { mode = mode, step = function() log.ov[#log.ov + 1] = "step" end,
+                         back = function() log.ov[#log.ov + 1] = "back"; return true end }
+            function ov:act(name)
+                log.ov[#log.ov + 1] = "act:" .. name
+                selector:_close() -- SelectorOverlay:act closes before the popup (TASK-45)
+                return true
+            end
+            selector.overlay = ov
+            set_stack(ui, ov)
+        end
+        selector._open = function(_, from_end) log.sel[#log.sel + 1] = "_open:" .. tostring(from_end); show("struct") end
+        selector._open_paged = function(_, words, from_end)
+            log.sel[#log.sel + 1] = "_open_paged:" .. tostring(words) .. ":" .. tostring(from_end); show("struct")
+        end
+        selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return true end
+        selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
+        local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = { selector = selector } } },
+            { __index = PadNav })
+        n:set_padmap(opts.padmap and P.build(opts.padmap, "xbox") or nil)
+        n._show_text = function(_, text) log.text[#log.text + 1] = text end
+        n._show_hint = function(_, text) log.hint[#log.hint + 1] = text end
+        n._hide_hint = function() end
+        set_stack(ui)
+        sched = {}
+        return n, log, selector
+    end
+    local function down(n, b) return n:onGamepadButtonDown({ button = b }) end
+    local function up(n, b) return n:onGamepadButtonUp({ button = b }) end
+
+    -- Y tapped (released before HOLD_S): the page's highlights, as before
+    local n, log = reader()
+    assert(down(n, 3) == true and #sched == 1 and sched[1].s == 0.6, "Y press arms the hold timer")
+    up(n, 3)
+    assert(log.sel[1] == "_open_highlights" and #log.events == 0 and #log.hint == 0 and #sched == 0,
+        "Y tap = page highlights, no glosses")
+    -- Y held alone: a hint after the threshold, the glosses on the release (no page highlights)
+    n, log = reader()
+    down(n, 3); elapse()
+    assert(#log.hint == 1 and log.hint[1]:find("Vortpaf glosses", 1, true), "hint names the hold action: " .. tostring(log.hint[1]))
+    up(n, 3)
+    assert(log.events[1] == "VortpafGlosses" and #log.events == 1 and #log.sel == 0, "Y held = Vortpaf glosses")
+    -- Y held + D-pad after the threshold: the sentences, no browser
+    n, log = reader()
+    down(n, 3); elapse(); down(n, 12)
+    assert(log.sel[1] == "_open:false" and #log.events == 0, "Y held + D-pad = sentences: " .. tostring(log.sel[1]))
+    up(n, 12); up(n, 3)
+    assert(#log.events == 0 and #log.sel == 1, "no glosses, no highlights after the mode")
+    -- Y + D-pad before the threshold: the timer is gone, nothing on the release
+    n, log = reader()
+    down(n, 3); down(n, 11)
+    assert(#sched == 0 or sched[1].s ~= 0.6, "D-pad spends the hold")
+    up(n, 11); up(n, 3)
+    assert(#log.events == 0, "no glosses")
+    -- no Vortpaf: a message instead of an error
+    n, log = reader({ no_vortpaf = true })
+    down(n, 3); elapse(); up(n, 3)
+    assert(#log.events == 0 and #log.text == 1 and log.text[1]:find("Vortpaf", 1, true), "no Vortpaf = message")
+
+    -- X held alone: the book's highlights (noted ones too); a short X does nothing
+    n, log = reader()
+    down(n, 2); assert(n._x_mode and #sched == 1, "X arms the modifier and the hold")
+    up(n, 2); assert(not n._x_mode and #log.bm == 0 and #log.events == 0, "short X: nothing")
+    down(n, 2); elapse()
+    assert(log.hint[1] and log.hint[1]:find("highlights", 1, true), "X hint")
+    up(n, 2)
+    assert(log.bm[1] == "highlight+note" and not n._x_mode, "X held = highlights list: " .. tostring(log.bm[1]))
+    -- X combo after the threshold: still the combo, no list
+    n, log = reader()
+    down(n, 2); elapse(); down(n, 11)
+    assert(log.events[1] == "ShowMenu", "X + up after the threshold = top menu")
+    up(n, 11); up(n, 2)
+    assert(#log.bm == 0 and not n._x_mode, "combo cancels the hold")
+    -- X + LB (TOC) before the threshold, then a long wait: no list
+    n, log = reader()
+    down(n, 2); down(n, 9); elapse(); up(n, 9); up(n, 2)
+    assert(log.events[1] == "ShowToc" and #log.bm == 0 and #log.hint == 0, "X + LB = TOC only")
+    -- X + a trigger spends it too
+    n, log = reader()
+    down(n, 2); n:onGamepadAxisMotion({ axis = 5, value = 32767 }); elapse(); up(n, 2)
+    assert(#log.bm == 0, "X + RT: no list")
+
+    -- B held alone: the notes; B tapped = back; B + D-pad = view size, no list
+    n, log = reader()
+    down(n, 1); elapse(); up(n, 1)
+    assert(log.bm[1] == "note" and #log.events == 0, "B held = notes, not back: " .. tostring(log.events[1]))
+    n, log = reader()
+    down(n, 1); up(n, 1)
+    assert(log.events[1] == nil and #log.bm == 0, "B tap: no list") -- back = ui.link (absent here)
+    n, log = reader()
+    down(n, 1); elapse(); down(n, 11); up(n, 11); up(n, 1)
+    assert(log.events[1] == "IncreaseFontSize:1" and #log.bm == 0, "B + D-pad = font, no list")
+    -- no notes in the book: a message, no empty list
+    n, log = reader({ annotations = { { drawer = "lighten" } } })
+    down(n, 1); elapse(); up(n, 1)
+    assert(#log.bm == 0 and log.text[1] == "No notes in this book", "no notes = message")
+    -- padmap `hold`: b = none -> a long B is a tap again; y = toc
+    n, log = reader({ padmap = { version = 1, hold = { b = "none", y = "toc" } } })
+    down(n, 1); assert(#sched == 0, "no hold for B"); up(n, 1)
+    assert(#log.bm == 0, "B: no list")
+    down(n, 3); elapse(); up(n, 3)
+    assert(log.events[1] == "ShowToc", "hold.y = toc")
+
+    -- PDF / DjVu (paged): the same holds; Y tap still the page's highlights
+    n, log = reader({ paged = true })
+    assert(n:_context() == "paged")
+    down(n, 3); up(n, 3)
+    assert(log.sel[1] == "_open_highlights" and #log.events == 0, "PDF: Y tap = page highlights")
+    down(n, 3); elapse(); up(n, 3)
+    assert(log.events[1] == "VortpafGlosses" and #log.sel == 1, "PDF: Y held = glosses event")
+    down(n, 2); elapse(); up(n, 2)
+    assert(log.bm[1] == "highlight+note", "PDF: X held = highlights")
+    down(n, 1); elapse(); up(n, 1)
+    assert(log.bm[2] == "note", "PDF: B held = notes")
+
+    -- the selection: Y / B act on the PRESS, start no hold, the release does nothing
+    n, log = reader()
+    local selector = n:_any_selector()
+    selector:_open(false)
+    assert(n:_context() == "selection")
+    assert(down(n, 3) == true and log.ov[1] == "act:vortuyo" and #sched == 0, "selection: Y = Vortuyo on the press")
+    elapse(); up(n, 3)
+    assert(#log.events == 0 and #log.hint == 0, "selection: no glosses on the release")
+    selector:_open(false)
+    assert(down(n, 1) == true and log.ov[2] == "back" and #sched == 0, "selection: B = back on the press")
+    up(n, 1)
+    assert(#log.bm == 0, "selection: no notes on the release")
+    -- a context change before the threshold (a menu on top) drops the hold
+    n, log = reader()
+    down(n, 3); set_stack(n.ui, { menu = true }); elapse(); set_stack(n.ui); up(n, 3)
+    assert(#log.events == 0 and #log.hint == 0, "no hint / glosses after a menu")
     for i = #stack, 1, -1 do stack[i] = nil end
 end
 
