@@ -1,8 +1,9 @@
 --[[
 kopad_hints.lua -- "point from-to" (TASK-29; on sentences since TASK-35;
-letters on the words and arrows as shortcuts since TASK-36 / PC-023): pad
-labels at the sentences of the page, then over the words of one sentence; a
-start and an end chosen by pressing a label's symbols.
+letters on the words and arrows as shortcuts since TASK-36 / PC-023; the
+words as a tree of threes since TASK-39): pad labels at the sentences of the
+page, then over the words of one sentence; a start and an end chosen by
+pressing a label's symbols.
 
 Pure Lua, no KOReader dependency (tests/kopad_hints_test.lua). It knows nothing
 about documents: an ADAPTER turns the page into word boxes in screen
@@ -27,10 +28,13 @@ Coordinates are snapped to 1/GRID of the region before the anchors are
 compared, so an indent of a few pixels does not reorder a column of targets:
 neighbours share their first symbol.
 
-Word labels (M.word_labels) are LETTERS first: they start with Y, X or A
-(never an arrow: a lone arrow on the word level is a shortcut, see Pointer),
-the next symbols are letters before arrows, and B is never in them (B = back /
-drop the last symbol). Up to 21 words two symbols, up to 147 three.
+Word labels (M.word_labels, TASK-39) are LETTERS only, A / X / Y: a tree of
+threes in reading order. n words = k stages (the smallest k with 3^k >= n);
+stage i cuts the current range into pieces of 3^(k-i) words from its start
+(the last one shorter), A = the first piece, X = the second, Y = the third.
+A word's label = k letters (2 up to 9 words, 3 up to 27, 4 up to 81). The
+arrows are never in a label (on the word level they are shortcuts, see
+Pointer), nor is B (B = back one stage).
 
 The contract with the adapters (see Pointer below):
   sentences = { { first, last, para }, ... }  word indices, reading order;
@@ -42,29 +46,31 @@ The contract with the adapters (see Pointer below):
 
 API:
   M.SYMBOLS / M.DIRS / M.BACK / M.FIRST    the vocabulary
-  M.WORD_FIRST / M.WORD_SYMBOLS            word labels: first / later symbols
+  M.WORD_LETTERS                            { "A", "X", "Y" }: the word labels
   M.MAX_LABELS                              56 sentence labels
-  M.WORD_MAX2 / M.WORD_MAX3                 21 / 147 word labels
+  M.BADGE_RATIO                             default badge size / word height
   M.assign(points, first) -> labels         points = { {x, y}, ... }; labels[i]
                                             = { s1, s2 } or nil (overflow)
+  M.word_stages(n) -> k                     the number of stages (letters)
   M.word_labels(n) -> labels                n words in reading order -> labels
-                                            of 2 (n <= 21) or 3 symbols
+                                            of k letters (the tree of threes)
   M.lines_from_boxes(boxes) -> lines        word boxes in reading order ->
                                             { x, y, w, h, first, last } lines
                                             (nil boxes skipped; selector.lua
                                             draws the end step's preview with it)
   M.Pointer.new(sentences, boxes, opts)     opts.rtl = right-to-left script,
-                                            opts.width = screen width (room
-                                            of a block badge in RTL)
+                                            opts.badge = function(h) -> the
+                                            badge size in px for a word of
+                                            height h (default BADGE_RATIO * h)
   pointer:press(sym) -> result              see Pointer below
   pointer:preview() -> from, to             the end step's range (word indices)
   pointer:visible() -> { {sent, word, label, x, y, side, h, typed}, ... }
                                             the labels still in play (logic)
   pointer:stage() -> { kind, typed, items } what to DRAW for the typed prefix
-                                            (TASK-38): sentence labels, word
-                                            blocks (underline + one badge) or
-                                            one-symbol word badges above /
-                                            below; see "Stages" below
+                                            (TASK-39): sentence labels, or one
+                                            one-letter badge per piece of the
+                                            current stage, above its first
+                                            word; see "Stages" below
 ]]
 
 local M = {}
@@ -203,77 +209,40 @@ function M.lines_from_boxes(boxes)
 end
 
 ----------------------------------------------------------------------
--- Word labels (TASK-36, PC-023): letters first
+-- Word labels (TASK-39): a tree of threes, letters only
 ----------------------------------------------------------------------
--- In reading order, not by position: a sentence is a few lines, and a
--- position split over the A / X / Y anchors (all three on the right half of
--- the diamond) would scatter neighbouring words over the groups and could not
--- keep the letters first. The words are split into contiguous blocks, Y first
--- (the top of the diamond = early in the sentence), then X, then A (bottom =
--- late); a block into contiguous sub-blocks the same way. At every position
--- the symbols go letters before arrows, the parent's own symbol first when it
--- is a letter (so the first word of a block is a doubled symbol, "YY", like a
--- lone sentence label), and as few children as keep the letters: as many
--- labels as possible are letters only.
+-- In reading order, not by position (a sentence is a few lines). Since the
+-- pieces of a stage are 3^(k-i) words from the start of the range, a word's
+-- label is just its index (from 0) in base 3 with k digits, A = 0, X = 1,
+-- Y = 2: the first piece of every stage is A, the next X, the next Y. A piece
+-- shorter than the others (the end of the range) has fewer sub-pieces, so a
+-- stage may show only A, or A and X. The TASK-36 / TASK-38 labels (letters
+-- before arrows, 21 / 147 words, blocks of up to 7) are gone: they were hard
+-- to predict on the Deck.
 
-M.WORD_FIRST = { "Y", "X", "A" }
-M.WORD_ARROWS = { "up", "left", "right", "down" }
-M.WORD_SYMBOLS = { "Y", "X", "A", "up", "left", "right", "down" }
-M.WORD_MAX2 = #M.WORD_FIRST * #M.WORD_SYMBOLS            -- 21
-M.WORD_MAX3 = M.WORD_MAX2 * #M.WORD_SYMBOLS              -- 147
+M.WORD_LETTERS = { "A", "X", "Y" }
 
-local function is_letter(c) return #c == 1 end
-
-local function copy(list)
-    local out = {}
-    for i, v in ipairs(list) do out[i] = v end
-    return out
+-- The number of stages for n words: the smallest k with 3^k >= n, at least 1.
+function M.word_stages(n)
+    local k, cap = 1, 3
+    while cap < (n or 0) do k, cap = k + 1, cap * 3 end
+    return k
 end
 
--- The symbols of one position below the parent symbol p (nil = the first
--- position): Y X A, then (not on the first position) the arrows; p first.
-local function word_order(p)
-    if not p then return M.WORD_FIRST end
-    local out = {}
-    if is_letter(p) then out[1] = p end
-    for _, c in ipairs(M.WORD_FIRST) do if c ~= p then out[#out + 1] = c end end
-    for _, c in ipairs(M.WORD_ARROWS) do out[#out + 1] = c end
-    return out
-end
-
--- n items, `depth` symbols each, below the prefix `prefix` (a list), into
--- `out` from index `at`. Children: enough that each holds at most
--- 7^(depth-1), at least min(3, n) (the letters of this position).
-local function word_fill(out, at, n, depth, prefix)
-    local order = word_order(prefix[#prefix])
-    if depth == 1 then
-        for i = 1, n do
-            local l = copy(prefix)
-            l[#l + 1] = order[i]
-            out[at + i - 1] = l
-        end
-        return
-    end
-    local cap = (#M.WORD_SYMBOLS) ^ (depth - 1)
-    local k = math.max(math.ceil(n / cap), math.min(#M.WORD_FIRST, n))
-    k = math.min(k, #order)
-    local base, extra = math.floor(n / k), n % k
-    for c = 1, k do
-        local size = base + (c <= extra and 1 or 0)
-        local pre = copy(prefix)
-        pre[#pre + 1] = order[c]
-        word_fill(out, at, size, depth - 1, pre)
-        at = at + size
-    end
-end
-
--- Labels for n words in reading order: two symbols up to WORD_MAX2, three up
--- to WORD_MAX3; past that the first WORD_MAX3 get one (the caller windows).
+-- Labels for n words in reading order: k letters each (M.word_stages).
 function M.word_labels(n)
     local out = {}
-    n = math.min(n or 0, M.WORD_MAX3)
+    n = n or 0
     if n <= 0 then return out end
-    word_fill(out, 1, n, n <= M.WORD_MAX2 and 2 or 3, {})
+    local k = M.word_stages(n)
+    for i = 1, n do
+        local l, v = {}, i - 1
+        for pos = k, 1, -1 do
+            l[pos] = M.WORD_LETTERS[v % 3 + 1]
+            v = math.floor(v / 3)
+        end
+        out[i] = l
+    end
     return out
 end
 
@@ -292,10 +261,10 @@ end
 --   sentence's words (level "word"), it does not set the start yet.
 -- step "start", level "word": letter labels over the words of the sentence
 --   (self.sent). A label = the start on that word -> step "end". Shortcuts
---   (a lone arrow, nothing typed; ← and → swapped in RTL): ← = the
---   sentence's first word, ↑ = the first word of its paragraph (the first
---   visible word of the run of sentences with the same `para` up to it);
---   → / ↓ nothing.
+--   (an arrow, at every stage, also after typed letters; a move drops them;
+--   ← and → swapped in RTL): ← = the sentence's first word, ↑ = the first
+--   word of its paragraph (the first visible word of the run of sentences
+--   with the same `para` up to it); → / ↓ nothing.
 -- step "end" (always level "word"): the current end sentence E (self.sent,
 --   at first the start sentence) and letter labels over its words (in the
 --   start sentence from the start word on). A label = the end on that word ->
@@ -303,13 +272,14 @@ end
 --   there; nothing on the page's last sentence: a range never leaves the
 --   page); ↑ = E - 1 (never before the start sentence); ↓ = the end of E's
 --   paragraph, done. preview() = start .. the end of E (what ← gives).
--- More than WORD_MAX2 (21) visible words in the step's sentence: every label
---   has three symbols; more than WORD_MAX3 (147): the first 147 (in the end
---   step's start sentence from the start word) get one, the rest is reached
---   with A + arrows afterwards.
+-- Word labels: M.word_labels over the step's visible words of the sentence
+--   (in the end step's start sentence from the start word on): every word
+--   has one, however long the sentence (more stages).
 -- press(sym) results:
 --   "prefix"    a symbol of a label typed: only the labels with it stay
+--               (on the word level: the next stage)
 --   "unprefix"  B with a prefix that no label continues: last symbol dropped
+--               (on the word level: back one stage)
 --   "sentence"  word labels of a sentence now (a sentence label picked, or
 --               → / ↑ in the end step)
 --   "back"      B with nothing typed on the start step's word labels: the
@@ -326,11 +296,16 @@ local Pointer = {}
 Pointer.__index = Pointer
 M.Pointer = Pointer
 
+-- A letter (A / B / X / Y) rather than an arrow ("up", ...).
+local function is_letter(c) return #c == 1 end
+
+M.BADGE_RATIO = 0.65
+
 function Pointer.new(sentences, boxes, opts)
     local self = setmetatable({
         sentences = sentences or {}, boxes = boxes or {},
         rtl = opts and opts.rtl or false,
-        width = opts and opts.width or nil,
+        badge = opts and opts.badge or nil,
     }, Pointer)
     self:_sentence_labels()
     return self
@@ -394,13 +369,13 @@ function Pointer:_sentence_labels()
     self:_set_targets(targets, M.assign(points))
 end
 
--- Word labels of sentence si (level "word") over each visible word, centred
--- on its top edge (side "top"), at most WORD_MAX3 of them.
+-- Word labels of sentence si (level "word"), one per visible word; (x, y) =
+-- the top centre of the word (side "top"), for visible().
 function Pointer:_word_labels(si)
     self.level, self.sent = "word", si
     local vis = self:_vis(si)
     local targets = {}
-    for k = 1, math.min(#vis, M.WORD_MAX3) do
+    for k = 1, #vis do
         local b = box_of(self, vis[k])
         targets[k] = { sent = si, word = vis[k], x = b.x + b.w / 2, y = b.y,
                        side = "top", h = b.h }
@@ -439,8 +414,8 @@ function Pointer:_done(stop)
     return "done"
 end
 
--- A lone arrow on the word level (nothing typed). `sym` is the physical
--- symbol; in RTL ← and → swap (back = right).
+-- An arrow on the word level, at any stage. `sym` is the physical symbol; in
+-- RTL ← and → swap (back = right). A move drops the typed letters.
 function Pointer:_shortcut(sym)
     if self.rtl then
         if sym == "left" then sym = "right" elseif sym == "right" then sym = "left" end
@@ -492,7 +467,7 @@ end
 function Pointer:press(sym)
     if self.step == "done" then return "ignored" end
     local typed = self.typed
-    if #typed == 0 and self.level == "word" and not is_letter(sym) then
+    if self.level == "word" and not is_letter(sym) then
         return self:_shortcut(sym)
     end
     for _, t in ipairs(self.targets) do
@@ -544,63 +519,35 @@ function Pointer:visible()
 end
 
 ----------------------------------------------------------------------
--- Stages: what is drawn for the typed prefix (TASK-38)
+-- Stages: what is drawn for the typed prefix (TASK-39)
 ----------------------------------------------------------------------
--- The word labels are never painted whole over the words (on the Deck a pill
--- of two badges hid the word, the line above and its short neighbours).
--- Instead the label tree is shown one level at a time:
---   - while two or more symbols of the word labels are left: the BLOCKS of
---     the next symbol (the words whose labels go on with the same symbol; in
---     reading order they are contiguous): a thin underline under their lines
---     and one small badge with that symbol before the block's first word;
---   - when one symbol is left: a small one-symbol badge per word, at the
---     word's left edge (right in RTL), above (1st, 3rd, ... word of the
---     block) or below it (2nd, 4th, ...), never over the word.
--- So: two-symbol labels = blocks, then words; three-symbol labels = blocks,
--- sub-blocks, then words. B drops the last symbol = the previous stage.
--- The sentence level is drawn as before (whole labels at the sentence
--- starts).
+-- The word labels are never painted whole: the tree is shown one stage at a
+-- time. On the word level every piece of the current stage gets ONE small
+-- badge with its letter (A, X, Y in reading order), at the start of the
+-- piece's first word: its left edge (right in RTL), always ABOVE the word, in
+-- the space between the lines; below it only when above would leave the
+-- screen (y < 0). No underline, nothing before the word, no alternation. A
+-- letter = that piece (the next stage: its sub-pieces get the badges), on the
+-- last stage the word itself. B = back one stage. The sentence level is drawn
+-- as before (whole labels at the sentence starts).
 --
 -- stage() -> st
---   st.kind  = "sentence" | "blocks" | "words" | "done"
+--   st.kind  = "sentence" | "words" | "done"
 --   st.typed = the typed symbols (a copy)
 --   st.items:
 --     sentence: the entries of visible()
---     blocks:   { symbol, words = { word indices }, first, lines (from
---                 lines_from_boxes of the words' boxes), box (first word's
---                 box), side ("left", RTL "right": the badge goes on that
---                 side of the first word), x, y (that edge of the first word,
---                 its vertical middle), h, room (free width on that side of
---                 the first word in its line, up to the nearest word or the
---                 screen edge; math.huge in RTL without opts.width) }
---     words:    { symbol, word, label, box, side ("left", RTL "right": the
---                 word edge the badge is aligned to), x (that edge), place
---                 ("above" | "below"), y (the word's top edge above, its
---                 bottom edge below), h }
+--     words:    one per piece, in reading order: { symbol, word (the
+--                 piece's first word), last (its last word), label (the
+--                 first word's), box (its box), side ("left", RTL "right"),
+--                 x (that edge of the word), d (the badge size, opts.badge),
+--                 place ("above" | "below"), y (the badge's top: box.y - d
+--                 above, box.y + box.h below), h (the word's height) }
 
 local function copy_box(b) return { x = b.x, y = b.y, w = b.w, h = b.h } end
 
--- Free width before word i (in reading order: left of it, right in RTL) on
--- its line: up to the nearest other visible box in the same band, else the
--- screen edge.
-function Pointer:_room_before(i)
-    local b = box_of(self, i)
-    local mid = b.y + b.h / 2
-    local edge
-    if self.rtl then edge = self.width or math.huge else edge = 0 end
-    for j = 1, #self.boxes do
-        local o = j ~= i and box_of(self, j)
-        if o and math.abs(o.y + o.h / 2 - mid) < math.min(o.h, b.h) / 2 then
-            if self.rtl then
-                if o.x >= b.x + b.w and o.x < edge then edge = o.x end
-            else
-                local r = o.x + o.w
-                if r <= b.x and r > edge then edge = r end
-            end
-        end
-    end
-    if self.rtl then return edge - (b.x + b.w) end
-    return b.x - edge
+function Pointer:_badge(h)
+    if self.badge then return self.badge(h) end
+    return math.floor((h or 0) * M.BADGE_RATIO + 0.5)
 end
 
 function Pointer:stage()
@@ -613,38 +560,22 @@ function Pointer:stage()
     end
     local t = #typed
     local side = self.rtl and "right" or "left"
-    local left = vis[1] and (#vis[1].label - t) or 0
-    if left >= 2 then
-        local items, by = {}, {}
-        for _, v in ipairs(vis) do
-            local sym = v.label[t + 1]
-            local g = by[sym]
-            if not g then
-                local b = box_of(self, v.word)
-                g = { symbol = sym, words = {}, first = v.word, box = copy_box(b), side = side,
-                      x = self.rtl and (b.x + b.w) or b.x, y = b.y + b.h / 2, h = b.h,
-                      room = self:_room_before(v.word) }
-                by[sym] = g
-                items[#items + 1] = g
-            end
-            g.words[#g.words + 1] = v.word
+    local items, by = {}, {}
+    for _, v in ipairs(vis) do
+        local sym = v.label[t + 1]
+        local g = sym and by[sym]
+        if sym and not g then
+            local b = box_of(self, v.word)
+            local d = self:_badge(b.h)
+            local above = b.y - d >= 0
+            g = { symbol = sym, word = v.word, label = v.label, box = copy_box(b), side = side,
+                  x = self.rtl and (b.x + b.w) or b.x, d = d, h = b.h,
+                  place = above and "above" or "below",
+                  y = above and (b.y - d) or (b.y + b.h) }
+            by[sym] = g
+            items[#items + 1] = g
         end
-        for _, g in ipairs(items) do
-            local boxes = {}
-            for k, wi in ipairs(g.words) do boxes[k] = box_of(self, wi) or false end
-            g.lines = M.lines_from_boxes(boxes)
-        end
-        return { kind = "blocks", typed = typed, items = items }
-    end
-    local items = {}
-    for k, v in ipairs(vis) do
-        local b = box_of(self, v.word)
-        local above = k % 2 == 1
-        items[#items + 1] = { symbol = v.label[t + 1], word = v.word, label = v.label,
-                              box = copy_box(b), side = side,
-                              x = self.rtl and (b.x + b.w) or b.x,
-                              place = above and "above" or "below",
-                              y = above and b.y or (b.y + b.h), h = b.h }
+        if g then g.last = v.word end
     end
     return { kind = "words", typed = typed, items = items }
 end

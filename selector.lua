@@ -7,8 +7,8 @@ highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 / TASK-35 /
 TASK-36: pad labels at the sentences, then letter labels over the words of
 one sentence pick the start and the end, lone arrows are shortcuts to the
 sentence / paragraph start and end; then it is a word walk; the word labels
-are drawn in stages, TASK-38: underlined blocks with one badge, then small
-one-symbol badges above / below the words);
+are a tree of threes drawn one stage at a time, TASK-39: one small A / X / Y
+badge above the first word of each piece);
 R-stick ↓/↑ switches between sentence and word. The
 arrows move a cursor; while A is held padnav passes range = true and an
 anchor stays where the range began. Without a range the cursor crosses the
@@ -731,13 +731,25 @@ function SelectorOverlay:_point_sentences()
     return order
 end
 
+-- The word badges (TASK-39): about 65 % of the line height, never below a
+-- size still readable on the Deck. kopad_hints.lua gets badge_size, so it
+-- knows when a badge above a word would leave the screen.
+local POINT_BADGE_RATIO = 0.65  -- of the word's height
+local POINT_BADGE_MIN = 12      -- scaleBySize: still readable on the Deck
+local POINT_BADGE_MAX = 18
+
+local function badge_size(h)
+    local d = math.floor((h or 0) * POINT_BADGE_RATIO + 0.5)
+    return math.max(Screen:scaleBySize(POINT_BADGE_MIN), math.min(d, Screen:scaleBySize(POINT_BADGE_MAX)))
+end
+
 -- Labels at the sentence starts of the page. False when the page has no
 -- text (no sentence with a word on the screen).
 function SelectorOverlay:_point_begin()
     local boxes = {}
     for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
     local pointer = Hints.Pointer.new(self:_point_sentences(), boxes,
-        { rtl = self.is_rtl, width = Screen:getWidth() })
+        { rtl = self.is_rtl, badge = badge_size })
     if #pointer:visible() == 0 then return false end
     self.mode = "point"
     self.pointer = pointer
@@ -1267,23 +1279,18 @@ end
 -- → / ↑ visibly move it (TASK-36).
 --   sentence level: a pill with the whole label next to each sentence start
 --     (over the text when the margin is too narrow), as since TASK-35;
---   word blocks (TASK-38): no label on the words, a thin underline under
---     each block's lines and ONE small badge with the block's symbol before
---     its first word (left, RTL right) when the line has room there, else
---     above the word (below when above is off the screen);
---   word badges (TASK-38): one small badge per word with the label's last
---     symbol, at the word's left edge (RTL right), above the 1st, 3rd, ...
---     word and below the 2nd, 4th, ... (the other side when off the screen).
--- Badges are about 65 % of the line height (POINT_BADGE_*). D-pad symbols
--- are rounded squares with an arrow, letters are circles; a symbol already
+--   word level (TASK-39): one small badge per piece of the current stage
+--     with its letter (A / X / Y in reading order), its left edge on the
+--     left edge of the piece's first word (RTL: right edges), just above the
+--     word (below it when above would leave the screen; kopad_hints.lua
+--     decides). Nothing else: no underline, no badge on the other words.
+-- Badges are badge_size (about 65 % of the line height). D-pad symbols are
+-- rounded squares with an arrow, letters are circles; a symbol already
 -- pressed (sentence pills) is grey.
 local POINT_GLYPHS = {
     up = "\xE2\x86\x91", down = "\xE2\x86\x93", left = "\xE2\x86\x90", right = "\xE2\x86\x92",
     A = "A", B = "B", X = "X", Y = "Y",
 }
-local POINT_BADGE_RATIO = 0.65  -- of the word's height
-local POINT_BADGE_MIN = 12      -- scaleBySize: still readable on the Deck
-local POINT_BADGE_MAX = 18
 
 local point_faces = {}
 -- A face whose glyphs fit a badge of d px (Font:getFace scales by itself).
@@ -1294,11 +1301,6 @@ local function point_face(d)
         point_faces[size] = require("ui/font"):getFace("infofont", size) or LABEL_FACE
     end
     return point_faces[size]
-end
-
-local function badge_size(h)
-    local d = math.floor((h or 0) * POINT_BADGE_RATIO + 0.5)
-    return math.max(Screen:scaleBySize(POINT_BADGE_MIN), math.min(d, Screen:scaleBySize(POINT_BADGE_MAX)))
 end
 
 -- One badge of d px at (x, y) (screen, without the offset): white, a black
@@ -1320,18 +1322,6 @@ local function paint_badge(bb, ox, oy, x, y, d, sym, fg, border, face)
     tw:free()
 end
 
--- y of a badge of d px above (top edge - d) or below (bottom edge) a box, the
--- other side when that one is off the screen.
-local function above_or_below(box, d, place, sh)
-    local up, down = box.y - d, box.y + box.h
-    if place == "above" then
-        if up >= 0 or down + d > sh then return math.max(0, up) end
-        return down
-    end
-    if down + d <= sh or up < 0 then return math.min(sh - d, down) end
-    return up
-end
-
 function SelectorOverlay:_draw_point(bb, ox, oy)
     local p = self.pointer
     if not p then return end
@@ -1348,38 +1338,15 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
     end
     local st = p:stage()
     if st.kind == "sentence" then return self:_draw_point_pills(bb, ox, oy, st.items) end
+    if st.kind ~= "words" then return end
     local sw, sh = Screen:getWidth(), Screen:getHeight()
     local border = math.max(1, Screen:scaleBySize(1))
-    local gap = Screen:scaleBySize(2)
-    local black = Blitbuffer.COLOR_BLACK
-    if st.kind == "blocks" then
-        local th = Screen:scaleBySize(1) >= 2 and 2 or 1   -- the underline: 1-2 px
-        for _, g in ipairs(st.items) do
-            for _, l in ipairs(g.lines) do
-                local y = l.y + l.h + 1
-                if y + th <= sh then bb:paintRect(ox + l.x, oy + y, l.w, th, black) end
-            end
-            local d = badge_size(g.h)
-            local x, y
-            if g.room >= d + 2 * gap then
-                x = g.side == "right" and (g.x + gap) or (g.x - gap - d)
-                y = math.floor(g.y - d / 2)
-            else
-                x = g.side == "right" and (g.box.x + g.box.w - d) or g.box.x
-                y = above_or_below(g.box, d, "above", sh)
-            end
-            x = math.max(0, math.min(sw - d, x))
-            y = math.max(0, math.min(sh - d, y))
-            paint_badge(bb, ox, oy, x, y, d, g.symbol, black, border, point_face(d))
-        end
-    elseif st.kind == "words" then
-        for _, v in ipairs(st.items) do
-            local d = badge_size(v.h)
-            local x = v.side == "right" and (v.box.x + v.box.w - d) or v.box.x
-            x = math.max(0, math.min(sw - d, x))
-            local y = above_or_below(v.box, d, v.place, sh)
-            paint_badge(bb, ox, oy, x, y, d, v.symbol, black, border, point_face(d))
-        end
+    for _, v in ipairs(st.items) do
+        local d = v.d or badge_size(v.h)
+        local x = v.side == "right" and (v.x - d) or v.x
+        x = math.max(0, math.min(sw - d, x))
+        local y = math.max(0, math.min(sh - d, v.y))
+        paint_badge(bb, ox, oy, x, y, d, v.symbol, Blitbuffer.COLOR_BLACK, border, point_face(d))
     end
 end
 
@@ -1449,10 +1416,11 @@ function SelectorOverlay:_status_text(short)
     return (many and "SENTENCES" or "SENTENCE") .. ext .. keys
 end
 
--- Point from-to (TASK-36): the step and its shortcuts. FROM = the sentence
--- labels, FROM WORD = the start sentence's words, TO = the end sentence's
--- words; B after a typed symbol drops it ("undo"). The arrows follow the
--- script (RTL: back = →). `short` = only the step and B.
+-- Point from-to (TASK-36 / TASK-39): the step, the letters of the current
+-- stage and the shortcuts. FROM = the sentence labels, FROM WORD = the start
+-- sentence's words, TO = the end sentence's words; B after a typed symbol
+-- drops it ("undo" on the sentence labels, "back" = one stage on the words).
+-- The arrows follow the script (RTL: back = →). `short` = only the step and B.
 function SelectorOverlay:_point_status(short)
     local dot = " \xC2\xB7 "
     local p = self.pointer
@@ -1472,7 +1440,15 @@ function SelectorOverlay:_point_status(short)
         head, b = "FROM", "B close"
         keys = "label = sentence"
     end
-    if typed then
+    local letters = ""
+    if p and p.level == "word" then
+        local syms = {}
+        for _, v in ipairs(p:stage().items) do syms[#syms + 1] = v.symbol end
+        if #syms > 0 then letters = table.concat(syms, " ") .. dot end
+    end
+    if typed and p.level == "word" then
+        b = "B back"
+    elseif typed then
         -- B continues a label (a sentence label "↑B"): no undo to show
         b = "B undo"
         for _, v in ipairs(p:visible()) do
@@ -1480,7 +1456,7 @@ function SelectorOverlay:_point_status(short)
         end
     end
     if short then return head .. (b and dot .. b or "") end
-    return head .. dot .. keys .. (b and dot .. b or "")
+    return head .. dot .. letters .. keys .. (b and dot .. b or "")
 end
 
 -- The segments of a status line: the mode word bold italic, a lone capital

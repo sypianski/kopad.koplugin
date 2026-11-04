@@ -307,9 +307,9 @@ ov:paintTo(bb, 0, 0)
 assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 3, "S1's three words")
 local l = ov.pointer:visible()[1].label
 assert(l[1] == "Y" or l[1] == "X" or l[1] == "A", "letter labels")
--- the word blocks (TASK-38) at the screen boxes: underlines below the words,
--- one badge per block, nothing over a word; a block letter = one-symbol
--- badges above / below its words
+-- the word stage (TASK-39) at the screen boxes: S1 = three words = one
+-- stage, A X Y; one one-letter badge per word at its left edge, just above
+-- it; nothing over a word, no underline, letter badges only
 local function rects_of(calls)
     local out = {}
     for _, c in ipairs(calls) do
@@ -335,14 +335,18 @@ local function clear_of_words(o, what)
     end
     return rs
 end
-assert(ov.pointer:stage().kind == "blocks" and #ov.pointer:stage().items == 3, "S1: blocks Y, X, A")
-local rs = clear_of_words(ov, "PDF blocks")
-local thin = 0
-for _, r in ipairs(rs) do if r.k == "paintRect" and r.h <= 2 then thin = thin + 1 end end
-assert(thin == 3, "an underline per block: " .. thin)
-assert(ov:point_press(l[1]) == "prefix" and ov.pointer:stage().kind == "words")
-clear_of_words(ov, "PDF words")
-assert(ov:point_press("B") == "unprefix" and ov.pointer:stage().kind == "blocks")
+local st = ov.pointer:stage()
+assert(st.kind == "words" and #st.items == 3, "S1: one stage of three")
+local function circles_only(rs, n, what)
+    for _, r in ipairs(rs) do assert(r.k == "paintCircle", what .. ": letter badges only, got " .. r.k) end
+    assert(#rs == 2 * n, what .. ": " .. n .. " badges (fill + ring), got " .. #rs)
+end
+circles_only(clear_of_words(ov, "PDF words"), 3, "S1")
+for k, v in ipairs(st.items) do
+    local b = ov.words[k].sbox
+    assert(v.symbol == ({ "A", "X", "Y" })[k] and v.word == k, "A X Y in reading order")
+    assert(v.x == b.x and v.place == "above" and v.y + v.d == b.y, "above the word, at its left edge")
+end
 assert(ov:point_press("left") == "start" and ov.pointer.start == 1)
 assert(ov:point_press("right") == "sentence")
 painted = {}
@@ -378,6 +382,28 @@ press(ov, label_of(ov, 1)); press(ov, label_of(ov, nil, 2))
 assert(ov:point_press("down") == "done", "↓ on S1: the end of the paragraph")
 assert(text(ov) == "T:beta gamma. Delta eps zeta", tostring(text(ov)))
 sel:_close()
+-- two stages in a PDF (TASK-39): one sentence of seven words = pieces A
+-- (One two three), X (four five six), Y (seven.); sentence -> letter ->
+-- letter -> ← = from that word to the end of the sentence
+local saved_text = TEXT[1]
+TEXT[1] = { { "One", "two", "three", "four" }, { "five", "six", "seven." } }
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1))
+st = ov.pointer:stage()
+assert(#st.items == 3 and st.items[1].word == 1 and st.items[2].word == 4 and st.items[3].word == 7,
+    "badges only at the pieces' first words")
+circles_only(clear_of_words(ov, "PDF stage 1"), 3, "stage 1")
+assert(ov:point_press("X") == "prefix" and ov:_status_text():find("B back", 1, true))
+st = ov.pointer:stage()
+assert(st.items[1].word == 4 and st.items[2].word == 5 and st.items[3].word == 6)
+circles_only(clear_of_words(ov, "PDF stage 2"), 3, "stage 2")
+assert(st.items[2].place == "above" and st.items[2].y + st.items[2].d == ov.words[5].sbox.y,
+    "five: above, in the gap between the lines")
+assert(ov:point_press("X") == "start" and ov.pointer.start == 5)
+assert(ov:point_press("left") == "done" and text(ov) == "T:five six seven.", tostring(text(ov)))
+sel:_close()
+TEXT[1] = saved_text
 -- page 2: the sentence begun on page 1 is labelled at its visible part
 sel = fresh({ page = 2, zoom = 1, vx = 0, vy = 0 })
 sel:_open_point(); ov = sel.overlay

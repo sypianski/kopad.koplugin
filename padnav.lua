@@ -31,12 +31,14 @@ Reading:
                          TASK-36 / PC-023): two-symbol pad labels (D-pad +
                          A/B/X/Y, by position like the Vivaldi labels on the
                          Deck) at the starts of the sentences; a label =
-                         letter labels on that sentence's words, a word
-                         label (or ← / ↑ = sentence / paragraph start) =
-                         the start; then labels on the words of the end
-                         sentence: a label (or ← / ↓ = sentence / paragraph
-                         end) = the end, → / ↑ move the end sentence, B =
-                         no end (one word) (see below). Then the usual word
+                         that sentence's words in stages of A / X / Y
+                         (pieces of 3, 9, ... words, TASK-39), the last
+                         letter (or ← / ↑ = sentence / paragraph start) =
+                         the start; then the same stages on the words of the
+                         end sentence: the last letter (or ← / ↓ = sentence
+                         / paragraph end) = the end, → / ↑ move the end
+                         sentence, B = no end (one word) (see below).
+                         Then the usual word
                          selection (A + arrows adjust the range, A tapped =
                          action menu). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
@@ -123,21 +125,26 @@ while reading; Gamepad* path):
     FROM                 Labels at the sentence starts (two symbols, never
                          starting with B, at most 56). A label = that
                          sentence's words.
-    FROM WORD            Letter labels over the sentence's words (first
-                         symbol Y / X / A, letters before arrows, never B;
-                         three symbols when it has more than 21 words). A
-                         label = the start there. ← = the sentence's start,
-                         ↑ = its paragraph's start (→ in RTL for ←).
-    TO                   Letter labels over the words of the current end
+    FROM WORD            The sentence's words as a tree of threes (TASK-39):
+                         one small A / X / Y badge above the first word of
+                         each piece of the stage (A = the first piece in
+                         reading order); a letter = that piece (the next
+                         stage), on the last stage the start there. Pieces
+                         are 3^(k-i) words, so up to 9 words = 2 letters,
+                         27 = 3, 81 = 4. The arrows are shortcuts at every
+                         stage: ← = the sentence's start, ↑ = its
+                         paragraph's start (→ in RTL for ←).
+    TO                   The same stages over the words of the current end
                          sentence (the start sentence from the start word
-                         on), the range start .. its end inverted. A label =
-                         the end there. ← = its end, → = the next sentence
+                         on), the range start .. its end inverted. The last
+                         letter = the end there. ← = its end, → = the next sentence
                          (not past the page's last), ↑ = the previous one
                          (not before the start sentence), ↓ = the end of
                          its paragraph (← / → swapped in RTL).
   B (nothing typed)      FROM: close. FROM WORD: back to the sentence
                          labels. TO: no end = one word.
-  B (after a symbol, when no label goes on with B): drop that symbol.
+  B (after a symbol, when no label goes on with B): drop that symbol (on
+                         the words: back one stage).
   R-stick                Consumed, nothing (the R↓ refinement of TASK-35
                          is gone).
   Everything else        As in the selection (LB / RB close and turn the
@@ -2474,10 +2481,11 @@ local CHEAT_READING = _("Reading mode")
 
 local CHEAT_SELECTION = _("Point from-to (A)")
     .. "\nPress a label's symbols (D-pad, A B X Y): a sentence, then its words"
-    .. "\nStart: a word label    \xE2\x86\x90 sentence start    \xE2\x86\x91 paragraph start"
-    .. "\nEnd: a word label    \xE2\x86\x90 sentence end    \xE2\x86\x93 paragraph end"
+    .. "\nWords: A / X / Y = a part of 3, 9, ... words (badge above its first word)"
+    .. "\nStart: last letter = the word    \xE2\x86\x90 sentence start    \xE2\x86\x91 paragraph start"
+    .. "\nEnd: last letter = the word    \xE2\x86\x90 sentence end    \xE2\x86\x93 paragraph end"
     .. "\nEnd: \xE2\x86\x92 / \xE2\x86\x91 next / previous sentence (labels move)"
-    .. "\nB: drop a typed symbol, else back to sentences / close; at the end one word"
+    .. "\nArrows work at every step    B: back one step, else to sentences / close; at the end one word"
     .. "\nThen as words: hold A + arrows = range, A = action menu"
     .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"

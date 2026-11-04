@@ -19,8 +19,9 @@ directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
 on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, lines from word boxes, the pointer's two
-steps, word labels (letters first, three symbols past 21, 147-word window),
-every arrow shortcut, RTL, the drawing stages of TASK-38) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
+steps, word labels (TASK-39: the tree of threes, stages by length, A / X / Y
+in reading order, the short last piece), every arrow shortcut at every
+stage, B back one stage, RTL, the drawing stages) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
 over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
@@ -168,8 +169,8 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   triggers and sticks take the selection's path; the overlay ignores
   `step` / `line` / `para` / `action_menu` / `to_words` / `to_sentences`
   in mode `point`. The D-pad arrows are label symbols on the sentence
-  labels and the shortcuts on the word labels (TASK-36, PC-023: kopad_hints
-  decides). The R-stick there (`_rstick`, both input paths) is consumed and
+  labels and the shortcuts on the word level, at every stage (TASK-36 /
+  TASK-39: kopad_hints decides). The R-stick there (`_rstick`, both input paths) is consumed and
   does nothing (the TASK-35 refinement is gone).
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
@@ -319,7 +320,7 @@ KOReader modules are required lazily. padnav: context `"wheel"` (top window has
 `_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
 `_wheel_button` / `_wheel_call`; every pad event is consumed there.
 
-### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29, sentences TASK-35, words TASK-36)
+### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29, sentences TASK-35, words TASK-36 / TASK-39)
 No KOReader dependencies; tested by `tests/kopad_hints_test.lua`. Port of the
 Vivaldi-on-the-Deck labels (`~/aparati/steamdeck/vivaldi-deck/ext/hints.js`):
 `M.DIRS` = eight symbols (`up down left right` + `A B X Y`) with anchors in a
@@ -331,18 +332,18 @@ lone item repeats its symbol: `up,up`). Coordinates are snapped to
 1/`M.GRID` of the region, so an indent does not reorder a column. Labels
 never START with `M.BACK` = B (`M.FIRST`), because B with nothing typed is
 back / one word -> at most 7 * 8 = 56 targets, the rest get no label.
-**Word labels (TASK-36, PC-023)**: `M.word_labels(n)` = labels for n words
-in READING order (not by position: the A / X / Y anchors all sit on the
-right half, a position split would scatter a sentence's neighbours and could
-not keep letters first): contiguous blocks Y, X, A (`M.WORD_FIRST`), each
-split again into contiguous sub-blocks; on every position the symbols are
-letters before arrows (`M.WORD_SYMBOLS` = Y X A ↑ ← → ↓, the parent letter
-first, so a block's first word doubles it: `YY`), as few children as keep the
-letters. Never B, never an arrow first (a lone arrow is a shortcut). Two
-symbols up to `M.WORD_MAX2` = 21, three up to `M.WORD_MAX3` = 147 (all labels
-of that sentence then have three).
+**Word labels (TASK-39, replaces the TASK-36 / TASK-38 scheme)**:
+`M.word_labels(n)` = a tree of threes in READING order (not by position),
+letters only (`M.WORD_LETTERS` = A X Y). k = `M.word_stages(n)` = the
+smallest k with 3^k >= n (n = 1 -> 1); stage i cuts the current range into
+pieces of 3^(k-i) words from its start (the last one shorter), A = the first
+piece, X = the second, Y = the third; the smallest pieces are 3 words. So a
+word's label = its index from 0 in base 3 with k digits (A = 0, X = 1, Y =
+2): up to 9 words 2 letters, 27 3, 81 4, no window. A short last piece has
+fewer sub-pieces (a stage may offer only A, or A and X). Never B, never an
+arrow (the arrows are shortcuts).
 **The pointer is document-independent** (TASK-35, TASK-36 / PC-023):
-`M.Pointer.new(sentences, boxes, {rtl})` with `sentences = { {first, last,
+`M.Pointer.new(sentences, boxes, {rtl, badge})` with `sentences = { {first, last,
 para}, ... }` (word indices, reading order; `para` compared with `==`, nil =
 its own paragraph) and `boxes[i]` = word i's SCREEN box or false (off the
 screen). Only visible words count: a sentence over the page edge / out of a
@@ -351,38 +352,39 @@ no label. Step `start`, level `sentence`: `M.assign` labels left of each
 sentence's first visible word (right in RTL); a label returns `sentence` =
 level `word`: `M.word_labels` over that sentence's visible words (in
 `visible()` side `top`, x / y = the word's top centre; drawn through
-`stage()`, below), a word label = `start`. Lone arrows
-on the word level (`_shortcut`, nothing typed; ← / → swapped in RTL): start
+`stage()`, below), the last letter = `start`. Arrows on the word level are
+shortcuts at EVERY stage, also after typed letters (`_shortcut`; a move
+resets `typed`, an `ignored` one keeps it; ← / → swapped in RTL): start
 step ← = the sentence's first word, ↑ = the first visible word of its
 paragraph (the run of sentences with equal `para`), → / ↓ ignored. Step
 `end` begins at once on level `word` with E = `self.sent` = the start
-sentence (from the start word on): a label / ← (end of E) / ↓ (end of E's
+sentence (from the start word on): the last letter / ← (end of E) / ↓ (end of E's
 paragraph) = `done`; → = the next sentence with a visible word (`sentence`;
 none = `ignored`: a range stays on the page), ↑ = the previous one, never
 before `start_sent`. `preview()` = start .. last visible word of E (what
-selector.lua inverts). `typed` is a list (three-symbol prefixes); `press(sym)`
--> `prefix` / `unprefix` (B drops the LAST symbol when no label goes on with
-B) / `sentence` / `back` (B on the start step's word labels) / `start` /
-`done` (`self.start`, `self.stop` = WORD indices; stop nil = B in the end
-step = one word) / `cancel` (B on the sentence labels) / `ignored`. More than
-147 words: a window of the first 147 (end step: from the start word).
+selector.lua inverts). `typed` is a list (the letters of the stages);
+`press(sym)` -> `prefix` (the next stage) / `unprefix` (B drops the LAST
+symbol when no label goes on with B = back one stage) / `sentence` / `back`
+(B on the start step's word level, nothing typed) / `start` / `done`
+(`self.start`, `self.stop` = WORD indices; stop nil = B in the end step,
+nothing typed = one word) / `cancel` (B on the sentence labels) / `ignored`
+(also a letter no piece of the stage has).
 `visible()` = the labels still in play (only those continuing the typed
 prefix; `sent`, `word`, `typed` = count, `side`, anchor `x`, `y`, word height
 `h`): the label LOGIC, what tests and the status line look up.
-**Stages (TASK-38): what is drawn.** Word labels are never painted whole over
-the words (a two-badge pill hid the word and the line above on the Deck).
-`stage()` -> `{ kind, typed, items }` for the typed prefix: `sentence` =
-the `visible()` entries; on the word level, while >= 2 symbols are left,
-`blocks` = the groups of the next symbol (contiguous in reading order:
-`symbol`, `words`, `first`, `lines` from `lines_from_boxes` for the
-underline, `box`, `side` left / RTL right, `x` / `y` = that edge / middle of
-the first word, `h`, `room` = free width there up to the nearest box in the
-same line band or the screen edge, `opts.width` in RTL, else `math.huge`);
-with 1 symbol left, `words` = one entry per word (`symbol` = the label's last
-symbol, `box`, `side` / `x` = the word edge the badge aligns to, `place`
-`above` for the 1st, 3rd, ... word, `below` for the 2nd, 4th, ..., `y` = top /
-bottom edge). Two symbols: blocks -> words; three: blocks -> sub-blocks ->
-words; B = unprefix = the previous stage; `done` = no items.
+**Stages (TASK-39): what is drawn.** Word labels are never painted whole;
+the tree is shown one stage at a time (the TASK-38 blocks with underlines and
+alternating above / below badges were unpredictable on the Deck and are
+gone, with `room` / `opts.width`). `stage()` -> `{ kind, typed, items }` for
+the typed prefix: `sentence` = the `visible()` entries; on the word level
+`words` = ONE item per piece of the current stage, in reading order:
+`symbol` (A / X / Y), `word` = the piece's first word, `last` = its last
+word, `label`, `box`, `side` left / RTL right, `x` = that edge of the word,
+`d` = the badge size (`opts.badge(h)`, selector.lua's `badge_size`; default
+`M.BADGE_RATIO` = 0.65 of h), `place` = `above` always, `below` only when
+above leaves the screen (`box.y - d < 0`), `y` = the badge's top (`box.y - d`
+above, `box.y + box.h` below), `h`. A letter = its piece's sub-pieces, the
+last stage = the word; B = unprefix = the previous stage; `done` = no items.
 The R-stick refinement of TASK-35 (`refine_to_word`) is gone.
 `M.lines_from_boxes(boxes)` (word boxes -> lines `{ x, y, w, h, first, last
 }`) draws the end step's preview. The adapter is
@@ -625,24 +627,26 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   TASK-36), and on `done` `_point_finish` turns the
   overlay into `walk` with `ww_anchor` = the start word (`p.start`),
   `ww_word` = the end word (`p.stop`; no end = the start word alone, no
-  anchor). `_draw_point` paints `pointer:stage()` (TASK-38): sentence
+  anchor). `_draw_point` paints `pointer:stage()` (TASK-39): sentence
   labels as before (`_draw_point_pills`: white pill, a pressed symbol grey,
   beside the sentence start when the margin allows, else over the text);
-  word blocks = a 1-2 px underline under each block's lines (1 px below the
-  boxes) + ONE badge with the block's symbol before the first word when
-  `room` holds it, else above the word (below when above is off the screen);
-  word badges = one symbol at the word's left edge (RTL right), above / below
-  as `place` says (the other side when off the screen). Badges
-  (`paint_badge`): white, black outline, D-pad symbols rounded squares with
-  an arrow, letters circles; size `badge_size(h)` = `POINT_BADGE_RATIO`
-  (0.65) of the word height, clamped to `POINT_BADGE_MIN` / `_MAX`
-  (scaleBySize 12 / 18), face from `point_face(d)`. Then, in the end step, the preview `pointer:preview()` = start .. the end
+  the word level = only one one-letter badge per piece of the stage, its
+  left edge on the left edge of the piece's first word (RTL: right edges),
+  at `y` from the stage (just above the word, below when above is off the
+  screen), clamped to the screen; no underline, nothing on the other words.
+  Badges (`paint_badge`): white, black outline, D-pad symbols rounded
+  squares with an arrow, letters circles; size `badge_size(h)` =
+  `POINT_BADGE_RATIO` (0.65) of the word height, clamped to
+  `POINT_BADGE_MIN` / `_MAX` (scaleBySize 12 / 18), defined before
+  `_point_begin`, which hands it to the pointer as `opts.badge`; face from
+  `point_face(d)`. Then, in the end step, the preview `pointer:preview()` = start .. the end
   of the current end sentence inverted ALWAYS (also while that is the start
   sentence: the range ← would give; line boxes via `lines_from_boxes`).
   Status `_point_status(short)`: `FROM · label = sentence · B close`, `FROM
-  WORD · ← sentence ↑ paragraph · B sentences`, `TO · ← end → next [↑
-  previous] ↓ paragraph · B one word` (arrows mirrored in RTL; `B undo` after
-  a typed symbol; short = step + B).
+  WORD · A X Y · ← sentence ↑ paragraph · B sentences`, `TO · A X Y · ← end
+  → next [↑ previous] ↓ paragraph · B one word` (the letters = those of the
+  current stage; arrows mirrored in RTL; after a typed symbol `B back` on the
+  words, `B undo` on the sentence labels; short = step + B).
 
 Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
 document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:

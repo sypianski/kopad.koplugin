@@ -1,7 +1,7 @@
 -- Tests for kopad_hints.lua ("point from-to", TASK-29): label assignment by
--- position, the line layer, the word labels and the two-step pointer
--- (TASK-35 sentences, TASK-36 letters on the words + arrow shortcuts). Pure
--- Lua, no KOReader.
+-- position, the line layer, the word labels (TASK-39: a tree of threes) and
+-- the two-step pointer (TASK-35 sentences, TASK-36 letters on the words +
+-- arrow shortcuts, TASK-39 stages). Pure Lua, no KOReader.
 -- Run from the repo root: lua tests/kopad_hints_test.lua
 package.path = "./?.lua;" .. package.path
 
@@ -102,48 +102,54 @@ do
     assert(#cols == 3)
 end
 
--- 5. Word labels (TASK-36, PC-023): first symbol Y / X / A, then letters
--- before arrows, never B; two symbols up to 21 words, three up to 147.
+-- 5. Word labels (TASK-39): a tree of threes in reading order, letters A /
+-- X / Y only. k stages = the smallest k with 3^k >= n (n = 1 -> 1); stage i
+-- cuts the range into pieces of 3^(k-i) words from its start (the last one
+-- shorter), A = the first piece, X = the second, Y = the third.
 local LETTER = { Y = true, X = true, A = true }
+local function keys(n)
+    local out = {}
+    for i, l in ipairs(H.word_labels(n)) do out[i] = table.concat(l) end
+    return table.concat(out, " ")
+end
 do
-    assert(H.WORD_MAX2 == 21 and H.WORD_MAX3 == 147)
-    for n = 1, 150 do
+    local STAGES = { [1] = 1, [3] = 1, [4] = 2, [9] = 2, [10] = 3, [27] = 3, [28] = 4, [81] = 4, [82] = 5 }
+    for n, k in pairs(STAGES) do
+        assert(H.word_stages(n) == k, n .. " words: " .. H.word_stages(n) .. " stages, want " .. k)
+    end
+    local IDX = { A = 0, X = 1, Y = 2 }
+    for n = 1, 250 do
         local labels = H.word_labels(n)
-        local want = math.min(n, 147)
-        assert(#labels == want, n .. ": " .. #labels .. " labels")
-        local len = n <= 21 and 2 or 3
-        local seen, used = {}, {}
+        local k = H.word_stages(n)
+        assert(#labels == n, n .. ": every word has a label")
+        assert(3 ^ k >= n and (k == 1 or 3 ^ (k - 1) < n), n .. ": the smallest k")
+        local seen = {}
         for i, l in ipairs(labels) do
-            assert(#l == len, n .. ": label " .. i .. " has " .. #l .. " symbols")
-            assert(LETTER[l[1]], n .. ": label " .. i .. " starts with " .. l[1])
-            local k = table.concat(l, ",")
-            assert(not seen[k], n .. ": label " .. k .. " twice")
-            seen[k] = true
-            for p = 1, len do
-                assert(l[p] ~= "B", "never B")
-                local pre = table.concat(l, ",", 1, p - 1)
-                used[pre] = used[pre] or {}
-                used[pre][l[p]] = true
+            assert(#l == k, n .. ": label " .. i .. " has " .. #l .. " letters")
+            local v = 0
+            for pos = 1, k do
+                assert(LETTER[l[pos]], n .. ": only A / X / Y, got " .. tostring(l[pos]))
+                v = v * 3 + IDX[l[pos]]
             end
-        end
-        -- letters before arrows: no prefix goes on with an arrow while one
-        -- of the letters is left unused there
-        for pre, set in pairs(used) do
-            local arrow, free_letter = false, false
-            for c in pairs(set) do if not LETTER[c] then arrow = true end end
-            for c in pairs(LETTER) do if not set[c] then free_letter = true end end
-            assert(not (arrow and free_letter), n .. ": prefix '" .. pre .. "' uses an arrow before a letter")
+            -- the pieces of stage pos are 3^(k-pos) words from the range start:
+            -- the label is the index in base 3, so reading order = label order
+            assert(v == i - 1, n .. ": word " .. i .. " is piece " .. v)
+            local key = table.concat(l)
+            assert(not seen[key], n .. ": label " .. key .. " twice")
+            seen[key] = true
         end
     end
-    local function keys(n)
-        local out = {}
-        for i, l in ipairs(H.word_labels(n)) do out[i] = table.concat(l) end
-        return table.concat(out, " ")
-    end
-    assert(keys(1) == "YY" and keys(3) == "YY XX AA", keys(3))
-    assert(keys(9) == "YY YX YA XX XY XA AA AY AX", keys(9))
-    -- reading order: contiguous blocks Y, X, A
-    assert(keys(10):match("^YY YX YA Yup XX"), keys(10))
+    assert(keys(1) == "A" and keys(3) == "A X Y", keys(3))
+    -- 4 words: A = 1..3 (a piece of 3), X = the short last piece (one word)
+    assert(keys(4) == "AA AX AY XA", keys(4))
+    assert(keys(9) == "AA AX AY XA XX XY YA YX YY", keys(9))
+    -- 10: three stages; A = words 1..9, X = word 10 alone (X A A)
+    assert(keys(10):match("^AAA AAX AAY AXA") and keys(10):match("XAA$"), keys(10))
+    -- the smallest pieces = 3 words: the last stage cycles A X Y
+    local l27 = H.word_labels(27)
+    for i = 1, 27 do assert(l27[i][3] == ({ "A", "X", "Y" })[(i - 1) % 3 + 1]) end
+    assert(table.concat(l27[27]) == "YYY" and table.concat(H.word_labels(28)[28]) == "XAAA")
+    assert(table.concat(H.word_labels(81)[81]) == "YYYY" and table.concat(H.word_labels(82)[82]) == "XAAAA")
     assert(#H.word_labels(0) == 0)
 end
 
@@ -301,146 +307,148 @@ do
     assert(#p:visible() == 0 and p:press("up") == "ignored" and p:press("B") == "cancel")
 end
 
--- 7. Long sentences: more than 21 visible words = three-symbol labels on all
--- of them (B drops one symbol at a time), more than 147 = a window of 147
--- (in the end step from the start word).
+-- 7. Long sentences: more stages, every word labelled (no window any more,
+-- TASK-39); B drops one letter at a time; the end step counts from the start
+-- word.
 do
     local boxes = page(30, 10)
     local p = H.Pointer.new({ { first = 1, last = 8 }, { first = 9, last = 30 } }, boxes)
     pick(p, "sent", 1)
-    for _, v in ipairs(p:visible()) do assert(#v.label == 2, "8 words: two symbols") end
+    for _, v in ipairs(p:visible()) do assert(#v.label == 2, "8 words: two letters") end
     assert(p:press("B") == "back")
     pick(p, "sent", 2)
     local wv = p:visible()
     assert(#wv == 22, "22 words")
-    for _, v in ipairs(wv) do assert(#v.label == 3 and LETTER[v.label[1]], "three symbols") end
+    for _, v in ipairs(wv) do assert(#v.label == 3 and LETTER[v.label[1]], "three letters") end
     local l = label_for(p, "word", 20)
     assert(p:press(l[1]) == "prefix" and p:press(l[2]) == "prefix")
     assert(p:visible()[1].typed == 2)
-    assert(p:press("B") == "unprefix" and p:visible()[1].typed == 1, "B drops the last symbol")
+    assert(p:press("B") == "unprefix" and p:visible()[1].typed == 1, "B drops the last letter")
     assert(p:press(l[2]) == "prefix" and p:press(l[3]) == "start" and p.start == 20)
-    -- the end step: S2 from word 20 = 11 words, two symbols again
+    -- the end step: S2 from word 20 = 11 words, three letters
     wv = p:visible()
-    assert(#wv == 11 and #wv[1].label == 2 and wv[1].word == 20)
+    assert(#wv == 11 and #wv[1].label == 3 and wv[1].word == 20)
 
     local big = page(160, 10)
     p = H.Pointer.new({ { first = 1, last = 160 } }, big)
     pick(p, "sent", 1)
     wv = p:visible()
-    assert(#wv == 147 and wv[1].word == 1 and wv[147].word == 147, "start: the first 147")
+    assert(#wv == 160 and #wv[1].label == 5 and wv[160].word == 160, "160 words: all, five letters")
     assert(pick(p, "word", 3) == "start")
     wv = p:visible()
-    assert(#wv == 147 and wv[1].word == 3 and wv[147].word == 149, "end: 147 from the start word")
-    assert(p:press("left") == "done" and p.stop == 160, "← = the real end of the sentence")
+    assert(#wv == 158 and wv[1].word == 3 and table.concat(wv[1].label) == "AAAAA", "end: from the start word")
+    assert(p:press("left") == "done" and p.stop == 160, "← = the end of the sentence")
 end
 
--- 8. Stages (TASK-38): what is drawn for the typed prefix. The sentence
--- level = the sentence labels; on the word level, while two or more symbols
--- are left, the BLOCKS of the next symbol (contiguous words, an underline +
--- one badge before the first word); with one symbol left, one-symbol badges
--- on the words, above / below in turn, at the word's left edge (RTL right).
+-- 8. Stages (TASK-39): what is drawn for the typed prefix. The sentence
+-- level = the sentence labels; the word level = one badge per piece of the
+-- current stage (A, X, Y in reading order) at its FIRST word: x = the word's
+-- left edge (RTL right), above the word (y = top - d), below only when above
+-- leaves the screen. A letter = its piece's sub-pieces, the last stage =
+-- the word. Arrows are shortcuts at every stage, B goes back one stage.
+-- page(20): lines at y = 0, 30, 60, 90 (h = 20); the default badge = 13 px.
 local function seq(list) return table.concat(list, ",") end
+local function syms(st)
+    local out = {}
+    for _, v in ipairs(st.items) do out[#out + 1] = v.symbol .. v.word end
+    return table.concat(out, " ")
+end
 do
     local boxes = page(20)
     local p = H.Pointer.new(SENTS, boxes)
     local st = p:stage()
     assert(st.kind == "sentence" and #st.items == 4 and st.items[2].word == 4, "sentence labels as visible()")
-    pick(p, "sent", 2)                                  -- S2 = words 4..12, two symbols
+    pick(p, "sent", 2)                                  -- S2 = words 4..12: two stages
     st = p:stage()
-    assert(st.kind == "blocks" and #st.typed == 0 and #st.items == 3, "three blocks")
-    local all = {}
-    for k, g in ipairs(st.items) do
-        assert(g.symbol == H.WORD_FIRST[k], "blocks Y, X, A: " .. tostring(g.symbol))
-        assert(g.first == g.words[1] and g.side == "left")
-        local b = boxes[g.first]
-        assert(g.x == b.x and g.y == b.y + b.h / 2 and g.h == b.h and g.box.x == b.x, "before the first word")
-        for _, wi in ipairs(g.words) do all[#all + 1] = wi end
-        -- the lines of the block (for the underline) cover exactly its words
-        local covered = 0
-        for _, l in ipairs(g.lines) do covered = covered + (l.last - l.first + 1) end
-        assert(covered == #g.words)
-        for _, wi in ipairs(g.words) do assert(label_for(p, "word", wi)[1] == g.symbol, "the block's own words") end
-    end
-    assert(seq(all) == "4,5,6,7,8,9,10,11,12", "the blocks are contiguous, in reading order: " .. seq(all))
-    assert(seq(st.items[1].words) == "4,5,6" and #st.items[1].lines == 2, "Y = 4..6 over two lines")
-    -- room before the first word: to the previous word on its line, or the screen edge
-    assert(st.items[1].room == boxes[4].x - (boxes[3].x + boxes[3].w), "word 4: up to word 3")
-    assert(st.items[3].first == 10 and st.items[3].room == boxes[10].x - (boxes[9].x + boxes[9].w))
-    p = H.Pointer.new({ { first = 6, last = 12 } }, boxes)
-    pick(p, "sent", 1)
-    assert(p:stage().items[1].room == boxes[6].x, "word 6 starts a line: up to the screen edge")
-
-    -- a block letter: only its words, each with the NEXT symbol, above / below in turn
-    p = H.Pointer.new(SENTS, boxes)
-    pick(p, "sent", 2)
-    assert(p:press("X") == "prefix")
-    st = p:stage()
-    assert(st.kind == "words" and seq(st.typed) == "X" and #st.items == 3)
+    assert(st.kind == "words" and #st.typed == 0, "word level: " .. st.kind)
+    assert(syms(st) == "A4 X7 Y10", "pieces of 3 from the start: " .. syms(st))
     for k, v in ipairs(st.items) do
         local b = boxes[v.word]
-        assert(v.word == 6 + k and v.symbol == v.label[2] and v.label[1] == "X", "block X's words")
-        assert(v.place == (k % 2 == 1 and "above" or "below"), "odd above, even below")
-        assert(v.y == (v.place == "above" and b.y or b.y + b.h), "outside the word's box")
-        assert(v.side == "left" and v.x == b.x, "at the left edge")
+        assert(v.side == "left" and v.x == b.x, "at the word's left edge")
+        assert(v.d == 13 and v.h == b.h and v.box.y == b.y)
+        assert(v.last == v.word + 2, "a piece = 3 words")
+        assert(table.concat(v.label) == ({ "AA", "XA", "YA" })[k])
+        -- never over the word's own box
+        assert(v.y + v.d <= b.y or v.y >= b.y + b.h, "outside the word's box")
     end
-    assert(st.items[1].symbol == "X", "the block's first word: a doubled symbol")
-    -- B = back to the blocks; B again = the sentence labels
-    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().items == 3)
-    assert(p:press("B") == "back" and p:stage().kind == "sentence")
-
-    -- the end step: the blocks of E from the start word
-    pick(p, "sent", 2)
-    assert(pick(p, "word", 8) == "start")
+    -- word 4 is on the top line: above would be y = -13 -> below; 7 and 10 above
+    assert(st.items[1].place == "below" and st.items[1].y == boxes[4].y + boxes[4].h, "off the screen: below")
+    assert(st.items[2].place == "above" and st.items[2].y == boxes[7].y - 13, "above the word")
+    assert(st.items[3].place == "above")
+    -- a letter = that piece's words, one letter each; the last stage = the word
+    assert(p:press("X") == "prefix")
     st = p:stage()
-    assert(st.kind == "blocks" and st.items[1].first == 8, "end step from the start word")
-    assert(p:press("left") == "done" and p:stage().kind == "done" and #p:stage().items == 0)
+    assert(seq(st.typed) == "X" and syms(st) == "A7 X8 Y9", syms(st))
+    for _, v in ipairs(st.items) do assert(v.last == v.word, "the last stage: one word a piece") end
+    -- B = back one stage; B again = the sentence labels
+    assert(p:press("B") == "unprefix" and syms(p:stage()) == "A4 X7 Y10" and #p:stage().typed == 0)
+    assert(p:press("B") == "back" and p:stage().kind == "sentence")
+    -- sentence -> letter -> letter -> ← = from that word to the end of the sentence
+    pick(p, "sent", 2)
+    assert(p:press("X") == "prefix" and p:press("Y") == "start" and p.start == 9)
+    st = p:stage()
+    assert(syms(st) == "A9 X12", "end step: 9..12 = pieces 9..11 and 12: " .. syms(st))
+    assert(p:press("left") == "done" and p.start == 9 and p.stop == 12)
+    assert(p:stage().kind == "done" and #p:stage().items == 0)
 
-    -- three symbols (22 words): blocks, sub-blocks, then the words
+    -- arrows after a typed letter: still shortcuts (start step)
+    p = H.Pointer.new(SENTS, boxes)
+    pick(p, "sent", 2)
+    assert(p:press("Y") == "prefix" and p:press("left") == "start" and p.start == 4, "← after Y: the sentence start")
+    assert(#p.typed == 0, "a shortcut drops the typed letters")
+    -- ... and in the end step: → moves the end sentence, the stage starts again
+    assert(p:press("A") == "prefix" and p:press("right") == "sentence" and p.sent == 3 and #p.typed == 0)
+    assert(syms(p:stage()) == "A13 X14", "S3: two words, one stage")
+    p = H.Pointer.new(SENTS, boxes)
+    pick(p, "sent", 2)
+    assert(p:press("A") == "prefix" and p:press("up") == "start" and p.start == 1, "↑ after A: the paragraph start")
+    assert(p:press("right") == "sentence" and p.sent == 2, "end step: on to S2 (two stages)")
+    assert(p:press("X") == "prefix" and p:press("down") == "done" and p.stop == 14, "↓ after X: the paragraph end")
+    -- an ignored shortcut keeps the stage
+    p = H.Pointer.new(SENTS, boxes)
+    pick(p, "sent", 2)
+    assert(p:press("X") == "prefix" and p:press("right") == "ignored" and seq(p.typed) == "X")
+
+    -- the short last piece: 4 words = A (1..3), X (4); in X only A
+    p = H.Pointer.new({ { first = 1, last = 4 } }, boxes)
+    pick(p, "sent", 1)
+    assert(syms(p:stage()) == "A1 X4")
+    assert(p:press("X") == "prefix" and syms(p:stage()) == "A4", "one piece = one badge")
+    assert(p:press("X") == "ignored" and p:press("Y") == "ignored")
+    assert(p:press("A") == "start" and p.start == 4)
+    -- one word: one stage, A
+    p = H.Pointer.new({ { first = 7, last = 7 } }, boxes)
+    pick(p, "sent", 1)
+    assert(syms(p:stage()) == "A7" and p:press("A") == "start" and p.start == 7)
+
+    -- three stages (22 words): 9, 9, 4; then pieces of 3; then words
     local b30 = page(30, 10)
     p = H.Pointer.new({ { first = 1, last = 8 }, { first = 9, last = 30 } }, b30)
     pick(p, "sent", 2)
-    st = p:stage()
-    assert(st.kind == "blocks" and #st.items == 3)
-    local l = label_for(p, "word", 20)
-    assert(#l == 3)
-    assert(p:press(l[1]) == "prefix")
-    st = p:stage()
-    assert(st.kind == "blocks" and seq(st.typed) == l[1], "sub-blocks after the first symbol")
-    local n, found = 0, false
-    for _, g in ipairs(st.items) do
-        n = n + #g.words
-        for _, wi in ipairs(g.words) do
-            local wl = label_for(p, "word", wi)
-            assert(wl[1] == l[1] and wl[2] == g.symbol, "a sub-block = the second symbol")
-            if wi == 20 then found = g.symbol == l[2] end
-        end
-    end
-    assert(found and n == #p:visible(), "every word of the block in one sub-block")
-    assert(p:press(l[2]) == "prefix")
-    st = p:stage()
-    assert(st.kind == "words" and seq(st.typed) == l[1] .. "," .. l[2])
-    for k, v in ipairs(st.items) do
-        assert(v.symbol == v.label[3] and v.place == (k % 2 == 1 and "above" or "below"))
-    end
-    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().typed == 1, "B: the sub-blocks")
-    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().typed == 0, "B: the blocks")
+    assert(syms(p:stage()) == "A9 X18 Y27", syms(p:stage()))
+    assert(p:press("Y") == "prefix" and syms(p:stage()) == "A27 X30", "the short piece Y: 27..29, 30")
+    assert(p:press("A") == "prefix" and syms(p:stage()) == "A27 X28 Y29")
+    assert(p:press("B") == "unprefix" and p:press("B") == "unprefix" and #p:stage().items == 3)
 
-    -- RTL: the block badge goes right of the first word, the word badges at the right edge
-    p = H.Pointer.new(SENTS, boxes, { rtl = true, width = 400 })
+    -- a larger badge (opts.badge): above leaves the screen on line 2 too
+    p = H.Pointer.new(SENTS, boxes, { badge = function() return 40 end })
     pick(p, "sent", 2)
     st = p:stage()
-    local g = st.items[1]
-    assert(g.side == "right" and g.x == boxes[4].x + boxes[4].w, "RTL: right of the first word")
-    assert(g.room == boxes[5].x - (boxes[4].x + boxes[4].w), "RTL room: up to the next word on the right")
-    assert(st.items[3].first == 10 and st.items[3].room == 400 - (boxes[10].x + boxes[10].w),
-        "RTL, last word of a line: up to the screen width")
-    assert(p:press("Y") == "prefix")
+    assert(st.items[2].d == 40 and st.items[2].place == "below" and st.items[2].y == 50)
+    p = H.Pointer.new({ { first = 6, last = 12 } }, boxes, { badge = function(h) return h end })
+    pick(p, "sent", 1)
+    assert(p:stage().items[1].place == "above" and p:stage().items[1].y == 10, "30 - 20 = 10: fits")
+
+    -- RTL: the badge at the right edge of the first word; ← and → swap, also
+    -- after a typed letter
+    p = H.Pointer.new(SENTS, boxes, { rtl = true })
+    pick(p, "sent", 2)
     for _, v in ipairs(p:stage().items) do
         assert(v.side == "right" and v.x == boxes[v.word].x + boxes[v.word].w, "RTL: the right edge")
     end
-    p = H.Pointer.new(SENTS, boxes, { rtl = true })
-    pick(p, "sent", 2)
-    assert(p:stage().items[3].room == math.huge, "RTL without a width: no limit at the line end")
+    assert(p:press("X") == "prefix" and p:press("left") == "ignored", "RTL ←: on, nothing in the start step")
+    assert(p:press("right") == "start" and p.start == 4, "RTL → after X: the sentence start")
+    assert(p:press("A") == "prefix" and p:press("right") == "done" and p.stop == 12, "RTL →: the end")
 end
 
 print("kopad_hints_test: OK")
