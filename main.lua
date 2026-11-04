@@ -311,6 +311,20 @@ function kopad:_install_padopen()
     Trace.log("padopen: started=%s", tostring(ok and res))
 end
 
+-- PDF text with words split by the gap between glyphs (pdftext.lua): without
+-- it a justified line whose text layer has no space characters is ONE word to
+-- KOReader and the pad. Once-per-run patch of the mupdf page class, reached
+-- through the open document; on while kopad is enabled, mupdf documents only.
+function kopad:_install_pdftext()
+    if not (self.ui and self.ui.paging and self.ui.document) then return end
+    local PdfText = safe_require("pdftext")
+    if not PdfText then return end
+    local ok, res = pcall(PdfText.install, self.ui.document, function() return self.enabled end,
+        logger.warn)
+    if not ok then logger.warn("kopad: pdftext install failed: " .. tostring(res)) end
+    Trace.log("pdftext: installed=%s", tostring(ok and res))
+end
+
 function kopad:_ensure_selector()
     if self.subs.selector then return end
     -- EPUB (ui.rolling) and, since TASK-30, PDF / DjVu (ui.paging). In a
@@ -389,6 +403,7 @@ end
 
 function kopad:onReaderReady()
     self:_apply_padmap()
+    self:_install_pdftext()
     self:_ensure_selector()
     Trace.log("onReaderReady: enabled=%s nav=%s selector=%s", tostring(self.enabled),
         tostring(self.subs.nav ~= nil), tostring(self.subs.selector ~= nil))

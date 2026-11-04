@@ -25,7 +25,7 @@ on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
 over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
 ReaderAnnotation, Y browses the page's highlights, boxes under zoom / pan,
-notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); plain `assert`,
+notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); `lua tests/pdftext_test.lua` (pdftext.lua: words split by glyph gaps); plain `assert`,
 KOReader stubbed.
 
 ## Runtime requirements
@@ -456,6 +456,30 @@ still returns our handle. Test: `lua tests/padopen_test.lua`.
 
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
+
+### `pdftext.lua` — words split by the gap between glyphs (TASK-37 tests it on more PDFs)
+`document:getTextBoxes(page)` is koreader-base `page:getPageText()`, which cuts
+words ONLY at space characters. A PDF whose text layer has none (TeX / Typst
+output, e.g. papeteria's PDFs) has the word gap only as a gap between glyph
+positions, and mupdf's own synthetic space starts at ~0.15 em; a squeezed
+justified line (gap ~0.13 em) came out as ONE "word" -- one box, no spaces --
+and A + D-pad could select nothing smaller than the line. `M.install(doc,
+state_fn, warn)` (main.lua `_install_pdftext`, from `onReaderReady`, paging
+documents only) replaces `getPageText` on the mupdf page class ONCE per run:
+a copy of the stock function whose word loop (`M.split_line`, pure, over plain
+chars) also breaks where the gap along the line exceeds `M.GAP_EM` = 0.10 em
+of the larger glyph (calibrated on 7 000 glyph pairs of one Alegreya PDF:
+inside words <= 0.066 em, between words >= 0.125 em). It must sit THERE and
+not in pdfwords.lua: saving a selection goes through `getTextFromPositions`,
+which takes the word boundaries from the same boxes, so kopad and KOReader
+have to see the same words (a touch selection benefits too). Everything else
+is stock: the same whitespace / bullet / CJK / General Punctuation rules (so
+`”,` still splits into two words, as in KOReader). `state_fn` is asked on every
+call (kopad off = stock), a failing adapter warns once and falls back to the
+original for the rest of the run; non-mupdf documents (DjVu) and bare Lua get
+`false`. Text boxes already in KOReader's DocCache keep their old words until
+the document is reopened. Not tried in KOReader yet; `GAP_EM` is known on one
+font only (TASK-37).
 
 ### `pdfpara.lua` — paragraphs of a PDF / DjVu page (pure, TASK-32)
 No KOReader dependency; tested by `tests/pdfpara_test.lua`. PDF knows no
