@@ -179,22 +179,6 @@ function M.sentences(words)
     return out
 end
 
--- The word on the line `delta` lines away from word i (nearest by centre x),
--- nil past the first / last line of the page.
-function M.line_target(words, i, delta)
-    local w = words[i]
-    if not w then return nil end
-    local target = w.line + delta
-    local best, bd
-    for j, o in ipairs(words) do
-        if o.line == target then
-            local d = math.abs(o.cx - w.cx)
-            if not bd or d < bd then best, bd = j, d end
-        end
-    end
-    return best
-end
-
 -- One box per line for the words i0..i1 (union of their `field` boxes,
 -- default the screen box "sbox"; words without it are skipped).
 function M.line_boxes(words, i0, i1, field)

@@ -16,14 +16,13 @@ padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
 `lua tests/padconfirm_test.lua` (button letters on confirmation dialogs),
 `lua tests/padopen_test.lua` (opening every gamepad), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
-on a fake three-page document: moves, page crossing, ranges, levels,
-highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
-placement, prefix filter, B, lines from word boxes, the pointer's two
-steps, word labels (TASK-39: the tree of threes, stages by length, A / X / Y
-in reading order, the short last piece), every arrow shortcut at every
-stage, B back one stage, RTL, the drawing stages) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
+on a fake three-page document: moves, sentence starts on ↑/↓, page
+crossing, ranges incl. the RT sentence ranges of TASK-42, levels,
+highlights, point from-to: label -> words, B back) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
+placement, prefix filter, B, a label = its sentence's first visible word,
+RTL; the word level of TASK-36..41 is gone since TASK-42 / PC-024) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
-over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
+over page edges, sentences, point from-to + an RT range, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
 ReaderAnnotation, Y browses the page's highlights, boxes under zoom / pan,
 notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); `lua tests/pdftext_test.lua` (pdftext.lua: words split by glyph gaps); plain `assert`,
@@ -160,7 +159,8 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   in context `paged`, TASK-30),
   selection = action menu. The legacy `Press` key goes to `onKPConfirm`
   (sentences / menu on the press; the legacy path has no point from-to).
-- **Point from-to (TASK-29)**: while the overlay is in mode `point` (context
+- **Point from-to (TASK-29; sentence labels only since TASK-42 / PC-024)**:
+  while the overlay is in mode `point` (context
   `selection`), `_button_dispatch` hands D-pad + A/B/X/Y to `_point_button`
   BEFORE everything else (`POINT_SYMBOLS`): one symbol per press, on the
   press, so it clears the A / Y / B holds (their release then does nothing)
@@ -168,15 +168,33 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   with nothing typed on the sentence labels) closes the overlay. Other buttons,
   triggers and sticks take the selection's path; the overlay ignores
   `step` / `line` / `para` / `action_menu` / `to_words` / `to_sentences`
-  in mode `point`. The D-pad arrows are label symbols on the sentence
-  labels and the shortcuts on the word level, at every stage (TASK-36 /
-  TASK-39: kopad_hints decides). The R-stick there (`_rstick`, both input paths) is consumed and
-  does nothing (the TASK-35 refinement is gone).
+  in mode `point`. The D-pad arrows are label symbols. A whole label
+  (`"done"`) turns the overlay into mode `walk` with the cursor on the
+  sentence's first visible word, no anchor, `from_labels = true`. The
+  R-stick there (`_rstick`, both input paths) is consumed and does nothing.
+- **RT (TASK-42 / PC-024)**: the range modifier of the words. A trigger
+  arrives only as `GamepadAxisMotion` (axis 5) crossing the dead zone, never
+  with a release, and the stock auto-repeats a held axis. `_trigger_event`,
+  context `selection`, RT, overlay in mode `walk` (or the modifier on):
+  `_rt_hold(ov)` sets `_rt_down` + `_rt_ov` and polls
+  `Gamepad.held_axis_directions[5]` with `UIManager:scheduleIn(RT_POLL_S)`
+  (the `_dictate_hold` pattern; `PadNav._axis_held`) until the release or a
+  context other than `selection`, which clears it. While it is on every RT
+  event is eaten (no paragraph, no page); a press while it is off starts a
+  new hold even when the repeat filter calls it a repeat. No axis state /
+  a remapped button acting as RT: each new press toggles a latch
+  (`_rt_toggle`, `_rt_latch`). `_rt_active(ov)` (only for the overlay it
+  began in) makes `_sel_move` pass `range = true`, the D-pad repeat
+  included. The legacy key path has no RT range. Tests: the RT block in
+  section 14 of `tests/padmap_test.lua`.
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
   `onKPMenu` on the press.
-- **B** (TASK-33): `_press_b` closes the selection at once; while reading
+- **B** (TASK-33): `_press_b` in the selection goes to `onKPBack` at once,
+  which asks `ov:back()` first (TASK-42: a word range -> dropped; words
+  opened from a sentence label -> the labels again) and closes only when it
+  says false; while reading
   (EPUB, or `_paged_idle()`) it sets `_b_down`, and B + D-pad
   (`_view_dpad`, branch in `_button_dispatch` before the paged pan and the
   EPUB page turn) changes the view: PDF / DjVu zoom ↑/↓ (`_zoom_step`) and fit
@@ -220,9 +238,11 @@ In the selection LB / RB close it and turn the page (`_turn_page`, in
 `_button_dispatch`); `onKPPgBk` / `onKPPgFwd` with an overlay are reached only
 from the legacy key path, where they step the range (`step(±1, true)`).
 LT / RT (`onKPPgBk2` / `onKPPgFwd2` -> `_trigger_page`) jump by paragraph in
-the selection (`Selector:para`, TASK-25) and turn the page otherwise; in
-context `selection` `_trigger_event` lets the stock trigger auto-repeat
-through (`held`), everywhere else it stays filtered.
+the selection (`Selector:para`, TASK-25; sentences and highlights only:
+`para` ignores mode `walk` since TASK-42, where RT is the range modifier,
+see above) and turn the page otherwise; in context `selection`
+`_trigger_event` lets the stock trigger auto-repeat through (`held`),
+everywhere else it stays filtered.
 While reading, the L-stick is consumed and does nothing (TASK-12 / TASK-15).
 
 **Quick-action wheel (TASK-26, PC-021).** The R-stick in context `reading`,
@@ -320,7 +340,7 @@ KOReader modules are required lazily. padnav: context `"wheel"` (top window has
 `_kopad_wheel`) is checked BEFORE `"foreign"` and routes everything through
 `_wheel_button` / `_wheel_call`; every pad event is consumed there.
 
-### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29, sentences TASK-35, words TASK-36 / TASK-39)
+### `kopad_hints.lua` — "point from-to" labels (pure, TASK-29, sentences TASK-35, sentence labels only TASK-42 / PC-024)
 No KOReader dependencies; tested by `tests/kopad_hints_test.lua`. Port of the
 Vivaldi-on-the-Deck labels (`~/aparati/steamdeck/vivaldi-deck/ext/hints.js`):
 `M.DIRS` = eight symbols (`up down left right` + `A B X Y`) with anchors in a
@@ -330,94 +350,32 @@ one group per anchor, at most `cap` each, most obvious items first by regret,
 ties in reading order), always TWO levels -> every label is two symbols (a
 lone item repeats its symbol: `up,up`). Coordinates are snapped to
 1/`M.GRID` of the region, so an indent does not reorder a column. Labels
-never START with `M.BACK` = B (`M.FIRST`), because B with nothing typed is
-back / one word -> at most 7 * 8 = 56 targets, the rest get no label.
-**Word labels (TASK-39, replaces the TASK-36 / TASK-38 scheme)**:
-`M.word_labels(n)` = a tree of threes in READING order (not by position),
-letters only (`M.WORD_LETTERS` = A X Y). k = `M.word_stages(n)` = the
-smallest k with 3^k >= n (n = 1 -> 1); stage i cuts the current range into
-pieces of 3^(k-i) words from its start (the last one shorter), A = the first
-piece, X = the second, Y = the third; the smallest pieces are 3 words. So a
-word's label = its index from 0 in base 3 with k digits (A = 0, X = 1, Y =
-2): up to 9 words 2 letters, 27 3, 81 4, no window. A short last piece has
-fewer sub-pieces (a stage may offer only A, or A and X). Never B, never an
-arrow (the arrows are shortcuts).
-**The pointer is document-independent** (TASK-35, TASK-36 / PC-023):
-`M.Pointer.new(sentences, boxes, {rtl, badge})` with `sentences = { {first, last,
-para}, ... }` (word indices, reading order; `para` compared with `==`, nil =
-its own paragraph) and `boxes[i]` = word i's SCREEN box or false (off the
-screen). Only visible words count: a sentence over the page edge / out of a
-zoomed view is labelled at its visible part, one without a visible word gets
-no label. Step `start`, level `sentence`: `M.assign` labels left of each
-sentence's first visible word (right in RTL); a label returns `sentence` =
-level `word`: `M.word_labels` over that sentence's visible words (in
-`visible()` side `top`, x / y = the word's top centre; drawn through
-`stage()`, below), the last letter = `start`. Arrows on the word level are
-shortcuts at EVERY stage, also after typed letters (`_shortcut`; a move
-resets `typed`, an `ignored` one keeps it; ← / → swapped in RTL): start
-step ← = the sentence's first word, ↑ = the first visible word of its
-paragraph (the run of sentences with equal `para`), → / ↓ ignored. Step
-`end` begins at once on level `word` with E = `self.sent` = the start
-sentence (from the start word on; TASK-40: `_word_labels` builds the tree over
-ALL the sentence's visible words, as in the start step, then drops the
-targets before `self.start` (`_from_word`), so a word keeps its letters; a
-piece wholly before the start gets no badge in `stage()`, the piece holding it
-has its badge over the start word, a prefix leading only before it =
-`ignored`; one word = the start's letters again (stop = start) or B, two =
-the next word's letters; another end sentence after → / ↑ counts from its own
-first visible word): the last letter / ← (end of E) / ↓ (end of E's
-paragraph) = `done`; → = the next sentence with a visible word (`sentence`;
-none = `ignored`: a range stays on the page), ↑ = the previous one, never
-before `start_sent`. `preview()` = start .. last visible word of E (TASK-41:
-selector.lua inverts only the start word and draws start + 1 .. E's end as a
-dashed line, `M.dashes(lines, {dash, space, thick, offset})` = pieces 1 px
-under each line of `lines_from_boxes`). `typed` is a list (the letters of the stages);
-`press(sym)` -> `prefix` (the next stage) / `unprefix` (B drops the LAST
-symbol when no label goes on with B = back one stage) / `sentence` / `back`
-(B on the start step's word level, nothing typed) / `start` / `done`
-(`self.start`, `self.stop` = WORD indices; stop nil = B in the end step,
-nothing typed = one word) / `cancel` (B on the sentence labels) / `ignored`
-(also a letter no piece of the stage has).
-`visible()` = the labels still in play (only those continuing the typed
-prefix; `sent`, `word`, `typed` = count, `side`, anchor `x`, `y`, word height
-`h`): the label LOGIC, what tests and the status line look up.
-**Stages (TASK-39): what is drawn.** Word labels are never painted whole;
-the tree is shown one stage at a time (the TASK-38 blocks with underlines and
-alternating above / below badges were unpredictable on the Deck and are
-gone, with `room` / `opts.width`). `stage()` -> `{ kind, typed, items }` for
-the typed prefix: `sentence` = the `visible()` entries; on the word level
-`words` = ONE item per piece of the current stage, in reading order:
-`symbol` (A / X / Y), `word` = the piece's first word, `last` = its last
-word, `label`, `box`, `side` left / RTL right, `x` = that edge of the word,
-`d` = the badge size (`opts.badge(h)`, selector.lua's `badge_size`; default
-`M.BADGE_RATIO` = 0.65 of h), `place` = `above` always, `below` only when
-above leaves the screen (`box.y - d < 0`), `y` = the badge's top (`box.y - d`
-above, `box.y + box.h` below), `h`. A letter = its piece's sub-pieces, the
-last stage = the word; B = unprefix = the previous stage; `done` = no items.
-**Shortcut badges (TASK-41).** On the word level `stage().shortcuts` =
-`{ symbol, word, x, y, d, place }` (symbol = the PHYSICAL arrow, ← / →
-swapped in RTL; `x`, `y` = the badge's top left; `place` beside / above /
-below), at every stage: start step ← beside the A badge over the sentence's
-first word (outside it, same height; screen edge -> below the word's start,
-then on the other side of A), ↑ over the paragraph's first visible word when
-↑ leads elsewhere than ←; end step ← just after E's last word (badge height;
-no room -> below the word's end), ↓ after the paragraph's last visible word
-when that is not E's end, → over the next visible sentence's first word.
-`_shortcut_badges` / `_place`: candidate spots in that order, the first one
-on the screen (`opts.width` / `height`), clear of the letter badges and the
-shortcuts already placed AND of every word box wins; when none is clear of
-the words (lines without room between them) the one covering the least
-word area is taken, never one over a badge. `opts.gap` = px between
-badges (default d / 4).
-The R-stick refinement of TASK-35 (`refine_to_word`) is gone.
-`M.lines_from_boxes(boxes)` (word boxes -> lines `{ x, y, w, h, first, last
-}`) draws the end step's preview. The adapter is
-`SelectorOverlay:_point_begin`, the same for EPUB and PDF:
-`_point_sentences()` turns `self.word_to_sent` into the word ranges plus
-`para` (paginmapo sentences' block xpointer in an EPUB, `pdfwords.sentences`
-/ pdfpara in a PDF), the boxes are the words' `sbox`;
-`PagedOverlay:_point_begin` refreshes the screen boxes first, so only what is
-on the screen gets labels.
+never START with `M.BACK` = B (`M.FIRST`), because B with nothing typed
+closes the labels -> at most 7 * 8 = 56 targets (`M.MAX_LABELS`), the rest
+get no label.
+**The pointer is document-independent**: `M.Pointer.new(sentences, boxes,
+{rtl})` with `sentences = { {first, last}, ... }` (word indices, reading
+order; other fields are ignored) and `boxes[i]` = word i's SCREEN box or
+false (off the screen). Only visible words count: each sentence gets one
+label left of its first visible word (right in RTL); a sentence without a
+visible word gets none. `press(sym)` -> `prefix` (a symbol some label goes
+on with) / `unprefix` (B, when no label goes on with B: the last typed
+symbol is dropped) / `done` (a whole label: `self.sent` = the sentence,
+`self.start` = its first visible word index; nothing more after that) /
+`cancel` (B with nothing typed) / `ignored`. `visible()` = the labels still
+in play (those continuing the typed prefix; `sent`, `word`, `label`,
+`typed` = count, `side`, anchor `x`, `y` = the word's vertical middle, its
+height `h`), what selector.lua draws and the tests look up.
+**Gone since TASK-42 / PC-024** (replaces PC-023): the word level of
+TASK-36..41 -- `word_labels` / `word_stages` (the A / X / Y tree of threes),
+the end step, the arrow shortcuts (`_shortcut`) and their badges
+(`_shortcut_badges` / `_place`), `stage()`, `preview()`, `M.dashes`,
+`M.lines_from_boxes`. It was hard to predict on the Deck; the word walk with
+↑/↓ by sentence and RT held does the job (selector.lua, padnav.lua). The
+adapter is `SelectorOverlay:_point_begin`, the same for EPUB and PDF:
+`_point_sentences()` turns `self.word_to_sent` into the word ranges, the
+boxes are the words' `sbox`; `PagedOverlay:_point_begin` refreshes the
+screen boxes first, so only what is on the screen gets labels.
 
 ### `vkb.lua` — no on-screen keyboard while a pad is connected
 `main.lua:_install_vkb()` calls `Vkb.install(state_fn)` (state = kopad
@@ -574,8 +532,8 @@ sentence; thresholds are fractions of the median line height / column width
 (`M.OPTS`). Between two columns the pitch rule is off, so a paragraph may run
 from the bottom of the left column to the top of the right one. Wired in by
 `pdfwords.lua` (below): `sentences[].para` is what selector.lua's
-`_para_target` / `_para_start` compare, so ↑/↓ in sentences and LT / RT (words
-and sentences) use it unchanged.
+`_para_target` / `_para_start` compare, so ↑/↓ and LT / RT in sentences use
+it unchanged (in words ↑/↓ go by sentence since TASK-42, no paragraphs).
 
 ### `pdfwords.lua` — word source for PDF / DjVu (pure, TASK-30)
 No KOReader dependency (paginmapo only); tested by `tests/pdfwords_test.lua`.
@@ -594,8 +552,8 @@ left column before the right one, `info.order`) and carry `para`;
 `paragraph_info(boxes, rtl)` is the pcall-guarded pdfpara call (PagedOverlay
 caches it per page in `_pinfo`, next to `_boxes`, and passes `is_rtl`).
 Also `has_text` (a scan's optical boxes have no
-`word`), `line_target` (↑/↓: nearest word by centre x on the next line of
-the engine's line order), `line_boxes(words, i0, i1[, field])` (one box per
+`word`; `line_target` for the old line moves is gone with them, TASK-42),
+`line_boxes(words, i0, i1[, field])` (one box per
 line), `pos(w, view.state)` = `{page, x, y, zoom, rotation}` at the word's
 centre, which `getTextFromPositions` snaps to exactly that word (what
 PagedOverlay passes to `saveHighlight` as pos0 / pos1, TASK-31).
@@ -615,7 +573,7 @@ with `paged = true`) `_new_overlay` makes a **`PagedOverlay`**
 for a page without words (`Selector:_no_text`). PagedOverlay replaces only
 the crengine-specific methods: `_collect` (one page, `self.page` = the top
 page in continuous view; `_extends_before/after` decided with the
-neighbouring page's first / last word), `_ww_step` / `_ww_line` / `_ww_land`
+neighbouring page's first / last word), `_ww_step` / `_ww_land`
 / `_ww_word_from_xp` / `_xp_before` (word index on the page), `_turn_page`
 (`GotoPage`), `_get_selection` (`getTextFromPositions`, pboxes native,
 sboxes screen), `_draw_walk` / `_draw_struct`, `_page_text`, and the
@@ -666,51 +624,51 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   `sel_sent`..`sel_tail`. ←/→ `_sent_step`, ↑/↓ `_para_step` (↓ next paragraph,
   ↑ start of this one or the previous one).
 - **`walk`** — words (`ww_word`, optional `ww_anchor`; `_ww_span` orders them
-  with `compareXPointers`, 1 = first argument earlier). ←/→ `_ww_step`, ↑/↓
-  `_ww_line`, with split-word fragment handling for hyphenated/wrapped words
-  (`_is_split_word`, `_resolve_split_fragment`).
+  with `compareXPointers`, 1 = first argument earlier; PDF: word index,
+  `PagedOverlay:_xp_before`). ←/→ `_ww_step` (split-word fragment handling
+  for hyphenated / wrapped words, `_is_split_word`); ↑/↓ `_ww_sent`
+  (TASK-42 / PC-024; the line moves `_ww_line` are gone): ↓ = the next
+  sentence's first word, ↑ = the cursor sentence's first word, on it the
+  previous sentence's (`_sent_of_word`, `_sent_first_word` /
+  `_sent_last_word` = the sentence's `word_list` ends, i.e. its part on the
+  page); past the page edge `_turn_page` + `_ww_sent_land` (↓ the new page's
+  first sentence, its second when the first `_extends_before`; ↑ the last
+  one's start). With a range (`range = true`: RT held, or A held)
+  `_ww_range_target`: ↓ = the end of the cursor's sentence, on an end the
+  next one's end; ↑ = the previous sentence's end, clamped to the anchor;
+  cursor on (or before) the anchor: ↑ = this / the previous sentence start,
+  ↓ = the next start clamped to the anchor; never off the page. `para()` is
+  a no-op in `walk`. `from_labels` (set by `_point_finish`, cleared by
+  `to_words`) lets `back()` (B, via padnav `onKPBack`) go to the labels:
+  `back()` = drop the anchor if any, else `_point_begin()` again on the
+  page shown now when `from_labels`, else false (padnav closes). Status
+  `_walk_status(short)`: `WORD · ←→ word ↑↓ sentence · RT select · X hl ·
+  Y vort · A menu · B back|close`, with a range `WORDS ... B clear`; short =
+  level + A + B.
 - **`hl`** — the page's saved highlights (`hl_items` / `hl_cur`, opened by Y);
   every arrow steps between them (`_hl_step`, wrapping).
-- **`point`** — point from-to (TASK-29, A tapped; on sentences since TASK-35):
-  `self.pointer` (kopad_hints.lua) over the sentences / word boxes built by
-  `_point_begin`; `point_press(sym)` feeds it (labels and arrow shortcuts,
-  TASK-36), and on `done` `_point_finish` turns the
-  overlay into `walk` with `ww_anchor` = the start word (`p.start`),
-  `ww_word` = the end word (`p.stop`; no end = the start word alone, no
-  anchor). `_draw_point` paints `pointer:stage()` (TASK-39): sentence
-  labels as before (`_draw_point_pills`: white pill, a pressed symbol grey,
-  beside the sentence start when the margin allows, else over the text);
-  the word level = only one one-letter badge per piece of the stage, its
-  left edge on the left edge of the piece's first word (RTL: right edges),
-  at `y` from the stage (just above the word, below when above is off the
-  screen), clamped to the screen; no underline, nothing on the other words.
-  Badges (`paint_badge`): white, black outline, D-pad symbols rounded
-  squares with an arrow, letters circles; size `badge_size(h)` =
-  `POINT_BADGE_RATIO` (0.65) of the word height, clamped to
-  `POINT_BADGE_MIN` / `_MAX` (scaleBySize 12 / 18), defined before
-  `_point_begin`, which hands it to the pointer as `opts.badge`; face from
-  `point_face(d)`. Then, in the end step, the preview `pointer:preview()` = start .. the end
-  of the current end sentence ALWAYS (also while that is the start
-  sentence: the range ← would give). TASK-41: only the start word's `sbox`
-  is inverted; start + 1 .. the end = a dashed line (`Hints.dashes` over
-  `lines_from_boxes`, `paintRect` pieces of scaleBySize 4 / gap 3, 1–2 px,
-  1 px under each line), so it does not look like a finished selection;
-  → / ↑ move it. Last, the shortcut badges `st.shortcuts` with `paint_badge`
-  (an arrow in a rounded square); `_point_begin` passes the pointer the
-  screen size and `gap` (scaleBySize 3). PDF: the same method.
-  Status `_point_status(short)`: `FROM · label = sentence · B close`, `FROM
-  WORD · A X Y · ← sentence ↑ paragraph · B sentences`, `TO · A X Y · ← end
-  → next [↑ previous] ↓ paragraph · B one word` (the letters = those of the
-  current stage; arrows mirrored in RTL; after a typed symbol `B back` on the
-  words, `B undo` on the sentence labels; short = step + B).
+- **`point`** — point from-to (TASK-29, A tapped; on sentences since TASK-35;
+  sentence labels only since TASK-42 / PC-024): `self.pointer`
+  (kopad_hints.lua) over the sentences / word boxes built by
+  `_point_begin`; `point_press(sym)` feeds it, and on `done`
+  `_point_finish` turns the overlay into `walk` with `ww_word` = the
+  sentence's first visible word (`p.start`), no anchor, `from_labels =
+  true`. `_draw_point` paints the `visible()` labels with
+  `_draw_point_pills` (white pill, a pressed symbol grey, beside the
+  sentence start when the margin allows, else over the text; D-pad symbols
+  rounded squares with an arrow, letters circles). The word badges, arrow
+  badges and dashed preview of TASK-39..41 (`paint_badge`, `badge_size`,
+  `Hints.dashes`) are gone. PDF: the same method. Status
+  `_point_status(short)`: `FROM · label = sentence · B close` (`B undo`
+  after a typed symbol, nothing when a label goes on with B; short = step +
+  B).
 
 Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
 document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:
-`_ww_para` = first word of the next / this or previous paragraph, a paragraph
-begun on the previous page is reached there; sentences = `_para_step`;
-highlights = `_hl_step`), `to_words()` / `to_sentences()` (the two
-levels, TASK-17), `action_menu()`. Without a range the moves cross the page edge
-in both directions (`_turn_page` + `_ww_land` / `_sent_land` / `_para_land`,
+sentences = `_para_step`; highlights = `_hl_step`; nothing in words since
+TASK-42, where `_ww_para` was removed), `to_words()` / `to_sentences()` (the two
+levels, TASK-17), `action_menu()`, `back()` (B in words, TASK-42). Without a range the moves cross the page edge
+in both directions (`_turn_page` + `_ww_land` / `_ww_sent_land` / `_sent_land` / `_para_land`,
 TASK-18); a sentence running over the edge is skipped on the other side, so it
 counts once. A range never leaves its page. Use `_adjacent_word`, never
 `dir > 0 and next() or prev()`: a nil next word falls through to the previous

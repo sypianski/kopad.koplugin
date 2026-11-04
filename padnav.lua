@@ -4,7 +4,8 @@ The on<Key> handlers below are the source of truth; keep this block, the
 header of main.lua, README.md and CHEAT_READING/CHEAT_SELECTION in sync with them.
 
 Reading:
-  RT / LT (triggers)     Next / previous page (in the selection: paragraph)
+  RT / LT (triggers)     Next / previous page (in the selection: paragraph;
+                         in words RT held = range, LT nothing, TASK-42)
   RB / LB                Next / previous page (X+RB = bookmarks, X+LB = TOC)
   L4 / R4 (back paddles) Same as LB / RB -- ONLY on old builds with
                          sdl3_gamepad.patch (key_events ScrollLock/Pause).
@@ -28,19 +29,12 @@ Reading:
   Y held + D-pad         Select sentences: →/↓ from the first sentence, ←/↑
                          from the last one
   A tapped               "Point from-to" (TASK-29; sentences TASK-35;
-                         TASK-36 / PC-023): two-symbol pad labels (D-pad +
+                         TASK-42 / PC-024): two-symbol pad labels (D-pad +
                          A/B/X/Y, by position like the Vivaldi labels on the
-                         Deck) at the starts of the sentences; a label =
-                         that sentence's words in stages of A / X / Y
-                         (pieces of 3, 9, ... words, TASK-39), the last
-                         letter (or ← / ↑ = sentence / paragraph start) =
-                         the start; then the same stages on the words of the
-                         end sentence: the last letter (or ← / ↓ = sentence
-                         / paragraph end) = the end, → / ↑ move the end
-                         sentence, B = no end (one word) (see below).
-                         Then the usual word
-                         selection (A + arrows adjust the range, A tapped =
-                         action menu). Legacy key path: sentences
+                         Deck) at the starts of the sentences; a label = the
+                         word selection with the cursor on that sentence's
+                         first visible word, nothing selected yet (see
+                         below). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
                          them); none on the page = a message
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
@@ -120,54 +114,48 @@ Point from-to (kopad's overlay in mode "point", context "selection"; A tapped
 while reading; Gamepad* path):
   D-pad / A / B / X / Y  Symbols of the labels, on the press (no repeat, no
                          holds). Each typed symbol keeps only the labels
-                         going on with it, the last one picks
-                         (kopad_hints.lua, TASK-36 / PC-023):
-    FROM                 Labels at the sentence starts (two symbols, never
-                         starting with B, at most 56). A label = that
-                         sentence's words.
-    FROM WORD            The sentence's words as a tree of threes (TASK-39):
-                         one small A / X / Y badge above the first word of
-                         each piece of the stage (A = the first piece in
-                         reading order); a letter = that piece (the next
-                         stage), on the last stage the start there. Pieces
-                         are 3^(k-i) words, so up to 9 words = 2 letters,
-                         27 = 3, 81 = 4. The arrows are shortcuts at every
-                         stage: ← = the sentence's start, ↑ = its
-                         paragraph's start (→ in RTL for ←).
-    TO                   The same stages over the words of the current end
-                         sentence (the start sentence from the start word
-                         on), the range start .. its end inverted. The last
-                         letter = the end there. ← = its end, → = the next sentence
-                         (not past the page's last), ↑ = the previous one
-                         (not before the start sentence), ↓ = the end of
-                         its paragraph (← / → swapped in RTL).
-  B (nothing typed)      FROM: close. FROM WORD: back to the sentence
-                         labels. TO: no end = one word.
-  B (after a symbol, when no label goes on with B): drop that symbol (on
-                         the words: back one stage).
-  R-stick                Consumed, nothing (the R↓ refinement of TASK-35
-                         is gone).
+                         going on with it, the second one picks
+                         (kopad_hints.lua): labels at the sentence starts
+                         (two symbols, never starting with B, at most 56).
+                         A label = the words, cursor on the sentence's first
+                         visible word, no range (TASK-42 / PC-024; the word
+                         labels, end step and arrow shortcuts of TASK-36..41
+                         are gone).
+  B (nothing typed)      Close.
+  B (after a symbol, when no label goes on with B): drop that symbol.
+  R-stick                Consumed, nothing.
   Everything else        As in the selection (LB / RB close and turn the
                          page, Select / Start close and open the menu)
 
 Selection (kopad's overlay; two levels, sentences "struct" and words "walk",
 plus the saved highlights "hl" opened by Y):
   D-pad / L-stick ←/→    Words: word          Sentences: sentence
-  D-pad / L-stick ↑/↓    Words: line          Sentences: paragraph
+  D-pad / L-stick ↑/↓    Words: sentence start (TASK-42 / PC-024: ↓ the next
+                         one, ↑ the cursor's own, on a start the previous one)
+                         Sentences: paragraph
                          Highlights: previous / next one (all four)
                          Past the page edge: the next / previous page, both
                          directions (TASK-18). Held D-pad repeats (TASK-16)
                          and speeds up after a few steps (TASK-25).
-  RT / LT                Next / previous paragraph (TASK-25): words = its first
-                         word, sentences = as ↓/↑, highlights = next / previous;
-                         back = start of this paragraph first. Over the page
+  RT held + arrows       Words (TASK-42 / PC-024): a range from the cursor
+                         at the first move (a range kept from before goes
+                         on). ←/→ = its moving end by a word; ↓ = to the end
+                         of the sentence, on an end to the end of the next
+                         one; ↑ = one sentence off (the end of the previous
+                         one, never before the anchor); on the anchor ↑ goes
+                         back to the sentence start (on a start: the
+                         previous one), before the anchor ↓ goes to the next
+                         start, not past the anchor. Never leaves the page;
+                         releasing RT keeps the range. RT's release is
+                         polled (_rt_hold), its auto-repeat does nothing.
+  RT / LT                Sentences: next / previous paragraph (TASK-25), as
+                         ↓/↑; highlights: next / previous. Over the page
                          edge; held, it keeps jumping; with A held = range.
-  A held + arrows        Range from where A was pressed, both directions
-                         (moving back over the anchor shrinks it); never
-                         leaves the page (Gamepad* path, TASK-16). Not the A
-                         hold that opened the words: while it is held the
-                         arrows only move the cursor (pick the start point
-                         or a single word), a range needs the next A hold
+                         Words: LT nothing, RT = the range modifier above.
+  A held + arrows        The older range alias, same moves as RT held
+                         (Gamepad* path, TASK-16). Not the A hold that
+                         opened the words: while it is held the arrows only
+                         move the cursor, a range needs the next A hold
   A tapped               Action menu (dict, AI, copy, note) -- on the release;
                          the A press that opened the selection does not
                          count. Legacy key path: on the press.
@@ -177,7 +165,10 @@ plus the saved highlights "hl" opened by Y):
   Y                      Vortuyo lookup
   X                      Toggle highlight (highlights: remove; the last one
                          removed closes the overlay)
-  B                      Close
+  B                      One step back (TASK-42): words with a range = drop
+                         it (the cursor stays at its moving end); words
+                         opened from a sentence label = the labels again;
+                         otherwise close
   RB / LB                Close and turn the page. Legacy key path: RB / LB
                          grow / shrink the range at its moving end instead
                          (no button release there, so no A hold)
@@ -696,16 +687,18 @@ end
 
 -- Arrows in the selection overlay (D-pad, L-stick): dx / dy are screen
 -- directions, dx flipped for RTL here; the overlay moves word / sentence /
--- highlight (step) or line / paragraph (line). While A is held (Gamepad*
--- path, TASK-16) the move extends a range from the anchor.
+-- highlight (step) or sentence start / paragraph (line). While RT is held
+-- (TASK-42 / PC-024, _rt_hold) or A (Gamepad* path, TASK-16, the older
+-- alias) the move extends a range from the anchor.
 function PadNav:_sel_move(dx, dy)
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if not ov then return end
     -- the A hold that opened the words only moves the cursor (to the start
     -- point, or to the single word); a range needs the next A hold
-    local range = (self._a_down and not self._a_opened) or false
-    if range then self._a_moved = true end
+    local a_range = (self._a_down and not self._a_opened) or false
+    if a_range then self._a_moved = true end
+    local range = a_range or self:_rt_active(ov)
     if self:_is_rtl() then dx = -dx end
     if dx ~= 0 then ov:step(dx, range) else ov:line(dy, range) end
 end
@@ -860,7 +853,7 @@ end
 
 -- R-stick: switches the selection level (TASK-17): ↓ sentence -> its first
 -- word, ↑ word -> the sentence containing it; ←/→ nothing. In "point
--- from-to" it does nothing (TASK-36: the word labels need no refinement
+-- from-to" it does nothing (TASK-36 / TASK-42: the labels need no refinement
 -- any more). While reading it does nothing (TASK-15). Consumed whenever a
 -- selector exists.
 function PadNav:_rstick(dy)
@@ -947,9 +940,11 @@ function PadNav:_turn_page(dir)
     end
     self.ui:handleEvent(Event:new("GotoViewRel", dir)); return true
 end
--- LT/RT in the selection (TASK-25): one paragraph back / forward at every
--- level (Selector:para); with A held the range grows by paragraphs. Also
--- reading order, no RTL flip.
+-- LT/RT in the selection (TASK-25): one paragraph back / forward in
+-- sentences and highlights (Selector:para); with A held the range grows by
+-- paragraphs. In words nothing (TASK-42: RT held is the range modifier
+-- there, see _rt_hold; para() ignores mode "walk"). Also reading order, no
+-- RTL flip.
 function PadNav:_trigger_page(dir)
     local selector = self:_selector()
     local ov = selector and selector.overlay
@@ -1138,6 +1133,10 @@ function PadNav:onKPBack()
 
     local selector = self:_selector()
     if selector and selector.overlay then
+        -- words (TASK-42): B drops a range, then goes back to the sentence
+        -- labels the walk began at; only then it closes
+        local ov = selector.overlay
+        if type(ov.back) == "function" and ov:back() then return true end
         selector:_close()
         return true
     end
@@ -2095,6 +2094,59 @@ function PadNav:_dictate_hold(from_button)
     return true
 end
 
+-- RT held in the words (TASK-42 / PC-024): the range modifier. KOReader
+-- broadcasts a trigger only when it crosses the dead zone and never reports
+-- the release (it auto-repeats a held axis instead), so -- as for the
+-- dictation above -- the release is polled from
+-- Gamepad.held_axis_directions: _rt_down stays set while axis RT is held and
+-- the selection is on top. While it is set every RT event (the stock
+-- auto-repeat) is eaten. A remapped button acting as RT, or no axis state to
+-- poll, has no release: then each RT press toggles the modifier (a latch,
+-- _rt_latch). Either way it belongs to the overlay it began in (_rt_ov), so
+-- a forgotten latch does not leak into the next selection.
+local RT_POLL_S = 0.05
+local function axis_held(axis)
+    local ok, G = pcall(require, "device/sdl/gamepad")
+    local h = ok and type(G) == "table" and G.held_axis_directions
+    return type(h) == "table" and h[axis] ~= nil
+end
+PadNav._axis_held = axis_held -- for the tests
+
+-- True while the RT modifier is on for overlay `ov`.
+function PadNav:_rt_active(ov)
+    return self._rt_down == true and ov ~= nil and self._rt_ov == ov
+end
+
+function PadNav:_rt_toggle(ov)
+    local on = not self:_rt_active(ov)
+    self._rt_down, self._rt_latch, self._rt_ov = on, on, on and ov or nil
+    self._rt_gen = (self._rt_gen or 0) + 1
+end
+
+-- The hold proper (the caller checked that the axis can be polled).
+function PadNav:_rt_hold(ov)
+    self._rt_down, self._rt_latch, self._rt_ov = true, false, ov
+    self._rt_gen = (self._rt_gen or 0) + 1
+    local gen = self._rt_gen
+    local poll
+    poll = function()
+        if self._rt_gen ~= gen then return end
+        if PadNav._axis_held(AXIS_RT) and self:_context() == "selection" then
+            UIManager:scheduleIn(RT_POLL_S, poll)
+            return
+        end
+        self._rt_down, self._rt_ov = false, nil
+    end
+    UIManager:scheduleIn(RT_POLL_S, poll)
+end
+
+-- The selection overlay in mode "walk" (words), else nil.
+function PadNav:_walk_overlay()
+    local selector = self:_selector()
+    local ov = selector and selector.overlay
+    if ov and ov.mode == "walk" then return ov end
+end
+
 -- Buttons (logical role id) while a menu or another window is on top
 -- (ctx "top_menu" / "window"). Returns true = consumed, false = the stock key
 -- goes to the menu. Rule: in menus the pad is KOReader's (D-pad / A / B /
@@ -2313,6 +2365,25 @@ function PadNav:_trigger_event(axis, value, from_button)
     end
     -- Triggers: 0..32767, only positive values are a press.
     local new_press = value > 0 and (from_button or self:_trigger_is_new_press(axis))
+    -- RT in the words (TASK-42): the range modifier, held (_rt_hold). Its
+    -- auto-repeat does nothing; a press while it is not set starts the hold
+    -- (also one the repeat filter takes for a repeat: a quick second press).
+    local sel_ov = ctx == "selection" and axis == AXIS_RT and value > 0
+        and self:_selector() and self:_selector().overlay or nil
+    if sel_ov and (self:_rt_active(sel_ov) or self:_walk_overlay()) then
+        local what = "held, eaten"
+        local pollable = PadNav._axis_held(AXIS_RT) and type(UIManager.scheduleIn) == "function"
+        if from_button or not pollable or (self._rt_latch and self._rt_ov == sel_ov) then
+            if new_press then self:_rt_toggle(sel_ov); what = "latch" end
+        elseif not self:_rt_active(sel_ov) then
+            self:_rt_hold(sel_ov); what = "hold"
+        end
+        if tr then
+            Trace.log("padnav axis=%s value=%s: words, RT %s (rt_down=%s) -> result=true",
+                tostring(axis), tostring(value), what, tostring(self._rt_down))
+        end
+        return true
+    end
     -- In the selection a held trigger keeps jumping by paragraph (TASK-25):
     -- the stock auto-repeat goes through there (and only there).
     local held = value > 0 and not new_press and ctx == "selection"
@@ -2503,7 +2574,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: back to the previous location"
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 font size  \xE2\x86\x90/\xE2\x86\x92 margins"
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
-    .. "\nA: point from-to (sentence, then word labels: start, then end)"
+    .. "\nA: point from-to (sentence labels, then words; RT held = select)"
     .. "\nY: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
@@ -2532,21 +2603,16 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: parent folder    R-stick: quick actions"
 
 local CHEAT_SELECTION = _("Point from-to (A)")
-    .. "\nPress a label's symbols (D-pad, A B X Y): a sentence, then its words"
-    .. "\nWords: A / X / Y = a part of 3, 9, ... words (badge above its first word)"
-    .. "\nStart: last letter = the word    \xE2\x86\x90 sentence start    \xE2\x86\x91 paragraph start"
-    .. "\nEnd: last letter = the word    \xE2\x86\x90 sentence end    \xE2\x86\x93 paragraph end"
-    .. "\nEnd: \xE2\x86\x92 / \xE2\x86\x91 next / previous sentence (labels move)"
-    .. "\nArrows work at every step    B: back one step, else to sentences / close; at the end one word"
-    .. "\nThen as words: hold A + arrows = range, A = action menu"
+    .. "\nPress a label's symbols (D-pad, A B X Y): the cursor on that sentence's first word"
+    .. "\nB: drop the last symbol, else close"
     .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
-    .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: line / paragraph"
-    .. "\nRT / LT: next / previous paragraph"
-    .. "\nHold A + arrows: select a range (not the hold that opened it)"
+    .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: words: sentence start    sentences: paragraph"
+    .. "\nHold RT + arrows (words): select, \xE2\x86\x93 to the sentence end, \xE2\x86\x91 one sentence off"
+    .. "\nRT / LT (sentences): next / previous paragraph"
     .. "\nA: action menu    Y: Vortuyo"
     .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"
-    .. "\nX: toggle highlight    B: close"
+    .. "\nX: toggle highlight    B: back (range, labels), else close"
     .. "\nRB / LB: close and turn page"
     .. "\nSelect / Start: close and open menu"
     .. "\n\n" .. _("Highlights (Y)")

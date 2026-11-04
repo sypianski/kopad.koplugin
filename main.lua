@@ -12,12 +12,9 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     D-pad                    Next / previous page (TASK-28)
     A held + D-pad           Select words (→/↓ from the first, ←/↑ the last)
     Y held + D-pad           Select sentences (the same)
-    A tapped                 Point from-to (TASK-29 / TASK-36): pad labels at
-                             the sentence starts, then letter labels on that
-                             sentence's words pick the start (← sentence,
-                             ↑ paragraph start), then the end on the words
-                             (← sentence end, ↓ paragraph end, →/↑ next /
-                             previous sentence; B = one word); then words
+    A tapped                 Point from-to (TASK-29 / TASK-42): pad labels at
+                             the sentence starts; a label = the words, the
+                             cursor on that sentence's first word
     Y tapped                 The page's highlights (none = a message)
     B held + D-pad           ↑/↓ font size, ←/→ margins (PDF: zoom / fit)
     B tapped                 Back to the previous location
@@ -42,19 +39,24 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
 
   Point from-to (labels, after A tapped):
     D-pad / A / B / X / Y    The two symbols of a label (first one filters)
-    B                        Start labels: close; end labels: one word
+    B                        Drop the typed symbol, else close
 
   Selection (sentences / words; highlights after Y):
-    D-pad / L-stick          ←/→ word or sentence, ↑/↓ line or paragraph,
-                             across page edges; held D-pad repeats, faster
-    RT / LT                  Next / previous paragraph (held: keeps jumping)
-    A held + arrows          Range from where A was pressed (not the A hold
-                             that opened the words: that one moves the cursor)
+    D-pad / L-stick          ←/→ word or sentence, ↑/↓ sentence start (words)
+                             or paragraph, across page edges; held D-pad
+                             repeats, faster
+    RT held + arrows         Words: range (TASK-42): ←/→ word, ↓ to the
+                             sentence end, ↑ one sentence off
+    RT / LT                  Sentences: next / previous paragraph; words:
+                             nothing besides RT held
+    A held + arrows          The older range alias (not the A hold that
+                             opened the words: that one moves the cursor)
     A tapped                 Action menu (dict, AI, copy, note)
     R-stick ↓ / ↑            Sentence -> its first word / word -> its sentence
     Y                        Vortuyo lookup
     X                        Toggle highlight
-    B                        Close
+    B                        Back: a range off, then the sentence labels
+                             (when opened from them), then close
     RB / LB                  Close and turn the page
     Select / Start           Close and open top / bottom menu
 

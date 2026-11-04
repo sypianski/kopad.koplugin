@@ -3,16 +3,14 @@ Selector — gamepad text-selection overlay for EPUB (crengine/rolling)
 documents and, through PagedOverlay below (TASK-30), PDF / DjVu pages with a
 text layer, driven by the handlers in padnav.lua. Four modes: sentences
 ("struct", Y + D-pad), words ("walk", A + D-pad), the page's saved
-highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 / TASK-35 /
-TASK-36: pad labels at the sentences, then letter labels over the words of
-one sentence pick the start and the end, lone arrows are shortcuts to the
-sentence / paragraph start and end; then it is a word walk; the word labels
-are a tree of threes drawn one stage at a time, TASK-39: one small A / X / Y
-badge above the first word of each piece);
+highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 /
+TASK-35; since TASK-42 / PC-024 only pad labels at the sentences: a label
+puts the word cursor on that sentence's first visible word, then it is a
+word walk -- ←/→ word, ↑/↓ sentence start, RT held = range);
 R-stick ↓/↑ switches between sentence and word. The
-arrows move a cursor; while A is held padnav passes range = true and an
-anchor stays where the range began. Without a range the cursor crosses the
-page edge in both directions.
+arrows move a cursor; while RT (words) or A is held padnav passes range =
+true and an anchor stays where the range began. Without a range the cursor
+crosses the page edge in both directions.
 
 This file owns the overlay widget and its drawing/selection logic; it does
 not bind its own gamepad keys (key_events is intentionally left empty — see
@@ -90,7 +88,8 @@ function SelectorOverlay:init()
     self.sel_anchor = nil    -- fixed end of a sentence range (A held), nil = none
 
     self.ww_word = nil       -- word the arrows move in walk mode {pos0, pos1, sbox, word}
-    self.ww_anchor = nil     -- fixed end of a word range (A held), nil = none
+    self.ww_anchor = nil     -- fixed end of a word range (RT / A held), nil = none
+    self.from_labels = false -- the walk began at a sentence label: B goes back to them
 
     self.hl_items = {}       -- on-screen highlights { ann, boxes, sbox }
     self.hl_cur   = 0        -- focused highlight index in mode "hl" (0 = none)
@@ -228,20 +227,6 @@ function SelectorOverlay:_is_split_word(word)
     return #segs > 1 and segs[1].y ~= segs[#segs].y
 end
 
--- Determine correct fragment (head/tail) of a split hyphenated word from probe x position.
--- LTR: right side = head (end of line). RTL: right side = tail (start of next line).
--- Returns: word (with is_split_fragment set), eval_y for Y-clamp check.
-function SelectorOverlay:_resolve_split_fragment(word, x_pos)
-    if not self:_is_split_word(word) then
-        return word, word.sbox.y + word.sbox.h * 0.5
-    end
-    local right_half = x_pos > (word.sbox.x + word.sbox.w * 0.5)
-    local is_head = self.is_rtl ~= right_half
-    word.is_split_fragment = is_head and "head" or "tail"
-    local fbox = is_head and word.segments[1] or word.segments[#word.segments]
-    return word, fbox.y + fbox.h * 0.5
-end
-
 function SelectorOverlay:_ww_fragment_sbox()
     local w = self.ww_word
     if not w then return nil end
@@ -317,7 +302,7 @@ function SelectorOverlay:_turn_page(dir)
     return before == nil or after ~= before
 end
 
--- Words: one word forward / back (dir in document order). range (A held):
+-- Words: one word forward / back (dir in document order). range (RT or A held):
 -- the anchor stays where the range began and the range never leaves the
 -- page; otherwise the page edge turns the page (TASK-18).
 function SelectorOverlay:_ww_step(dir, range)
@@ -350,87 +335,6 @@ function SelectorOverlay:_ww_step(dir, range)
         nw.is_split_fragment = dir > 0 and "head" or "tail"
     end
     self.ww_word = nw
-end
-
--- Words: the word on the next / previous line nearest to the same x. Past
--- the last / first line: the next page's first word / the previous page's
--- last one (TASK-18); a range (A held) stays on the page.
-function SelectorOverlay:_ww_line(delta, range)
-    if not self.ww_word or not self.ww_word.sbox then
-        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
-        return
-    end
-    if range then
-        self.ww_anchor = self.ww_anchor or self.ww_word
-    else
-        self.ww_anchor = nil
-    end
-    local doc    = self.doc
-    local fsbox  = self:_ww_fragment_sbox() or self.ww_word.sbox
-    local target_x = fsbox.x
-    -- getScreenPositionFromXPointer gives the TOP of a word's line, so lines
-    -- are compared through that same call (start_y = the cursor's line):
-    -- against the box middle, the word on the left counted as the line above
-    -- and ↑ moved by one word. A split word's tail sits on another line than
-    -- its pos0, so there the fragment box is the reference.
-    local line_h   = fsbox.h
-    local line_tol = line_h * 0.3
-    local start_y  = self.ww_word.is_split_fragment ~= "tail"
-        and doc:getScreenPositionFromXPointer(self.ww_word.pos0) or nil
-    start_y = start_y or fsbox.y
-    local box_dy = fsbox.y - start_y  -- line top -> word box top
-
-    local current_xp    = self.ww_word.pos0
-    local target_line_y = nil
-    local fallback_xp   = nil
-    for _ = 1, 80 do
-        local next_xp = self:_adjacent_word(current_xp, delta)
-        if not next_xp or next_xp == current_xp then break end
-        if not doc:isXPointerInCurrentPage(next_xp) then break end
-        current_xp = next_xp
-        local sy = doc:getScreenPositionFromXPointer(next_xp)
-        if not sy then break end
-        if (delta > 0 and sy > start_y + line_tol)
-            or (delta < 0 and sy < start_y - line_tol) then
-            target_line_y = sy
-            fallback_xp   = next_xp
-            break
-        end
-    end
-    if not target_line_y then
-        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
-        return
-    end
-
-    -- Probe the middle of the target line (target_line_y is its top).
-    local probe_y = target_line_y + box_dy + line_h * 0.5
-    local ok, probe = pcall(function()
-        return doc:getWordFromPosition({x = target_x, y = probe_y}, true)
-    end)
-    if ok and probe and probe.pos0 and probe.pos0 ~= self.ww_word.pos0 then
-        local ok2, boxes = pcall(function()
-            return doc:getScreenBoxesFromPositions(probe.pos0, probe.pos1, true)
-        end)
-        if ok2 and boxes and #boxes > 0 then
-            local sbox = Geom.boundingBox(boxes)
-            if sbox then
-                probe.sbox = sbox; probe.segments = boxes
-                local resolved, eval_y = self:_resolve_split_fragment(probe, target_x)
-                if math.abs(eval_y - probe_y) <= line_tol then
-                    self.ww_word = {
-                        pos0 = resolved.pos0, pos1 = resolved.pos1,
-                        sbox = sbox, word = resolved.word or "",
-                        segments = boxes,
-                        is_split_fragment = resolved.is_split_fragment,
-                    }
-                    return
-                end
-            end
-        end
-    end
-
-    local word = self:_ww_word_from_xp(fallback_xp)
-    if word then self.ww_word = word end
 end
 
 ----------------------------------------------------------------------
@@ -571,53 +475,93 @@ function SelectorOverlay:_sent_first_word(i)
     return w and self:_ww_word_from_xp(w.xp0) or nil
 end
 
--- Words, LT / RT (TASK-25): the first word of the next paragraph; back = the
--- first word of this paragraph, or of the previous one when the cursor is
--- already there. Past the page edge the next / previous page, landing as
--- _para_land does. range (A held) stays on the page.
-function SelectorOverlay:_ww_para(dir, range)
+-- The walk word at the end of sentence i (nil when it cannot be built).
+function SelectorOverlay:_sent_last_word(i)
+    local s = self.sentences[i]
+    local wl = s and s.word_list
+    local w = wl and wl[#wl]
+    return w and self:_ww_word_from_xp(w.xp0) or nil
+end
+
+-- After a page turn by ↑/↓ in words: ↓ the first sentence start of the new
+-- page (the second sentence when the first one began on the previous page),
+-- ↑ the start of the page's last sentence (where the cursor's sentence
+-- began, when it ran over the edge).
+function SelectorOverlay:_ww_sent_land(dir)
+    self.ww_anchor = nil
+    local n = #self.sentences
+    if n == 0 then self:_ww_land(dir); return end
+    local i = n
+    if dir > 0 then i = (self.sentences[1]._extends_before and n > 1) and 2 or 1 end
+    self.ww_word = self:_sent_first_word(i)
+end
+
+-- The range end for ↑/↓ with RT held (TASK-42 / PC-024), sentence cur =
+-- the cursor's. ↓: the end of the cursor's sentence, on it already the end
+-- of the next one; the cursor BEFORE the anchor goes to the next sentence
+-- start instead, not past the anchor. ↑: one sentence off, i.e. the end of
+-- the previous sentence, not before the anchor; the cursor on the anchor (or
+-- before it) goes back to the start of its sentence, on a start to the
+-- previous sentence's start. Only sentences of the page: nil = no move.
+function SelectorOverlay:_ww_range_target(cur, dir)
+    local w, a = self.ww_word, self.ww_anchor
+    local n = #self.sentences
+    if dir > 0 then
+        if self:_xp_before(w.pos0, a.pos0) then
+            local t = cur < n and self:_sent_first_word(cur + 1)
+            if not t or not self:_xp_before(t.pos0, a.pos0) then return a end
+            return t
+        end
+        local last = self:_sent_last_word(cur)
+        if last and last.pos0 ~= w.pos0 then return last end
+        return cur < n and self:_sent_last_word(cur + 1) or nil
+    end
+    if self:_xp_before(a.pos0, w.pos0) then
+        local t = cur > 1 and self:_sent_last_word(cur - 1)
+        if not t or not self:_xp_before(a.pos0, t.pos0) then return a end
+        return t
+    end
+    local first = self:_sent_first_word(cur)
+    if first and first.pos0 ~= w.pos0 then return first end
+    return cur > 1 and self:_sent_first_word(cur - 1) or nil
+end
+
+-- Words, ↑/↓ (TASK-42 / PC-024): ↓ = the start of the next sentence, ↑ =
+-- the start of the cursor's sentence, or of the previous one when the cursor
+-- is on a start already. Past the page edge the next / previous page
+-- (_ww_sent_land). range (RT or A held): sentence ends, see
+-- _ww_range_target; never leaves the page.
+function SelectorOverlay:_ww_sent(dir, range)
     local w = self.ww_word
     local cur = w and self:_sent_of_word(w)
     if not cur then
-        if not range and self:_turn_page(dir) then
-            self.ww_anchor = nil
-            local i = self:_para_land_index(dir, false)
-            self.ww_word = i and self:_sent_first_word(i) or nil
-        end
+        if not range and self:_turn_page(dir) then self:_ww_sent_land(dir) end
         return
     end
     if range then
         self.ww_anchor = self.ww_anchor or w
-    else
-        self.ww_anchor = nil
-    end
-    local target
-    if dir > 0 then
-        target = self:_para_target(cur, 1)
-    else
-        local start = self:_para_start(cur)
-        local first = self:_sent_first_word(start)
-        if start < cur or (first and first.pos0 ~= w.pos0) then
-            target = start
-        else
-            target = self:_para_target(cur, -1)
-        end
-        -- the page's first sentence began on the previous page, so its
-        -- paragraph did too: the jump goes there, to the real start
-        if target == 1 and self.sentences[1]._extends_before then target = nil end
-    end
-    local tw = target and self:_sent_first_word(target)
-    if tw then
-        self.ww_word = tw
+        local t = self:_ww_range_target(cur, dir)
+        if t then self.ww_word = t end
         return
     end
-    if range then return end
-    local split = dir > 0 and self.sentences[#self.sentences]._extends_after
-    if self:_turn_page(dir) then
-        self.ww_anchor = nil
-        local i = self:_para_land_index(dir, split)
-        self.ww_word = i and self:_sent_first_word(i) or nil
+    self.ww_anchor = nil
+    local target
+    if dir > 0 then
+        if cur < #self.sentences then target = cur + 1 end
+    else
+        local first = self:_sent_first_word(cur)
+        if first and first.pos0 ~= w.pos0 then
+            self.ww_word = first
+            return
+        end
+        if cur > 1 then target = cur - 1 end
     end
+    if target then
+        local t = self:_sent_first_word(target)
+        if t then self.ww_word = t end
+        return
+    end
+    if self:_turn_page(dir) then self:_ww_sent_land(dir) end
 end
 
 ----------------------------------------------------------------------
@@ -632,7 +576,7 @@ function SelectorOverlay:_hl_step(dir)
 end
 
 -- ←/→: one word / sentence / highlight. dir in document order (+1 =
--- forward; padnav has already flipped it for RTL). range = A held: the anchor
+-- forward; padnav has already flipped it for RTL). range = RT or A held: the anchor
 -- stays, the cursor moves, both directions (back over the anchor shrinks the
 -- range and then grows it on the other side).
 function SelectorOverlay:step(dir, range)
@@ -647,28 +591,27 @@ function SelectorOverlay:step(dir, range)
     self:_refresh()
 end
 
--- ↑/↓: one line / paragraph / highlight; range as in step().
+-- ↑/↓: a sentence start (words, TASK-42; with a range a sentence end) /
+-- paragraph / highlight; range as in step().
 function SelectorOverlay:line(dir, range)
     if self.mode == "point" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
     elseif self.mode == "walk" then
-        self:_ww_line(dir, range)
+        self:_ww_sent(dir, range)
     else
         self:_para_step(dir, range)
     end
     self:_refresh()
 end
 
--- LT / RT (TASK-25): one paragraph, at every level -- the first word of the
--- next / this or previous paragraph, the same for sentences as ↑/↓, the
--- next / previous highlight.
+-- LT / RT (TASK-25): one paragraph -- for sentences the same as ↑/↓, the
+-- next / previous highlight. Not in words (TASK-42 / PC-024: RT held is the
+-- range modifier there, LT does nothing).
 function SelectorOverlay:para(dir, range)
-    if self.mode == "point" then return end
+    if self.mode == "point" or self.mode == "walk" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
-    elseif self.mode == "walk" then
-        self:_ww_para(dir, range)
     else
         self:_para_step(dir, range)
     end
@@ -681,7 +624,7 @@ function SelectorOverlay:to_words()
     if self.mode ~= "struct" then return end
     local ww = self.sel_cur and self:_sent_first_word(self.sel_cur)
     if not ww then return end
-    self.mode = "walk"
+    self.mode, self.from_labels = "walk", false
     self.ww_word, self.ww_anchor, self.sel_anchor = ww, nil, nil
     self:_refresh()
 end
@@ -698,7 +641,8 @@ function SelectorOverlay:to_sentences()
 end
 
 ----------------------------------------------------------------------
--- Point from-to (TASK-29, on sentences since TASK-35 / PC-022)
+-- Point from-to (TASK-29, on sentences since TASK-35 / PC-022; sentence
+-- labels only since TASK-42 / PC-024)
 ----------------------------------------------------------------------
 -- Adapter of kopad_hints.lua, the same for EPUB and PDF: the word boxes are
 -- the screen boxes of self.words (reading order; nil off the screen), the
@@ -707,10 +651,8 @@ end
 -- in self.words, so a sentence over the page edge is labelled at its
 -- visible part. kopad_hints.lua itself knows no document.
 
--- The page's sentences as { first, last, si, para } word indices, in reading
--- order; para = the sentence's paragraph (paginmapo's block xpointer in an
--- EPUB, pdfwords / pdfpara's number in a PDF; nil = its own paragraph), for
--- the ↑ / ↓ shortcuts of kopad_hints.lua (TASK-36).
+-- The page's sentences as { first, last, si } word indices, in reading
+-- order.
 function SelectorOverlay:_point_sentences()
     local by, order = {}, {}
     for wi = 1, #self.words do
@@ -718,8 +660,7 @@ function SelectorOverlay:_point_sentences()
         if si then
             local s = by[si]
             if not s then
-                local sent = self.sentences and self.sentences[si]
-                s = { first = wi, last = wi, si = si, para = sent and sent.para }
+                s = { first = wi, last = wi, si = si }
                 by[si] = s
                 order[#order + 1] = s
             end
@@ -731,26 +672,12 @@ function SelectorOverlay:_point_sentences()
     return order
 end
 
--- The word badges (TASK-39): about 65 % of the line height, never below a
--- size still readable on the Deck. kopad_hints.lua gets badge_size, so it
--- knows when a badge above a word would leave the screen.
-local POINT_BADGE_RATIO = 0.65  -- of the word's height
-local POINT_BADGE_MIN = 12      -- scaleBySize: still readable on the Deck
-local POINT_BADGE_MAX = 18
-
-local function badge_size(h)
-    local d = math.floor((h or 0) * POINT_BADGE_RATIO + 0.5)
-    return math.max(Screen:scaleBySize(POINT_BADGE_MIN), math.min(d, Screen:scaleBySize(POINT_BADGE_MAX)))
-end
-
 -- Labels at the sentence starts of the page. False when the page has no
 -- text (no sentence with a word on the screen).
 function SelectorOverlay:_point_begin()
     local boxes = {}
     for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
-    local pointer = Hints.Pointer.new(self:_point_sentences(), boxes,
-        { rtl = self.is_rtl, badge = badge_size, gap = Screen:scaleBySize(3),
-          width = Screen:getWidth(), height = Screen:getHeight() })
+    local pointer = Hints.Pointer.new(self:_point_sentences(), boxes, { rtl = self.is_rtl })
     if #pointer:visible() == 0 then return false end
     self.mode = "point"
     self.pointer = pointer
@@ -760,7 +687,7 @@ end
 
 -- One pad symbol (Hints.SYMBOLS: "up" .. "right", "A", "B", "X", "Y").
 -- Returns the pointer's result (kopad_hints.lua); "cancel" = padnav closes the
--- overlay. "done" turns the overlay into a word walk.
+-- overlay. "done" (a whole label) turns the overlay into a word walk.
 function SelectorOverlay:point_press(sym)
     local p = self.pointer
     if self.mode ~= "point" or not p then return "ignored" end
@@ -770,23 +697,34 @@ function SelectorOverlay:point_press(sym)
     return res
 end
 
--- The chosen words as a word walk: anchor = the start word (a labelled word,
--- or a sentence's / paragraph's first word), cursor = the end word (A + arrows move
--- the cursor, A tapped = the action menu); no end = the start word alone.
+-- The chosen sentence as a word walk (TASK-42 / PC-024): the cursor on its
+-- first visible word, no anchor (nothing selected yet); B goes back to the
+-- labels (from_labels, see back()).
 function SelectorOverlay:_point_finish()
     local p = self.pointer
     self.pointer = nil
-    self.mode = "walk"
+    self.mode, self.from_labels = "walk", true
     local w0 = p.start and self.words[p.start]
-    local first = w0 and self:_ww_word_from_xp(w0.xp0)
-    if not first then return end
-    local w1 = p.stop and self.words[p.stop]
-    local last = w1 and w1 ~= w0 and self:_ww_word_from_xp(w1.xp0)
-    if last then
-        self.ww_anchor, self.ww_word = first, last
-    else
-        self.ww_anchor, self.ww_word = nil, first
+    self.ww_word = w0 and self:_ww_word_from_xp(w0.xp0) or nil
+    self.ww_anchor = nil
+end
+
+-- B in the words (TASK-42 / PC-024), one step back: a range -> dropped (the
+-- cursor stays at its moving end); no range and the walk began at a
+-- sentence label -> the sentence labels again, on the page shown now. True
+-- when B was used; false = padnav closes the overlay.
+function SelectorOverlay:back()
+    if self.mode ~= "walk" then return false end
+    if self.ww_anchor then
+        self.ww_anchor = nil
+        self:_refresh()
+        return true
     end
+    if self.from_labels and self:_point_begin() then
+        self:_refresh()
+        return true
+    end
+    return false
 end
 
 ----------------------------------------------------------------------
@@ -1273,97 +1211,20 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     end
 end
 
--- Point from-to: what kopad_hints.lua's Pointer:stage() says for the typed
--- prefix, and in the end step the preview: start word .. the end of the
--- current end sentence, always (also while that is the start sentence), so
--- the range the ← shortcut would give is on the screen and → / ↑ visibly
--- move it (TASK-36). Since TASK-41 only the start word is inverted; the rest
--- of the range is a thin dashed line just under its lines (Hints.dashes), so
--- it does not look like a finished selection (that is the walk after the
--- end is chosen).
---   sentence level: a pill with the whole label next to each sentence start
---     (over the text when the margin is too narrow), as since TASK-35;
---   word level (TASK-39): one small badge per piece of the current stage
---     with its letter (A / X / Y in reading order), its left edge on the
---     left edge of the piece's first word (RTL: right edges), just above the
---     word (below it when above would leave the screen; kopad_hints.lua
---     decides). No underline, no badge on the other words;
---   shortcut badges (TASK-41, word level): an arrow in a rounded square
---     where ← / ↑ (start step) or ← / ↓ / → (end step) lead, at the spot
---     kopad_hints.lua picked (st.shortcuts: never over a letter badge).
--- Badges are badge_size (about 65 % of the line height). D-pad symbols are
--- rounded squares with an arrow, letters are circles; a symbol already
--- pressed (sentence pills) is grey.
+-- Point from-to: the sentence labels kopad_hints.lua keeps in play for the
+-- typed prefix (TASK-35; since TASK-42 / PC-024 nothing else: the word
+-- badges, the arrow badges and the dashed preview of TASK-39..41 are gone).
+-- D-pad symbols are rounded squares with an arrow, letters are circles; a
+-- symbol already pressed is grey.
 local POINT_GLYPHS = {
     up = "\xE2\x86\x91", down = "\xE2\x86\x93", left = "\xE2\x86\x90", right = "\xE2\x86\x92",
     A = "A", B = "B", X = "X", Y = "Y",
 }
 
-local point_faces = {}
--- A face whose glyphs fit a badge of d px (Font:getFace scales by itself).
-local function point_face(d)
-    local scale = Screen:scaleBySize(100) / 100
-    local size = math.max(6, math.floor(d * 0.62 / (scale > 0 and scale or 1) + 0.5))
-    if not point_faces[size] then
-        point_faces[size] = require("ui/font"):getFace("infofont", size) or LABEL_FACE
-    end
-    return point_faces[size]
-end
-
--- One badge of d px at (x, y) (screen, without the offset): white, a black
--- outline, the glyph; a circle for a letter, a rounded square for an arrow.
-local function paint_badge(bb, ox, oy, x, y, d, sym, fg, border, face)
-    local bx, by = ox + x, oy + y
-    if #sym == 1 then
-        local r = math.floor(d / 2)
-        bb:paintCircle(bx + r, by + r, r, Blitbuffer.COLOR_WHITE, r)
-        bb:paintCircle(bx + r, by + r, r, fg, border)
-    else
-        bb:paintRect(bx, by, d, d, Blitbuffer.COLOR_WHITE)
-        bb:paintBorder(bx, by, d, d, border, fg, math.floor(d / 4))
-    end
-    local tw = TextWidget:new{ text = POINT_GLYPHS[sym] or sym, face = face or LABEL_FACE,
-                               bold = true, fgcolor = fg }
-    local sz = tw:getSize()
-    tw:paintTo(bb, bx + math.floor((d - sz.w) / 2), by + math.floor((d - sz.h) / 2))
-    tw:free()
-end
-
 function SelectorOverlay:_draw_point(bb, ox, oy)
     local p = self.pointer
     if not p then return end
-    local from, to = p:preview()
-    if from then
-        local w0 = self.words[from]
-        local b0 = w0 and w0.sbox
-        if b0 then invert_rounded_rect(bb, ox, oy, b0.x, b0.y, b0.w, b0.h) end
-        local boxes = {}
-        for i = from + 1, to do
-            local w = self.words[i]
-            boxes[#boxes + 1] = w and w.sbox or false
-        end
-        local dashes = Hints.dashes(Hints.lines_from_boxes(boxes), {
-            dash = Screen:scaleBySize(4), space = Screen:scaleBySize(3),
-            thick = math.max(1, math.min(2, Screen:scaleBySize(1))), offset = 1 })
-        for _, r in ipairs(dashes) do
-            bb:paintRect(ox + r.x, oy + r.y, r.w, r.h, Blitbuffer.COLOR_BLACK)
-        end
-    end
-    local st = p:stage()
-    if st.kind == "sentence" then return self:_draw_point_pills(bb, ox, oy, st.items) end
-    if st.kind ~= "words" then return end
-    local sw, sh = Screen:getWidth(), Screen:getHeight()
-    local border = math.max(1, Screen:scaleBySize(1))
-    for _, v in ipairs(st.items) do
-        local d = v.d or badge_size(v.h)
-        local x = v.side == "right" and (v.x - d) or v.x
-        x = math.max(0, math.min(sw - d, x))
-        local y = math.max(0, math.min(sh - d, v.y))
-        paint_badge(bb, ox, oy, x, y, d, v.symbol, Blitbuffer.COLOR_BLACK, border, point_face(d))
-    end
-    for _, v in ipairs(st.shortcuts or {}) do
-        paint_badge(bb, ox, oy, v.x, v.y, v.d, v.symbol, Blitbuffer.COLOR_BLACK, border, point_face(v.d))
-    end
+    self:_draw_point_pills(bb, ox, oy, p:visible())
 end
 
 -- The sentence labels: a pill with the whole label (two badges) left of the
@@ -1413,7 +1274,7 @@ function SelectorOverlay:_status_text(short)
         return self:_point_status(short)
     end
     if self.mode == "walk" then
-        return (self.ww_anchor and "WORDS" or "WORD") .. keys
+        return self:_walk_status(short)
     end
     if self.mode == "hl" then
         local item = self.hl_items[self.hl_cur]
@@ -1432,47 +1293,36 @@ function SelectorOverlay:_status_text(short)
     return (many and "SENTENCES" or "SENTENCE") .. ext .. keys
 end
 
--- Point from-to (TASK-36 / TASK-39): the step, the letters of the current
--- stage and the shortcuts. FROM = the sentence labels, FROM WORD = the start
--- sentence's words, TO = the end sentence's words; B after a typed symbol
--- drops it ("undo" on the sentence labels, "back" = one stage on the words).
--- The arrows follow the script (RTL: back = →). `short` = only the step and B.
+-- Words (TASK-42 / PC-024): the moves, RT = range, B = one step back (a
+-- range: clear it; from a sentence label: the labels; else close). `short`
+-- = the level, A and B only.
+function SelectorOverlay:_walk_status(short)
+    local dot = " \xC2\xB7 "
+    local range = self.ww_anchor ~= nil
+    local b = range and "B clear" or (self.from_labels and "B back" or "B close")
+    local head = range and "WORDS" or "WORD"
+    if short then return head .. dot .. "A menu" .. dot .. b end
+    local moves = "\xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence"
+    return head .. dot .. moves .. dot .. "RT select" .. dot .. "X hl" .. dot .. "Y vort"
+        .. dot .. "A menu" .. dot .. b
+end
+
+-- Point from-to (TASK-35, TASK-42): the sentence labels; B after a typed
+-- symbol drops it ("undo", unless a label goes on with B). `short` = only
+-- the step and B.
 function SelectorOverlay:_point_status(short)
     local dot = " \xC2\xB7 "
     local p = self.pointer
-    local back_arrow = self.is_rtl and "\xE2\x86\x92" or "\xE2\x86\x90"
-    local fwd_arrow  = self.is_rtl and "\xE2\x86\x90" or "\xE2\x86\x92"
-    local typed = p and p.typed and #p.typed > 0
-    local head, keys, b
-    if p and p.step == "end" then
-        head, b = "TO", "B one word"
-        keys = back_arrow .. " end " .. fwd_arrow .. " next"
-            .. ((p.sent and p.start_sent and p.sent > p.start_sent) and " \xE2\x86\x91 previous" or "")
-            .. " \xE2\x86\x93 paragraph"
-    elseif p and p.level == "word" then
-        head, b = "FROM WORD", "B sentences"
-        keys = back_arrow .. " sentence \xE2\x86\x91 paragraph"
-    else
-        head, b = "FROM", "B close"
-        keys = "label = sentence"
-    end
-    local letters = ""
-    if p and p.level == "word" then
-        local syms = {}
-        for _, v in ipairs(p:stage().items) do syms[#syms + 1] = v.symbol end
-        if #syms > 0 then letters = table.concat(syms, " ") .. dot end
-    end
-    if typed and p.level == "word" then
-        b = "B back"
-    elseif typed then
+    local b = "B close"
+    if p and p.typed and #p.typed > 0 then
         -- B continues a label (a sentence label "↑B"): no undo to show
         b = "B undo"
         for _, v in ipairs(p:visible()) do
             if v.label[#p.typed + 1] == Hints.BACK then b = nil; break end
         end
     end
-    if short then return head .. (b and dot .. b or "") end
-    return head .. dot .. letters .. keys .. (b and dot .. b or "")
+    if short then return "FROM" .. (b and dot .. b or "") end
+    return "FROM" .. dot .. "label = sentence" .. (b and dot .. b or "")
 end
 
 -- The segments of a status line: the mode word bold italic, a lone capital
@@ -1865,27 +1715,13 @@ function PagedOverlay:_turn_page(dir)
 end
 
 -- Words: one word forward / back; past the page edge the next / previous
--- page (the range, A held, stays on the page).
+-- page (the range, RT or A held, stays on the page).
 function PagedOverlay:_ww_step(dir, range)
     local w = self.ww_word
     if range then self.ww_anchor = self.ww_anchor or w else self.ww_anchor = nil end
     local nw = w and self.words[w.idx + dir]
     if nw then self.ww_word = nw; return end
     if not range and self:_turn_page(dir) then self:_ww_land(dir) end
-end
-
--- Words: the nearest word on the next / previous line of the page's text
--- boxes; past the last / first line the next / previous page.
-function PagedOverlay:_ww_line(delta, range)
-    local w = self.ww_word
-    if not w then
-        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
-        return
-    end
-    if range then self.ww_anchor = self.ww_anchor or w else self.ww_anchor = nil end
-    local i = PdfWords.line_target(self.words, w.idx, delta)
-    if i then self.ww_word = self.words[i]; return end
-    if not range and self:_turn_page(delta) then self:_ww_land(delta) end
 end
 
 -- Word indices of the selection (walk: cursor / anchor..cursor; struct:

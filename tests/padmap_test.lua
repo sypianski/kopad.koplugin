@@ -1168,8 +1168,8 @@ do
             show("struct")
         end
         selector._open_walk = function(_, from_end) log.sel[#log.sel + 1] = "_open_walk:" .. tostring(from_end); show("walk") end
-        -- point from-to (TASK-29 / TASK-36): a scripted pointer -- B first =
-        -- cancel, the 6th symbol = done, then words
+        -- point from-to (TASK-29, sentence labels TASK-42): a scripted
+        -- pointer -- B first = cancel, the 6th symbol = done, then words
         selector._open_point = function()
             log.sel[#log.sel + 1] = "_open_point"
             show("point")
@@ -1224,9 +1224,9 @@ do
     assert(n:onGamepadAxisMotion({ axis = 2, value = 20000 }) == true)
     assert(n:onKPRStickDown() == true and n:onKPRStickUp() == true and n:onKPRStickLeft() == true)
     assert(#log.ov == 0 and n:_selector().overlay.mode == "point", "R-stick in the labels: nothing")
-    -- the labels: D-pad and letters are symbols on the press (the arrows =
-    -- the shortcuts of the word labels, TASK-36); a held D-pad does not
-    -- repeat, A / Y / B start no hold (their release does nothing)
+    -- the labels: D-pad and letters are symbols on the press (label
+    -- symbols, TASK-42); a held D-pad does not repeat, A / Y / B start no
+    -- hold (their release does nothing)
     assert(down(n, 12) == true and #sched == 0, "no D-pad repeat on the labels"); up(n, 12)
     down(n, 0); up(n, 0)
     down(n, 3); up(n, 3)
@@ -1236,7 +1236,7 @@ do
     assert(table.concat(log.ov, " ") == "point(down) point(A) point(Y) point(right) point(B) point(left)",
         "symbols, no menu / Vortuyo / close / step: " .. table.concat(log.ov, " "))
     assert(n:_selector().overlay.mode == "walk" and n:_context() == "selection" and #log.events == 0,
-        "start + end chosen: the word walk")
+        "a label chosen: the word walk")
     -- LT / RT and the sticks in the labels reach only the overlay's guarded
     -- moves (selector.lua ignores them in mode point), X / Y no action
     log.ov = {}
@@ -1347,6 +1347,91 @@ do
     n:onGamepadAxisMotion({ axis = 5, value = 32767 })
     assert(#log.events == 1 and log.events[1] == "GotoViewRel:1", "reading: held RT = one page")
     T.now = function() clock = clock + 1; return clock end
+
+    -- RT held in the words (TASK-42 / PC-024): the range modifier. The press
+    -- sets it (no paragraph jump), the stock auto-repeat is eaten, D-pad /
+    -- L-stick moves (and their repeat) pass range = true, the poll of
+    -- Gamepad.held_axis_directions clears it on the release; the range
+    -- stays (nothing is sent to the overlay). LT reaches only para(), which
+    -- selector.lua ignores in words.
+    do
+        local held = {}
+        local saved_gp = package.loaded["device/sdl/gamepad"]
+        package.loaded["device/sdl/gamepad"] = { held_axis_directions = held }
+        n, log, sel = epub()
+        T.now = function() return clock end
+        clock = clock + 10
+        sel:_open_walk(false)
+        local wov = sel.overlay
+        held[5] = 1
+        assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and n._rt_down == true
+            and #log.ov == 0, "RT press in the words: the modifier, no paragraph")
+        assert(#sched == 1 and math.abs(sched[1].s - 0.05) < 1e-9, "the release is polled")
+        clock = clock + 0.5; n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        clock = clock + 0.2; n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(#log.ov == 0 and #log.events == 0 and #sched == 1, "auto-repeat eaten: no page, no paragraph")
+        down(n, 12); up(n, 12)
+        down(n, 14)
+        assert(log.ov[1] == "line(1,true)" and log.ov[2] == "step(1,true)", "D-pad with RT = range: "
+            .. table.concat(log.ov, " "))
+        -- the D-pad repeat (scheduled after the RT poll) keeps the range
+        local rep_tick = table.remove(sched, 2).fn
+        rep_tick()
+        assert(log.ov[3] == "step(1,true)", "repeat with RT = range")
+        up(n, 14)
+        n:onGamepadAxisMotion({ axis = 0, value = -20000 })
+        assert(log.ov[4] == "step(-1,true)", "L-stick with RT = range")
+        -- still held: the poll goes on; released: the modifier goes
+        local poll = table.remove(sched, 1).fn
+        poll()
+        assert(n._rt_down == true and #sched == 1, "held: polled again")
+        held[5] = nil
+        table.remove(sched, 1).fn()
+        assert(not n._rt_down and #sched == 0, "released: the modifier is off")
+        assert(sel.overlay == wov and #log.sel == 1, "the range stays, nothing closed")
+        down(n, 14); up(n, 14)
+        assert(log.ov[5] == "step(1,false)", "after the release: plain moves")
+        -- a quick second press the repeat filter would take for a repeat: still a hold
+        held[5] = 1
+        clock = clock + 0.5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(n._rt_down == true and #log.ov == 5, "a second RT press = the modifier again")
+        held[5] = nil
+        table.remove(sched, 1).fn()
+        -- LT in the words: only para(), which selector.lua ignores in mode walk
+        clock = clock + 5
+        n:onGamepadAxisMotion({ axis = 4, value = 32767 })
+        assert(log.ov[6] == "para(-1,false)" and not n._rt_down and #log.events == 0, "LT: no page turn")
+        -- in the sentences RT is still the paragraph (TASK-25)
+        sel:_close(); sel:_open()
+        clock = clock + 5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(log.ov[7] == "para(1,false)" and not n._rt_down, "sentences: RT = paragraph")
+        -- no axis to poll (a remapped button / no SDL state): RT toggles a latch
+        sel:_close(); sel:_open_walk(false)
+        clock = clock + 5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(n._rt_down == true and n._rt_latch == true and #sched == 0, "latch on")
+        clock = clock + 0.5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(n._rt_down == true, "its auto-repeat changes nothing")
+        clock = clock + 5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(not n._rt_down, "the next press: latch off")
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })   -- on again, then a new selection
+        sel:_close(); sel:_open_walk(false)
+        down(n, 14); up(n, 14)
+        assert(log.ov[#log.ov] == "step(1,false)", "a latch belongs to its overlay")
+        -- B in the words: the overlay's back() first (a range / the labels), then close
+        local backs = 0
+        sel.overlay.back = function() backs = backs + 1; return backs == 1 end
+        assert(down(n, 1) == true and backs == 1 and sel.overlay ~= nil, "B 1: back() used it")
+        up(n, 1)
+        assert(down(n, 1) == true and backs == 2 and sel.overlay == nil, "B 2: back() declined, closed")
+        up(n, 1)
+        T.now = function() clock = clock + 1; return clock end
+        package.loaded["device/sdl/gamepad"] = saved_gp
+    end
 
     -- D-pad while reading (TASK-28): pages, →/↓ next, ←/↑ previous, no repeat
     n, log, sel = epub()

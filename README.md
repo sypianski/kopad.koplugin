@@ -57,7 +57,7 @@ Written for a Steam Deck / DualSense (via Steam Input) on stock KOReader 2026.07
 | **D-pad** | next page (→ / ↓) / previous page (← / ↑; in right-to-left books ← / → follow the screen) |
 | hold **A** + D-pad | select words: → / ↓ start at the first word of the page, ← / ↑ at the last one |
 | hold **Y** + D-pad | select sentences: → / ↓ start at the first sentence of the page, ← / ↑ at the last one |
-| tap **A** | point from-to: labels at the sentences, then A / X / Y in stages of three on the words pick where the selection starts and ends; arrows jump to the sentence / paragraph start and end (see below) |
+| tap **A** | point from-to: labels at the sentences; a label puts the word cursor at the start of that sentence, then the arrows move it and **RT** held selects (see below) |
 | tap **Y** | browse the page's highlights (**D-pad** moves between them); if the page has none, a short message |
 | **R-stick** | the quick-action wheel (see below) |
 | **L-stick** | nothing |
@@ -152,13 +152,19 @@ Touch works too: tap a sector to run it, the centre for the next page, the page 
 
 ### Point from-to (tap A)
 
-A tap on **A** while reading puts a small label next to the start of every sentence on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles); after the first symbol only the labels going on with it stay on screen. Pressing a sentence's label does not set the start yet: it lets you pick a word of that sentence (status `FROM WORD`), in stages of three. The sentence is cut into up to three parts in reading order, **A** = the first part, **X** = the second, **Y** = the third, and each part gets ONE small letter badge just above the start of its first word (at its left edge, the right edge in right-to-left scripts; below the word only when above would be off the screen). Press a letter and that part is cut into three again, with new badges; the last letter picks the word itself. The smallest parts are 3 words, so up to 9 words take 2 letters, up to 27 take 3, up to 81 take 4. Nothing is underlined and no badge is drawn on its word (they sit in the space between the lines); the badges are about two thirds of the line height. **B** after a letter goes back one stage. The last letter puts the start on that word, or use a shortcut (at any stage, also after a letter): **←** = the start of the sentence, **↑** = the start of its paragraph. The shortcuts have badges of their own on the text, an arrow in a square: **←** next to the **A** badge of the sentence's first word, **↑** over the first word of the paragraph (only when the paragraph begins before the sentence).
+A tap on **A** while reading puts a small label next to the start of every sentence on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles); after the first symbol only the labels going on with it stay on screen. Pressing a sentence's whole label puts the word cursor on that sentence's first word (its first word on the screen, for a sentence that began on the previous page or above a zoomed PDF view). Nothing is selected yet: from there it is the word level of the selection (below). **←** / **→** move by a word, **↑** / **↓** jump to sentence starts, and holding **RT** selects:
 
-Then the end step (status `TO`): the same stages run over the words of the start sentence from the start word on. The start word is shown inverted and the range from it to the end of that sentence is marked by a thin dashed line under the lines (only a preview: the full inverted selection comes once the end is chosen). Arrow badges show the shortcuts here too: **←** just after the end of the sentence, **↓** after the last word of the paragraph (when it ends later), **→** over the first word of the next sentence. In right-to-left scripts everything is mirrored. The arrow badges never cover a letter badge, and they stay clear of the words wherever there is room between the lines. Every word keeps the letters it had in the start step; the words before the start get no badge and their letters do nothing. So one word = press the start word's letters again (or **B**), two words = the letters of the next word. On another sentence (after **→** / **↑**) the letters start again from that sentence's first word. The last letter ends on that word, or (again at any stage): **←** = end at the end of that sentence, **↓** = end at the end of the paragraph, **→** = move the labels (and the dashed range) to the next sentence, **↑** = back one sentence (never before the start sentence). **B** keeps just the one start word. The selection never leaves the page: **→** on the page's last sentence does nothing. From there it is the ordinary word selection: hold **A** and use the arrows to fine-tune the range, tap **A** for the action menu.
+| | without RT | with **RT** held |
+|---|---|---|
+| **←** / **→** | previous / next word | the range end by a word |
+| **↓** | start of the next sentence | range end to the end of the sentence; on an end, to the end of the next one |
+| **↑** | start of this sentence; on a start, of the previous one | one sentence off (to the end of the previous sentence, never before where the range began); at the range's start, back to the start of the sentence, then of the previous one |
 
-So a whole sentence is: its label, **←**, **←** (four presses); from a word to the end of its sentence: the sentence label, the word's letters, **←**; a paragraph: a sentence label, **↑**, **↓**. In right-to-left scripts **←** and **→** swap (onwards = to the left). The R-stick does nothing while the labels are up. A sentence that runs over the page edge is labelled at its part on the screen (in a zoomed PDF: at its part in the view).
+The range starts at the cursor when you first move with **RT** held. Letting go of **RT** keeps the range; holding it again goes on from there. A range never leaves the page. So a whole sentence is: its label, hold **RT**, **↓**; two sentences: one more **↓**; from a word to the end of its sentence: the label, **→** to the word, hold **RT**, **↓**. Tap **A** for the action menu. **B** goes back one step: a range is dropped (the cursor stays where its end was), then the sentence labels come back (on the page shown now), then the selection closes.
 
-The sentence labels follow the place of the target, like the link labels of the Vivaldi setup on the Deck: targets near the top start with ↑ or **Y**, those at the bottom with ↓ or **A**, the middle with ←, → or **X**, and neighbours share their first symbol. Every label is two presses, even on a short page (a lone target in its group repeats the symbol, e.g. ↑↑). The word stages use only **A**, **X** and **Y**, always in reading order. No label starts with **B**, and the word stages have no **B** at all: **B** before any symbol closes the labels (on the sentence labels), goes back to the sentences (on the start's words) or means "one word" (in the end step); after a symbol it drops that symbol (on the words: back one stage), unless a sentence label goes on with **B**. That leaves room for 56 sentences on a page; sentences beyond that get no label. Only on KOReader 2026.07+ (`Gamepad*` events); on older patched builds a tap on **A** still opens the sentences.
+The sentence labels follow the place of the target, like the link labels of the Vivaldi setup on the Deck: targets near the top start with ↑ or **Y**, those at the bottom with ↓ or **A**, the middle with ←, → or **X**, and neighbours share their first symbol. Every label is two presses, even on a short page (a lone target in its group repeats the symbol, e.g. ↑↑). No label starts with **B**: **B** before any symbol closes the labels; after a symbol it drops that symbol, unless a label goes on with **B**. That leaves room for 56 sentences on a page; sentences beyond that get no label. The R-stick does nothing while the labels are up. In right-to-left scripts **←** and **→** swap. Only on KOReader 2026.07+ (`Gamepad*` events); on older patched builds a tap on **A** still opens the sentences.
+
+(Until TASK-42 / PC-024 the labels went on over the words of the sentence, in stages of **A** / **X** / **Y**, with an end step and arrow shortcuts; that was hard to predict on the Deck and is gone.)
 
 ### Selection mode (sentences and words)
 
@@ -167,21 +173,22 @@ The selection has two levels: sentences (opened with **Y** + D-pad) and words (o
 | Button | Words | Sentences |
 |---|---|---|
 | **D-pad** / **L-stick** ←/→ | previous / next word | previous / next sentence |
-| **D-pad** / **L-stick** ↑/↓ | line above / below | start of this or the previous paragraph / next paragraph |
-| **RT** / **LT** | first word of the next paragraph / of this paragraph (or the previous one when already there) | next paragraph / start of this or the previous paragraph (as ↓/↑) |
-| hold **A** + arrows | select a range from the word where you pressed A, in both directions (going back past it shrinks the range, then grows it on the other side) | the same with sentences |
+| **D-pad** / **L-stick** ↑/↓ | start of this or the previous sentence / start of the next sentence | start of this or the previous paragraph / next paragraph |
+| hold **RT** + arrows | select a range from the word where the first move began: ←/→ by a word, ↓ to the end of the sentence (then the next one), ↑ one sentence off (see *Point from-to*) | — |
+| **RT** / **LT** | **RT** held = the range above, **LT** nothing | next paragraph / start of this or the previous paragraph (as ↓/↑) |
+| hold **A** + arrows | the same as **RT** held (the older way) | select a range from the sentence where you pressed A, in both directions (going back past it shrinks the range, then grows it on the other side) |
 | tap **A** | action menu (dictionary, AI, copy, note), when you let go | same |
 | **R-stick** ↓ | — | go to the first word of this sentence (word level) |
 | **R-stick** ↑ | go to the sentence containing this word | — |
 | **Y** | Vortuyo lookup | same |
 | **X** | toggle highlight | same |
-| **B** | close the selection | same |
+| **B** | drop the range; without one go back to the sentence labels (when you came from them) or close | close the selection |
 | **RB** / **LB** | close the selection and turn the page | same |
 | **Select** / **Start** | close the selection and open the top / bottom menu | same |
 
 The **A** you hold to open the words is not a range yet: while it is still down the arrows only move the cursor, so you can pick the word where the range starts (or a single word). Let go, then hold **A** again and move to select from there.
 
-The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the last line to the first word of the next one. A sentence that runs over the edge counts once. A range (A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second. **RT** / **LT** jump by paragraph at both levels, over the page edge too (a paragraph that began on the previous page is reached at its real start); held, they keep jumping, and with **A** held they grow the range by paragraphs. With the highlights (**Y**) they go to the next / previous one. The status line shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters. It never covers the text of the page: it sits in the free strip above the first line or below the last one, shrinks to the level and A / B when the strip is tight, and is not drawn at all when there is no room.
+The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the page's last sentence to the first sentence start of the next one. A sentence that runs over the edge counts once. A range (RT or A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second. On the sentence level **RT** / **LT** jump by paragraph, over the page edge too; held, they keep jumping, and with **A** held they grow the range by paragraphs. On the word level they do not move the cursor (**RT** held is the range there). With the highlights (**Y**) they go to the next / previous one. The status line shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters. It never covers the text of the page: it sits in the free strip above the first line or below the last one, shrinks to the level and A / B when the strip is tight, and is not drawn at all when there is no room.
 
 While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
 
@@ -193,7 +200,7 @@ In the dictionary popup **LB** / **RB** cycle dictionaries, **Y** asks the AI to
 
 On **KOReader 2026.07+** every button and axis arrives as a `Gamepad*` event and is mapped by id in `padnav.lua` (`onGamepadButtonDown` / `onGamepadAxisMotion`, relayed from `main.lua`). While kopad is enabled:
 
-- **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out; in the selection it goes through, so a held trigger keeps jumping paragraphs). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
+- **Select** / **Start** open the top / bottom menu; **LT** / **RT** turn the page, one page per press (the stock auto-repeat of held axes is filtered out; in the selection on the sentence level it goes through, so a held trigger keeps jumping paragraphs; on the word level a held **RT** is the range modifier and its repeat does nothing). With the top menu open they turn the menu page instead (same one-press filter), and **LB** / **RB** switch the category.
 - The **R-stick** never turns pages by itself any more (stock maps its Y axis to page back/forward with auto-repeat, which flipped pages endlessly). Its auto-repeat is kept for navigation.
 - **Guide**, **L3** and **R3** are swallowed so a stick click cannot open a menu or turn a page. In an EPUB kopad handles the D-pad itself (so that a held D-pad can repeat); elsewhere it is passed through to the original Up/Down/Left/Right keys.
 - Button releases (`GamepadButtonUp`) end holding **A** (range, or a tap for the menu), holding **X** and a D-pad repeat. They are remapped like the presses.
@@ -268,7 +275,7 @@ The selection works in EPUBs and, on pages with a text layer, in PDF / DjVu (wor
 | **hold B + D-pad ← / →** | fit the whole page / fit the text width; tap **B** = back |
 | **hold A + D-pad** | select words, as in an EPUB: → / ↓ from the first word on the screen, ← / ↑ from the last |
 | **hold Y + D-pad** | select sentences (the same) |
-| **tap A** | point from-to: labels at the sentences on the screen, then on the words (arrows = sentence / paragraph shortcuts) |
+| **tap A** | point from-to: labels at the sentences on the screen; a label = the word cursor at that sentence's start |
 | **tap Y** | the page's highlights, as in an EPUB: the D-pad steps between them (the view pans to each), **X** removes one; none = a message |
 | **LB / RB**, **LT / RT** | previous / next page (the new page starts at the top) |
 
@@ -276,7 +283,7 @@ Moving around needs page view, so the first time kopad runs enabled on a device 
 
 X + D-pad still opens the menus, and role overrides from koligilo still win over these defaults.
 
-The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Paragraphs are guessed from the layout (line spacing, indent, short last line, two columns), so ↑ / ↓ in sentences and **LT / RT** jump by paragraph as in an EPUB; on an unusual layout the guess can be off. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
+The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, ranges with RT or A held, the R-stick levels, **A** action menu, **Y** Vortuyo, **B** back / close); **LB / RB** close it and turn a whole page, and moving past the first / last word goes on to the previous / next page. The boxes follow zoom and panning, and moving onto a word outside the zoomed view pans the view to it. **X** highlights the selection, or removes the highlight if exactly these words are already highlighted (also one made with a finger); the action menu has Dictionary, Copy, Highlight, Note, AI explain and Vortuyo. Highlights use your KOReader highlight style. A selection stays on one page, so a highlight never spans pages. Paragraphs are guessed from the layout (line spacing, indent, short last line, two columns), so ↑ / ↓ and **LT / RT** in sentences jump by paragraph as in an EPUB; on an unusual layout the guess can be off. A scanned page without a text layer, or reflow mode, shows a message instead of opening the selection.
 
 ## Technical notes
 
@@ -284,7 +291,7 @@ The selection in a PDF / DjVu uses the same buttons as in an EPUB (arrows, range
 
 - **padmap.lua** — pure (KOReader-free) remapping layer: physical SDL button/trigger → logical role, per layout (see Button remapping).
 - **padnav.lua** — gamepad event handler. Maps buttons + axes (`Gamepad*` events on KOReader 2026.07+, key events on older patched builds) to KOReader events.
-- **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position at the sentences, the A / X / Y tree of threes on the words and the two-step pointer (start, end, the arrow shortcuts to sentence and paragraph bounds, B). Knows no document type: EPUB and PDF hand it word boxes and sentences as word-index ranges with their paragraph.
+- **kopad_hints.lua** — pure (KOReader-free) labels of point from-to: the eight pad symbols placed by position at the sentences, and the pointer that turns the pressed symbols into a sentence and its first visible word (B). Knows no document type: EPUB and PDF hand it word boxes and sentences as word-index ranges.
 - **selector.lua** — the selection overlay: sentence, word, highlight and point from-to modes, ranges, page crossing. Pulls visible word positions and sentences from the bundled `paginmapo.lua` (Ido for "page-map"); in PDF / DjVu its `PagedOverlay` takes them from `pdfwords.lua`.
 - **pdfwords.lua** — pure word source for PDF / DjVu: KOReader's `getTextBoxes` lines turned into the overlay's word list (page boxes, sentence ends, lines), sentences grouped by `paginmapo.lua`, words in reading order.
 - **pdfpara.lua** — pure paragraph detection for PDF / DjVu pages from the text-line rectangles (one or two columns; line pitch, first-line indent, short last line, list markers). Gives the paragraph numbers behind **LT / RT** and ↑ / ↓ in a PDF.
@@ -335,7 +342,7 @@ lua tests/pdfwords_test.lua
 lua tests/pdfpara_test.lua
 ```
 
-`selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and line moves, page crossing, ranges, level switches, highlights and point from-to. `kopad_hints_test.lua` checks the labels of point from-to (`kopad_hints.lua`): placement by position, two symbols, unique, at most 56, the prefix filter, **B**, the lines from word boxes, the word labels (the tree of threes: stages by length, A / X / Y in reading order, the short last piece), the pointer's two steps with every arrow shortcut at every stage, B back one stage, RTL, and the drawing stages (one badge per piece, above its first word).
+`selector_test.lua` drives the selection overlay (`selector.lua`) on a fake three-page document: sentence, paragraph, word and sentence-start moves, page crossing, ranges (RT held: sentence ends, one sentence off, the anchor), level switches, highlights, point from-to (label -> words, B back to the labels). `kopad_hints_test.lua` checks the labels of point from-to (`kopad_hints.lua`): placement by position, two symbols, unique, at most 56, the prefix filter, **B**, a label = its sentence's first visible word, RTL.
 
 ## How this was made
 
