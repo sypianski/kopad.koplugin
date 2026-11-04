@@ -220,7 +220,7 @@ assert(text(ov) == "t6")
 ov:step(1); assert(doc.page == 2 and text(ov) == "t7", "→ on the last word = next page")
 ov:step(-1); assert(doc.page == 1 and text(ov) == "t6", "← on the first word = previous page, last word")
 assert(ov:_status_text():match("^WORD ") and not ov:_status_text():find("%d"))
-assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence"
+assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence L\xE2\x86\x95 line"
     .. " \xC2\xB7 RT select \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text())
 assert(ov:_status_text(true) == "WORD \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text(true))
 assert(ov:back() == false, "B without a range, not from the labels: padnav closes")
@@ -233,6 +233,65 @@ ov:line(1); assert(doc.page == 3 and text(ov) == "t17", "↓ on the book's last 
 ov:line(-1); ov:line(-1)
 assert(doc.page == 3 and text(ov) == "t13", "↑ = S4's visible start t13")
 ov:line(-1); assert(doc.page == 2 and text(ov) == "t11", "↑ again = S4's real start on page 2: " .. tostring(text(ov)))
+sel:_close()
+
+-- 5c. L-stick ↑/↓ in words (TASK-43, line(dir, range, true)): one line,
+-- the word under the cursor's x (as before TASK-42), over page edges without
+-- a range; with RT / A held (range) by a line, never off the page. The
+-- D-pad ↑/↓ (no flag) stay the sentence starts.
+sel, doc = fresh()
+sel:_open_walk(false); ov = sel.overlay
+ov:step(1); assert(text(ov) == "t2")
+ov:line(1, false, true); assert(text(ov) == "t5", "L ↓ = the word below at the same x: " .. tostring(text(ov)))
+ov:line(-1, false, true)
+assert(doc.page == 1 and text(ov) == "t2", "L ↑ = the word above, not the one on the left: " .. tostring(text(ov)))
+ov:line(1, false, true); ov:line(1, false, true)
+assert(doc.page == 2 and text(ov) == "t7", "L ↓ on the last line = next page, first word")
+ov:line(-1, false, true); assert(doc.page == 1 and text(ov) == "t6", "L ↑ on the first line = previous page, last word")
+ov:line(-1); assert(text(ov) == "t5", "D-pad ↑ still = the sentence start (S2)")
+sel:_close()
+-- a range by a line: anchor stays, both directions, never off the page
+sel, doc = fresh()
+sel:_open_walk(false); ov = sel.overlay
+ov:step(1)
+ov:line(1, true, true); assert(ov.ww_anchor and text(ov) == "t2 t3 t4 t5", "RT + L ↓ = range to the line below")
+ov:line(1, true, true); assert(doc.page == 1 and text(ov) == "t2 t3 t4 t5", "range: no page turn")
+ov:line(-1, true, true); assert(text(ov) == "t2", "RT + L ↑ = back by a line")
+ov:line(-1, true, true); assert(doc.page == 1 and text(ov) == "t2", "range: not off the page (top)")
+ov:step(1, true); ov:line(1, true, true); assert(text(ov) == "t2 t3 t4 t5 t6", "word, then a line")
+ov:line(1, false, true); assert(ov.ww_anchor == nil and doc.page == 2, "without a range the anchor goes")
+sel:_close()
+-- the flag only matters in words: sentences = paragraph, highlights = step
+sel, doc = fresh()
+sel:_open(); ov = sel.overlay
+ov:line(1, false, true); assert(doc.page == 2 and text(ov) == "t9 t10", "sentences: L ↓ = next paragraph")
+sel:_close()
+-- a word hyphenated over two lines (t3: head at the end of line 1, tail at
+-- the start of line 2): a line move lands on the fragment under the x, and
+-- from a tail the line is the tail's
+sel, doc = fresh()
+local SPLIT_TAIL = { x = 10, y = 50, w = 30, h = 20 }
+function doc:getScreenBoxesFromPositions(a, b)
+    if self.page == 1 and idx(a) == 3 and idx(b) == 3 then return { self:box(3), SPLIT_TAIL } end
+    return Doc.getScreenBoxesFromPositions(self, a, b)
+end
+function doc:getWordFromPosition(pos)
+    if self.page == 1 and math.abs(pos.y - 60) < 5 and pos.x < 40 then
+        return { pos0 = "w3", pos1 = "w3e", word = "t3" }
+    end
+    return Doc.getWordFromPosition(self, pos)
+end
+sel:_open_walk(false); ov = sel.overlay
+ov:line(1, false, true)
+assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "tail", "L ↓ from t1: t3's tail on line 2: "
+    .. tostring(text(ov)) .. " " .. tostring(ov.ww_word.is_split_fragment))
+ov:line(-1, false, true)
+assert(text(ov) == "t1", "L ↑ from the tail = line 1 at the tail's x: " .. tostring(text(ov)))
+for _ = 1, 6 do ov:step(1) end; assert(text(ov) == "t6", "t3 counts twice (head, tail)")
+ov:line(-1, false, true)
+assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "head", "L ↑ from t6: t3's head: "
+    .. tostring(ov.ww_word.is_split_fragment))
+ov:line(1, false, true); assert(text(ov) == "t6", "L ↓ from the head = the word under it")
 sel:_close()
 
 -- 5a. Y + D-pad ↑/← (TASK-28): the sentences from the page's last one
@@ -397,7 +456,7 @@ assert(press(ov, label_of(ov, 2)) == "done")
 assert(ov.mode == "walk" and ov.pointer == nil and ov.ww_anchor == nil and text(ov) == "t5",
     "S2's first word: " .. tostring(text(ov)))
 assert(ov.from_labels == true)
-assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence"
+assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence L\xE2\x86\x95 line"
     .. " \xC2\xB7 RT select \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text())
 assert(ov:_status_text(true) == "WORD \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text(true))
 paint()

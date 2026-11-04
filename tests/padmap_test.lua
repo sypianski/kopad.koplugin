@@ -1250,11 +1250,12 @@ do
     up(n, 14); up(n, 12); up(n, 0)
     assert(log.ov[1] == "step(1,true)" and log.ov[2] == "line(1,true)" and log.ov[3] == "step(-1,true)"
         and #log.ov == 3, "range moves, no menu: " .. table.concat(log.ov, " "))
-    -- without A: plain moves (D-pad and L-stick alike)
+    -- without A: plain moves (D-pad and L-stick alike; the L-stick ↑/↓ asks
+    -- for a line, TASK-43)
     log.ov = {}
     down(n, 13); up(n, 13); down(n, 11); up(n, 11)
     n:onGamepadAxisMotion({ axis = 1, value = 20000 })
-    assert(log.ov[1] == "step(-1,false)" and log.ov[2] == "line(-1,false)" and log.ov[3] == "line(1,false)",
+    assert(log.ov[1] == "step(-1,false)" and log.ov[2] == "line(-1,false)" and log.ov[3] == "line(1,false,true)",
         "plain moves: " .. table.concat(log.ov, " "))
     -- a stick snapping back within MENU_STICK_LOCK_S does not undo the move
     T.now = function() return clock end
@@ -1429,6 +1430,61 @@ do
         up(n, 1)
         assert(down(n, 1) == true and backs == 2 and sel.overlay == nil, "B 2: back() declined, closed")
         up(n, 1)
+        T.now = function() clock = clock + 1; return clock end
+        package.loaded["device/sdl/gamepad"] = saved_gp
+    end
+
+    -- L-stick ↑/↓ in the words (TASK-43): line(dy, range, true) = one line
+    -- (selector.lua; the other modes ignore the flag); D-pad ↑/↓ stays the
+    -- sentence move (no flag). With RT held / A held: range = true. The
+    -- stock axis auto-repeat = one more line each, with the range flag.
+    do
+        local held = {}
+        local saved_gp = package.loaded["device/sdl/gamepad"]
+        package.loaded["device/sdl/gamepad"] = { held_axis_directions = held }
+        n, log, sel = epub()
+        T.now = function() return clock end
+        clock = clock + 10
+        sel:_open_walk(false)
+        n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+        clock = clock + 0.5; n:onGamepadAxisMotion({ axis = 1, value = 20000 })   -- stock repeat
+        clock = clock + 0.2; n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+        assert(log.ov[1] == "line(1,false,true)" and log.ov[2] == "line(1,false,true)"
+            and log.ov[3] == "line(1,false,true)" and #log.ov == 3,
+            "L-stick ↓ = a line, its repeat too: " .. table.concat(log.ov, " "))
+        clock = clock + 1; n:onGamepadAxisMotion({ axis = 1, value = -20000 })
+        assert(log.ov[4] == "line(-1,false,true)", "L-stick ↑ = the line above")
+        down(n, 12); up(n, 12); down(n, 11); up(n, 11)
+        assert(log.ov[5] == "line(1,false)" and log.ov[6] == "line(-1,false)", "D-pad ↑/↓ = sentence (no flag)")
+        clock = clock + 1; n:onGamepadAxisMotion({ axis = 0, value = 20000 })
+        assert(log.ov[7] == "step(1,false)", "L-stick → = a word, as the D-pad")
+        -- RT held: a range by a line
+        held[5] = 1
+        clock = clock + 5
+        n:onGamepadAxisMotion({ axis = 5, value = 32767 })
+        assert(n._rt_down == true and #log.ov == 7, "RT: the modifier")
+        clock = clock + 1; n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+        clock = clock + 0.5; n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+        clock = clock + 1; n:onGamepadAxisMotion({ axis = 1, value = -20000 })
+        assert(log.ov[8] == "line(1,true,true)" and log.ov[9] == "line(1,true,true)"
+            and log.ov[10] == "line(-1,true,true)", "RT + L-stick ↑/↓ = range by a line: "
+            .. table.concat(log.ov, " "))
+        down(n, 12); up(n, 12)
+        assert(log.ov[11] == "line(1,true)", "RT + D-pad ↓ = the sentence range")
+        held[5] = nil
+        table.remove(sched, 1).fn()
+        assert(not n._rt_down)
+        -- A held (the older alias, not the hold that opened the words)
+        down(n, 0)
+        clock = clock + 1; n:onGamepadAxisMotion({ axis = 1, value = 20000 })
+        up(n, 0)
+        assert(log.ov[12] == "line(1,true,true)" and #log.ov == 12, "A + L-stick ↓ = range by a line, no menu")
+        -- legacy key path: KPUp / KPDown (userpatch LStickUp / LStickDown) =
+        -- a line, KPUp2 / KPDown2 (Up / Down, the D-pad) = sentence
+        n:onKPDown(); n:onKPUp(); n:onKPDown2()
+        assert(log.ov[13] == "line(1,false,true)" and log.ov[14] == "line(-1,false,true)"
+            and log.ov[15] == "line(1,false)", "legacy keys: " .. table.concat(log.ov, " "))
+        sel:_close()
         T.now = function() clock = clock + 1; return clock end
         package.loaded["device/sdl/gamepad"] = saved_gp
     end

@@ -6,7 +6,8 @@ text layer, driven by the handlers in padnav.lua. Four modes: sentences
 highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 /
 TASK-35; since TASK-42 / PC-024 only pad labels at the sentences: a label
 puts the word cursor on that sentence's first visible word, then it is a
-word walk -- ←/→ word, ↑/↓ sentence start, RT held = range);
+word walk -- ←/→ word, ↑/↓ sentence start, L-stick ↑/↓ line (TASK-43),
+RT held = range);
 R-stick ↓/↑ switches between sentence and word. The
 arrows move a cursor; while RT (words) or A is held padnav passes range =
 true and an anchor stays where the range began. Without a range the cursor
@@ -227,6 +228,20 @@ function SelectorOverlay:_is_split_word(word)
     return #segs > 1 and segs[1].y ~= segs[#segs].y
 end
 
+-- Determine correct fragment (head/tail) of a split hyphenated word from probe x position.
+-- LTR: right side = head (end of line). RTL: right side = tail (start of next line).
+-- Returns: word (with is_split_fragment set), eval_y for Y-clamp check.
+function SelectorOverlay:_resolve_split_fragment(word, x_pos)
+    if not self:_is_split_word(word) then
+        return word, word.sbox.y + word.sbox.h * 0.5
+    end
+    local right_half = x_pos > (word.sbox.x + word.sbox.w * 0.5)
+    local is_head = self.is_rtl ~= right_half
+    word.is_split_fragment = is_head and "head" or "tail"
+    local fbox = is_head and word.segments[1] or word.segments[#word.segments]
+    return word, fbox.y + fbox.h * 0.5
+end
+
 function SelectorOverlay:_ww_fragment_sbox()
     local w = self.ww_word
     if not w then return nil end
@@ -335,6 +350,89 @@ function SelectorOverlay:_ww_step(dir, range)
         nw.is_split_fragment = dir > 0 and "head" or "tail"
     end
     self.ww_word = nw
+end
+
+-- Words: the word on the next / previous line nearest to the same x. Past
+-- the last / first line: the next page's first word / the previous page's
+-- last one (TASK-18); a range (RT or A held) stays on the page. Since
+-- TASK-43 only the L-stick ↑/↓ (line(dir, range, true)); the D-pad ↑/↓
+-- go by sentence (_ww_sent).
+function SelectorOverlay:_ww_line(delta, range)
+    if not self.ww_word or not self.ww_word.sbox then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
+    if range then
+        self.ww_anchor = self.ww_anchor or self.ww_word
+    else
+        self.ww_anchor = nil
+    end
+    local doc    = self.doc
+    local fsbox  = self:_ww_fragment_sbox() or self.ww_word.sbox
+    local target_x = fsbox.x
+    -- getScreenPositionFromXPointer gives the TOP of a word's line, so lines
+    -- are compared through that same call (start_y = the cursor's line):
+    -- against the box middle, the word on the left counted as the line above
+    -- and ↑ moved by one word. A split word's tail sits on another line than
+    -- its pos0, so there the fragment box is the reference.
+    local line_h   = fsbox.h
+    local line_tol = line_h * 0.3
+    local start_y  = self.ww_word.is_split_fragment ~= "tail"
+        and doc:getScreenPositionFromXPointer(self.ww_word.pos0) or nil
+    start_y = start_y or fsbox.y
+    local box_dy = fsbox.y - start_y  -- line top -> word box top
+
+    local current_xp    = self.ww_word.pos0
+    local target_line_y = nil
+    local fallback_xp   = nil
+    for _ = 1, 80 do
+        local next_xp = self:_adjacent_word(current_xp, delta)
+        if not next_xp or next_xp == current_xp then break end
+        if not doc:isXPointerInCurrentPage(next_xp) then break end
+        current_xp = next_xp
+        local sy = doc:getScreenPositionFromXPointer(next_xp)
+        if not sy then break end
+        if (delta > 0 and sy > start_y + line_tol)
+            or (delta < 0 and sy < start_y - line_tol) then
+            target_line_y = sy
+            fallback_xp   = next_xp
+            break
+        end
+    end
+    if not target_line_y then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
+
+    -- Probe the middle of the target line (target_line_y is its top).
+    local probe_y = target_line_y + box_dy + line_h * 0.5
+    local ok, probe = pcall(function()
+        return doc:getWordFromPosition({x = target_x, y = probe_y}, true)
+    end)
+    if ok and probe and probe.pos0 and probe.pos0 ~= self.ww_word.pos0 then
+        local ok2, boxes = pcall(function()
+            return doc:getScreenBoxesFromPositions(probe.pos0, probe.pos1, true)
+        end)
+        if ok2 and boxes and #boxes > 0 then
+            local sbox = Geom.boundingBox(boxes)
+            if sbox then
+                probe.sbox = sbox; probe.segments = boxes
+                local resolved, eval_y = self:_resolve_split_fragment(probe, target_x)
+                if math.abs(eval_y - probe_y) <= line_tol then
+                    self.ww_word = {
+                        pos0 = resolved.pos0, pos1 = resolved.pos1,
+                        sbox = sbox, word = resolved.word or "",
+                        segments = boxes,
+                        is_split_fragment = resolved.is_split_fragment,
+                    }
+                    return
+                end
+            end
+        end
+    end
+
+    local word = self:_ww_word_from_xp(fallback_xp)
+    if word then self.ww_word = word end
 end
 
 ----------------------------------------------------------------------
@@ -592,11 +690,15 @@ function SelectorOverlay:step(dir, range)
 end
 
 -- ↑/↓: a sentence start (words, TASK-42; with a range a sentence end) /
--- paragraph / highlight; range as in step().
-function SelectorOverlay:line(dir, range)
+-- paragraph / highlight; range as in step(). by_line (the L-stick ↑/↓,
+-- TASK-43): in words one line instead (_ww_line; with a range by a line,
+-- never off the page); the other modes ignore it.
+function SelectorOverlay:line(dir, range, by_line)
     if self.mode == "point" then return end
     if self.mode == "hl" then
         self:_hl_step(dir)
+    elseif self.mode == "walk" and by_line then
+        self:_ww_line(dir, range)
     elseif self.mode == "walk" then
         self:_ww_sent(dir, range)
     else
@@ -1293,7 +1395,8 @@ function SelectorOverlay:_status_text(short)
     return (many and "SENTENCES" or "SENTENCE") .. ext .. keys
 end
 
--- Words (TASK-42 / PC-024): the moves, RT = range, B = one step back (a
+-- Words (TASK-42 / PC-024): the moves (TASK-43: L↕ = the L-stick by a
+-- line), RT = range, B = one step back (a
 -- range: clear it; from a sentence label: the labels; else close). `short`
 -- = the level, A and B only.
 function SelectorOverlay:_walk_status(short)
@@ -1302,7 +1405,7 @@ function SelectorOverlay:_walk_status(short)
     local b = range and "B clear" or (self.from_labels and "B back" or "B close")
     local head = range and "WORDS" or "WORD"
     if short then return head .. dot .. "A menu" .. dot .. b end
-    local moves = "\xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence"
+    local moves = "\xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence L\xE2\x86\x95 line"
     return head .. dot .. moves .. dot .. "RT select" .. dot .. "X hl" .. dot .. "Y vort"
         .. dot .. "A menu" .. dot .. b
 end
@@ -1722,6 +1825,20 @@ function PagedOverlay:_ww_step(dir, range)
     local nw = w and self.words[w.idx + dir]
     if nw then self.ww_word = nw; return end
     if not range and self:_turn_page(dir) then self:_ww_land(dir) end
+end
+
+-- Words: the nearest word on the next / previous line of the page's text
+-- boxes; past the last / first line the next / previous page.
+function PagedOverlay:_ww_line(delta, range)
+    local w = self.ww_word
+    if not w then
+        if not range and self:_turn_page(delta) then self:_ww_land(delta) end
+        return
+    end
+    if range then self.ww_anchor = self.ww_anchor or w else self.ww_anchor = nil end
+    local i = PdfWords.line_target(self.words, w.idx, delta)
+    if i then self.ww_word = self.words[i]; return end
+    if not range and self:_turn_page(delta) then self:_ww_land(delta) end
 end
 
 -- Word indices of the selection (walk: cursor / anchor..cursor; struct:

@@ -130,8 +130,11 @@ while reading; Gamepad* path):
 Selection (kopad's overlay; two levels, sentences "struct" and words "walk",
 plus the saved highlights "hl" opened by Y):
   D-pad / L-stick ←/→    Words: word          Sentences: sentence
-  D-pad / L-stick ↑/↓    Words: sentence start (TASK-42 / PC-024: ↓ the next
-                         one, ↑ the cursor's own, on a start the previous one)
+  D-pad / L-stick ↑/↓    Words: D-pad = sentence start (TASK-42 / PC-024: ↓
+                         the next one, ↑ the cursor's own, on a start the
+                         previous one); L-stick = one line, the word under
+                         the cursor's x (TASK-43; a word hyphenated over two
+                         lines counts on both)
                          Sentences: paragraph
                          Highlights: previous / next one (all four)
                          Past the page edge: the next / previous page, both
@@ -145,7 +148,8 @@ plus the saved highlights "hl" opened by Y):
                          one, never before the anchor); on the anchor ↑ goes
                          back to the sentence start (on a start: the
                          previous one), before the anchor ↓ goes to the next
-                         start, not past the anchor. Never leaves the page;
+                         start, not past the anchor. L-stick ↑/↓ (TASK-43):
+                         the moving end by a line. Never leaves the page;
                          releasing RT keeps the range. RT's release is
                          polled (_rt_hold), its auto-repeat does nothing.
   RT / LT                Sentences: next / previous paragraph (TASK-25), as
@@ -689,8 +693,10 @@ end
 -- directions, dx flipped for RTL here; the overlay moves word / sentence /
 -- highlight (step) or sentence start / paragraph (line). While RT is held
 -- (TASK-42 / PC-024, _rt_hold) or A (Gamepad* path, TASK-16, the older
--- alias) the move extends a range from the anchor.
-function PadNav:_sel_move(dx, dy)
+-- alias) the move extends a range from the anchor. by_line (the L-stick,
+-- TASK-43): ↑/↓ in words go by a line instead of a sentence start (the
+-- overlay ignores it in the other modes).
+function PadNav:_sel_move(dx, dy, by_line)
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if not ov then return end
@@ -700,18 +706,29 @@ function PadNav:_sel_move(dx, dy)
     if a_range then self._a_moved = true end
     local range = a_range or self:_rt_active(ov)
     if self:_is_rtl() then dx = -dx end
-    if dx ~= 0 then ov:step(dx, range) else ov:line(dy, range) end
+    if dx ~= 0 then
+        ov:step(dx, range)
+    elseif by_line then
+        ov:line(dy, range, true)
+    else
+        ov:line(dy, range)
+    end
 end
 
--- L-stick: in the selection the same as the D-pad. While reading it does
+-- L-stick: in the selection the same as the D-pad, except ↑/↓ in words =
+-- one line (TASK-43; with RT / A held a range by a line). Its repeat is the
+-- stock axis auto-repeat: every repeat is one more move with the range flag
+-- of that moment, as a held D-pad's (_dpad_start). While reading it does
 -- nothing (TASK-12, TASK-15) but is consumed, so that the stock
 -- Up/Down/Left/Right key it would become cannot open a word walk. Without a
--- selector (paged documents, FileManager) the key passes.
+-- selector (paged documents, FileManager) the key passes. Legacy key path:
+-- KPUp / KPDown are the userpatch's LStickUp / LStickDown only; without the
+-- userpatch the stick arrives as Up / Down = the D-pad's KPUp2 / KPDown2.
 function PadNav:_lstick(dx, dy)
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if not selector then return false end
-    if selector.overlay then self:_sel_move(dx, dy) end
+    if selector.overlay then self:_sel_move(dx, dy, true) end
     return true
 end
 
@@ -2608,7 +2625,9 @@ local CHEAT_SELECTION = _("Point from-to (A)")
     .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
     .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: words: sentence start    sentences: paragraph"
-    .. "\nHold RT + arrows (words): select, \xE2\x86\x93 to the sentence end, \xE2\x86\x91 one sentence off"
+    .. "\nL-stick \xE2\x86\x91/\xE2\x86\x93 (words): one line"
+    .. "\nHold RT + arrows (words): select, \xE2\x86\x93 to the sentence end, \xE2\x86\x91 one sentence off,"
+    .. " L-stick \xE2\x86\x91/\xE2\x86\x93 a line"
     .. "\nRT / LT (sentences): next / previous paragraph"
     .. "\nA: action menu    Y: Vortuyo"
     .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"

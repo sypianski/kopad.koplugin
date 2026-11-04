@@ -94,6 +94,8 @@ local S = PdfWords.sentences(W)
 assert(#S == 2 and S[1].first == 1 and S[1].last == 3 and S[2].first == 4 and S[2].last == 6, "sentences")
 assert(S[1].para == 1 and S[2].para == 1 and W[1].para == 1 and W[6].para == 1,
     "TASK-32: two evenly spaced lines are one paragraph")
+assert(PdfWords.line_target(W, 2, 1) == 5 and PdfWords.line_target(W, 6, -1) == 3, "line by x (TASK-43)")
+assert(PdfWords.line_target(W, 2, -1) == nil and PdfWords.line_target(W, 5, 1) == nil, "no line beyond")
 local lb = PdfWords.line_boxes(W, 2, 5, "pbox")
 assert(#lb == 2 and lb[1].x == 220 and lb[1].w == 220 and lb[2].x == 100 and lb[2].w == 220, "one box per line")
 assert(PdfWords.text(W, 3, 4) == "gamma. Delta" and PdfWords.first_text(page_boxes(2)) == "eta"
@@ -200,6 +202,20 @@ ov:line(1); assert(ov.page == 2 and cur(ov) == "Iota", "↓ past the page: " .. 
 ov:line(-1); assert(ov.page == 2 and cur(ov) == "eta", "↑ = the visible start of S2's continuation")
 ov:line(-1); assert(ov.page == 1 and cur(ov) == "Delta", "↑ again = S2's real start on page 1: " .. tostring(cur(ov)))
 ov:step(1); ov:step(1); assert(cur(ov) == "zeta")
+-- TASK-43: the L-stick ↑/↓ (line(dir, range, true)) = one line, the nearest
+-- word by x; past the first / last line the previous / next page
+ov:line(-1, false, true); assert(cur(ov) == "gamma.", "L ↑ = the word above: " .. tostring(cur(ov)))
+ov:line(1, false, true); assert(cur(ov) == "zeta", "L ↓ = the word below")
+events = {}
+ov:line(1, false, true)
+assert(events[1] == "GotoPage:2" and ov.page == 2 and cur(ov) == "eta", "L ↓ on the last line = next page, first word")
+ov:line(-1, false, true); assert(ov.page == 1 and cur(ov) == "zeta", "L ↑ on the first line = previous page, last word")
+-- with RT / A held a range by a line, never off the page
+ov:line(-1, true, true); assert(text(ov) == "T:gamma. Delta eps zeta", "range by a line: " .. tostring(text(ov)))
+ov:line(-1, true, true); assert(ov.page == 1 and text(ov) == "T:gamma. Delta eps zeta", "range: not off the page")
+ov:line(1, true, true); ov:line(1, true, true)
+assert(ov.page == 1 and text(ov) == "T:zeta", "range back to the anchor, no page turn: " .. tostring(text(ov)))
+ov:step(-1); ov:step(1); assert(ov.ww_anchor == nil and cur(ov) == "zeta")
 -- the dictionary gets the selection with SCREEN boxes (highlights: tests/pdfhl_test.lua)
 ov:_do_dict(ov:_get_selection())
 assert(lookups[1][1] == "T:zeta" and lookups[1][2][1].w == 200, "dictionary with screen boxes")
@@ -440,6 +456,12 @@ ov = sel.overlay
 ov:line(1); assert(cur(ov) == "Kkk")
 ov:line(1); assert(cur(ov) == "Ghi", "↓ over the column break: " .. tostring(cur(ov)))
 ov:line(-1); assert(cur(ov) == "Kkk", "↑: the previous sentence")
+-- TASK-43: L-stick lines in reading order -- the left column's last line,
+-- then the right column's first
+for _ = 1, 2 do ov:line(1, false, true) end
+assert(cur(ov) == "sss", "L ↓ twice from Kkk = the left column's last line: " .. tostring(cur(ov)))
+ov:line(1, false, true); assert(cur(ov) == "www", "L ↓ over the column break: " .. tostring(cur(ov)))
+ov:line(-1, false, true); assert(cur(ov) == "vvv", "L ↑ = back to the left column, nearest by x: " .. tostring(cur(ov)))
 sel:_close()
 custom = nil
 assert(claims == 0)

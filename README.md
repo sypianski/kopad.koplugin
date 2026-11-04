@@ -152,7 +152,7 @@ Touch works too: tap a sector to run it, the centre for the next page, the page 
 
 ### Point from-to (tap A)
 
-A tap on **A** while reading puts a small label next to the start of every sentence on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles); after the first symbol only the labels going on with it stay on screen. Pressing a sentence's whole label puts the word cursor on that sentence's first word (its first word on the screen, for a sentence that began on the previous page or above a zoomed PDF view). Nothing is selected yet: from there it is the word level of the selection (below). **←** / **→** move by a word, **↑** / **↓** jump to sentence starts, and holding **RT** selects:
+A tap on **A** while reading puts a small label next to the start of every sentence on the page. Each label is two pad symbols: a D-pad direction (↑ ↓ ← →, drawn as squares) or a letter (**A** **B** **X** **Y**, drawn as circles); after the first symbol only the labels going on with it stay on screen. Pressing a sentence's whole label puts the word cursor on that sentence's first word (its first word on the screen, for a sentence that began on the previous page or above a zoomed PDF view). Nothing is selected yet: from there it is the word level of the selection (below). **←** / **→** move by a word, **↑** / **↓** jump to sentence starts (the **L-stick** ↑ / ↓ moves by a line instead, also with **RT** held), and holding **RT** selects:
 
 | | without RT | with **RT** held |
 |---|---|---|
@@ -173,8 +173,9 @@ The selection has two levels: sentences (opened with **Y** + D-pad) and words (o
 | Button | Words | Sentences |
 |---|---|---|
 | **D-pad** / **L-stick** ←/→ | previous / next word | previous / next sentence |
-| **D-pad** / **L-stick** ↑/↓ | start of this or the previous sentence / start of the next sentence | start of this or the previous paragraph / next paragraph |
-| hold **RT** + arrows | select a range from the word where the first move began: ←/→ by a word, ↓ to the end of the sentence (then the next one), ↑ one sentence off (see *Point from-to*) | — |
+| **D-pad** ↑/↓ | start of this or the previous sentence / start of the next sentence | start of this or the previous paragraph / next paragraph |
+| **L-stick** ↑/↓ | the word on the line above / below, under the cursor (a word hyphenated over two lines counts on both) | as the D-pad |
+| hold **RT** + arrows | select a range from the word where the first move began: ←/→ by a word, ↓ to the end of the sentence (then the next one), ↑ one sentence off (see *Point from-to*); **L-stick** ↑/↓ by a line | — |
 | **RT** / **LT** | **RT** held = the range above, **LT** nothing | next paragraph / start of this or the previous paragraph (as ↓/↑) |
 | hold **A** + arrows | the same as **RT** held (the older way) | select a range from the sentence where you pressed A, in both directions (going back past it shrinks the range, then grows it on the other side) |
 | tap **A** | action menu (dictionary, AI, copy, note), when you let go | same |
@@ -188,7 +189,7 @@ The selection has two levels: sentences (opened with **Y** + D-pad) and words (o
 
 The **A** you hold to open the words is not a range yet: while it is still down the arrows only move the cursor, so you can pick the word where the range starts (or a single word). Let go, then hold **A** again and move to select from there.
 
-The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the page's last sentence to the first sentence start of the next one. A sentence that runs over the edge counts once. A range (RT or A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second. On the sentence level **RT** / **LT** jump by paragraph, over the page edge too; held, they keep jumping, and with **A** held they grow the range by paragraphs. On the word level they do not move the cursor (**RT** held is the range there). With the highlights (**Y**) they go to the next / previous one. The status line shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters. It never covers the text of the page: it sits in the free strip above the first line or below the last one, shrinks to the level and A / B when the strip is tight, and is not drawn at all when there is no room.
+The arrows cross the page edge in both directions: ← on the first word goes to the last word of the previous page, ↓ on the page's last sentence to the first sentence start of the next one, **L-stick** ↓ on the last line to the next page's first word (TASK-43). A sentence that runs over the edge counts once. A range (RT or A held) stays on its page. A held D-pad repeats its step (after about half a second, then about seven steps a second) and speeds up after a few steps, up to twenty a second; a held **L-stick** repeats as well (KOReader's own stick repeat), with **RT** held too. On the sentence level **RT** / **LT** jump by paragraph, over the page edge too; held, they keep jumping, and with **A** held they grow the range by paragraphs. On the word level they do not move the cursor (**RT** held is the range there). With the highlights (**Y**) they go to the next / previous one. The status line shows the level (WORD / WORDS, SENTENCE / SENTENCES, HIGHLIGHT) and the buttons, with no counters. It never covers the text of the page: it sits in the free strip above the first line or below the last one, shrinks to the level and A / B when the strip is tight, and is not drawn at all when there is no room.
 
 While browsing highlights (**Y**): the **D-pad** moves to the previous / next one (wrapping), **X** removes it (removing the last one closes the selection), and **A**, **Y** and **B** work as above.
 

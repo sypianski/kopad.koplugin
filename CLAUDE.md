@@ -16,13 +16,14 @@ padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
 `lua tests/padconfirm_test.lua` (button letters on confirmation dialogs),
 `lua tests/padopen_test.lua` (opening every gamepad), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
-on a fake three-page document: moves, sentence starts on ↑/↓, page
-crossing, ranges incl. the RT sentence ranges of TASK-42, levels,
+on a fake three-page document: moves, sentence starts on ↑/↓, L-stick
+lines incl. a hyphenated word (TASK-43), page
+crossing, ranges incl. the RT sentence ranges of TASK-42 and RT line ranges, levels,
 highlights, point from-to: label -> words, B back) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, a label = its sentence's first visible word,
 RTL; the word level of TASK-36..41 is gone since TASK-42 / PC-024) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
-over page edges, sentences, point from-to + an RT range, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
+over page edges, L-stick lines incl. two columns (TASK-43), sentences, point from-to + an RT range, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
 ReaderAnnotation, Y browses the page's highlights, boxes under zoom / pan,
 notes); `lua tests/statusbar_test.lua` (statusbar.lua: where the status bar fits, never over the text); `lua tests/pdftext_test.lua` (pdftext.lua: words split by glyph gaps); plain `assert`,
@@ -187,6 +188,20 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   began in) makes `_sel_move` pass `range = true`, the D-pad repeat
   included. The legacy key path has no RT range. Tests: the RT block in
   section 14 of `tests/padmap_test.lua`.
+- **L-stick in the words (TASK-43)**: `_lstick` (axes 0 / 1 through
+  `STICK_HANDLERS` -> `onKPUp` / `onKPDown` / `onKPLeft` / `onKPRight`)
+  calls `_sel_move(dx, dy, true)`; ↑/↓ then reach `ov:line(dy, range,
+  true)` = one line (`_ww_line`), ←/→ stay `step` = a word. The D-pad
+  (`_dpad`, buttons 11-14 / `KPUp2`..) calls `ov:line(dy, range)` without
+  the flag = the sentence move. RT / A held = `range` as for the D-pad (a
+  range by a line, never off the page). The stick's repeat is the stock
+  axis auto-repeat (each repeat = one more move with the range flag of
+  that moment, bounces dropped by `_stick_bounce`), not `_dpad_start`.
+  Legacy key path: `KPUp` / `KPDown` = the userpatch's `LStickUp` /
+  `LStickDown` only; without the userpatch the stick arrives as `Up` /
+  `Down` = the D-pad's `KPUp2` / `KPDown2` (sentences). Other modes ignore
+  the flag (sentences = paragraph, highlights = step, point = nothing).
+  Tests: the TASK-43 block in section 14 of `tests/padmap_test.lua`.
 - **Y**: `_press_y` = Vortuyo at once in the selection; while reading it sets
   `_y_down`, `_dpad` then opens the sentences (`Selector:_open(from_end)`,
   `_y_used`), and `_release_y` shows the highlights for a tap. Legacy:
@@ -552,7 +567,10 @@ left column before the right one, `info.order`) and carry `para`;
 `paragraph_info(boxes, rtl)` is the pcall-guarded pdfpara call (PagedOverlay
 caches it per page in `_pinfo`, next to `_boxes`, and passes `is_rtl`).
 Also `has_text` (a scan's optical boxes have no
-`word`; `line_target` for the old line moves is gone with them, TASK-42),
+`word`), `line_target(words, i, delta)` (the L-stick ↑/↓ in words, TASK-43:
+the nearest word by centre x on the line `delta` away, lines in READING
+order, so ↓ from the left column's last line = the right column's first;
+removed in TASK-42, restored in TASK-43),
 `line_boxes(words, i0, i1[, field])` (one box per
 line), `pos(w, view.state)` = `{page, x, y, zoom, rotation}` at the word's
 centre, which `getTextFromPositions` snaps to exactly that word (what
@@ -573,7 +591,7 @@ with `paged = true`) `_new_overlay` makes a **`PagedOverlay`**
 for a page without words (`Selector:_no_text`). PagedOverlay replaces only
 the crengine-specific methods: `_collect` (one page, `self.page` = the top
 page in continuous view; `_extends_before/after` decided with the
-neighbouring page's first / last word), `_ww_step` / `_ww_land`
+neighbouring page's first / last word), `_ww_step` / `_ww_line` (TASK-43) / `_ww_land`
 / `_ww_word_from_xp` / `_xp_before` (word index on the page), `_turn_page`
 (`GotoPage`), `_get_selection` (`getTextFromPositions`, pboxes native,
 sboxes screen), `_draw_walk` / `_draw_struct`, `_page_text`, and the
@@ -626,8 +644,17 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
 - **`walk`** — words (`ww_word`, optional `ww_anchor`; `_ww_span` orders them
   with `compareXPointers`, 1 = first argument earlier; PDF: word index,
   `PagedOverlay:_xp_before`). ←/→ `_ww_step` (split-word fragment handling
-  for hyphenated / wrapped words, `_is_split_word`); ↑/↓ `_ww_sent`
-  (TASK-42 / PC-024; the line moves `_ww_line` are gone): ↓ = the next
+  for hyphenated / wrapped words, `_is_split_word`); L-stick ↑/↓
+  (`line(dir, range, true)`, TASK-43) `_ww_line`: the word under the
+  cursor's x on the line above / below (EPUB: walks `_adjacent_word` until
+  `getScreenPositionFromXPointer` -- the TOP of a word's line -- changes,
+  then `getWordFromPosition` at the cursor's x; a hyphenated word counts
+  by fragment: from a tail the tail's line is the reference
+  (`_ww_fragment_sbox`), a split target gets head / tail by the x
+  (`_resolve_split_fragment`); PDF: `PdfWords.line_target`); past the first
+  / last line `_turn_page` + `_ww_land`; with a range by a line, never off
+  the page (removed in TASK-42, restored in TASK-43). D-pad ↑/↓ `_ww_sent`
+  (TASK-42 / PC-024): ↓ = the next
   sentence's first word, ↑ = the cursor sentence's first word, on it the
   previous sentence's (`_sent_of_word`, `_sent_first_word` /
   `_sent_last_word` = the sentence's `word_list` ends, i.e. its part on the
@@ -642,7 +669,7 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   `to_words`) lets `back()` (B, via padnav `onKPBack`) go to the labels:
   `back()` = drop the anchor if any, else `_point_begin()` again on the
   page shown now when `from_labels`, else false (padnav closes). Status
-  `_walk_status(short)`: `WORD · ←→ word ↑↓ sentence · RT select · X hl ·
+  `_walk_status(short)`: `WORD · ←→ word ↑↓ sentence L↕ line · RT select · X hl ·
   Y vort · A menu · B back|close`, with a range `WORDS ... B clear`; short =
   level + A + B.
 - **`hl`** — the page's saved highlights (`hl_items` / `hl_cur`, opened by Y);
@@ -663,8 +690,9 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   after a typed symbol, nothing when a label goes on with B; short = step +
   B).
 
-Public entry points for padnav: `step(dir, range)` / `line(dir, range)` (dir in
-document order, already RTL-flipped), `para(dir, range)` (LT / RT, TASK-25:
+Public entry points for padnav: `step(dir, range)` / `line(dir, range[, by_line])` (dir in
+document order, already RTL-flipped; `by_line` = the L-stick, TASK-43: in
+words one line instead of a sentence start), `para(dir, range)` (LT / RT, TASK-25:
 sentences = `_para_step`; highlights = `_hl_step`; nothing in words since
 TASK-42, where `_ww_para` was removed), `to_words()` / `to_sentences()` (the two
 levels, TASK-17), `action_menu()`, `back()` (B in words, TASK-42). Without a range the moves cross the page edge

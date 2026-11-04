@@ -45,6 +45,7 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     D-pad / L-stick          ←/→ word or sentence, ↑/↓ sentence start (words)
                              or paragraph, across page edges; held D-pad
                              repeats, faster
+    L-stick ↑/↓ (words)      One line (TASK-43), RT / A held: range by a line
     RT held + arrows         Words: range (TASK-42): ←/→ word, ↓ to the
                              sentence end, ↑ one sentence off
     RT / LT                  Sentences: next / previous paragraph; words:
