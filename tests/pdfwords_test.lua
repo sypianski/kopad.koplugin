@@ -278,37 +278,69 @@ sel = fresh({ reflow = true })
 ok, why = sel:_open_walk(false)
 assert(ok == false and why == "reflow" and claims == 0, "reflow")
 
--- point from-to on a PDF page (TASK-35): labels at the sentences, from the
--- words on the screen; R-stick ↓ refines a step to a word
+-- point from-to on a PDF page (TASK-35 / TASK-36): labels at the sentences,
+-- from the words on the screen; a sentence label = letter labels over its
+-- words, arrows are shortcuts; the paragraphs come from pdfwords / pdfpara
 local function label_of(o, sent, word)
     for _, v in ipairs(o.pointer:visible()) do
         if (sent and v.sent == sent) or (word and v.word == word) then return v.label end
     end
 end
-local function press(o, l) assert(l, "a label"); o:point_press(l[1]); return o:point_press(l[2]) end
+local function press(o, l)
+    assert(l, "a label")
+    local res
+    for _, s in ipairs(l) do res = o:point_press(s) end
+    return res
+end
 sel = fresh({ zoom = 1, vx = 0, vy = 0 })
 assert(sel:_open_point() == true)
 ov = sel.overlay
 local vis = ov.pointer:visible()
 assert(ov.mode == "point" and #vis == 2 and vis[2].word == 4, "two sentences, S2 at Delta")
 assert(vis[1].x == ov.words[1].sbox.x and ov.words[1].sbox.x == 10 + 100, "labels at screen boxes")
+local ps = ov:_point_sentences()
+assert(ps[1].para ~= nil and ps[1].para == ov.sentences[1].para and ps[2].para == ov.sentences[2].para,
+    "the pointer gets pdfwords' paragraphs")
 painted = {}
 ov:paintTo(bb, 0, 0)
-local l = label_of(ov, 1)
-assert(ov:point_press(l[1]) == "prefix" and ov:point_press(l[2]) == "start")
-assert(press(ov, label_of(ov, 2)) == "done" and ov.mode == "walk")
+-- sentence S1, its first word by ←, the end at the end of S2 by → and ←
+assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 3, "S1's three words")
+local l = ov.pointer:visible()[1].label
+assert(l[1] == "Y" or l[1] == "X" or l[1] == "A", "letter labels")
+assert(ov:point_press("left") == "start" and ov.pointer.start == 1)
+assert(ov:point_press("right") == "sentence")
+painted = {}
+ov:paintTo(bb, 0, 0)
+local inv = 0
+for _, c in ipairs(painted) do if c[1] == "invertRect" then inv = inv + 1 end end
+assert(inv >= 2, "the preview Alpha .. zeta inverted (two lines)")
+assert(ov:point_press("left") == "done" and ov.mode == "walk")
 assert(text(ov) == "T:Alpha beta gamma. Delta eps zeta", "S1 start .. S2 end: " .. tostring(text(ov)))
 sel:_close()
--- refined: start on "beta", end on "eps"
+-- word labels: start on "beta", end on "eps" in the next sentence
 sel = fresh({ zoom = 1, vx = 0, vy = 0 })
 sel:_open_point(); ov = sel.overlay
-assert(ov:point_refine(true) == true and ov:_status_text():match("^FROM WORD"))
-assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 3, "S1's three words")
+press(ov, label_of(ov, 1))
+assert(ov:_status_text():match("^FROM WORD"), ov:_status_text())
 assert(press(ov, label_of(ov, nil, 2)) == "start" and ov:_status_text():match("^TO "), ov:_status_text())
-ov:point_refine(true)
-assert(press(ov, label_of(ov, 2)) == "sentence")
+assert(ov:point_press("right") == "sentence")
 assert(press(ov, label_of(ov, nil, 5)) == "done")
 assert(text(ov) == "T:beta gamma. Delta eps", "beta .. eps: " .. tostring(text(ov)))
+sel:_close()
+-- ↓ = the end of the paragraph on the page; ↑ = its start
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+sel:_open_point(); ov = sel.overlay
+assert(ov.sentences[1].para == 1 and ov.sentences[2].para == 1, "page 1 = one paragraph")
+press(ov, label_of(ov, 2))
+assert(ov:point_press("up") == "start" and ov.pointer.start == 1, "↑ on S2: the paragraph's first word Alpha")
+press(ov, label_of(ov, nil, 2))   -- end step on S1 from Alpha: the end on beta
+assert(text(ov) == "T:Alpha beta", tostring(text(ov)))
+sel:_close()
+sel = fresh({ zoom = 1, vx = 0, vy = 0 })
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1)); press(ov, label_of(ov, nil, 2))
+assert(ov:point_press("down") == "done", "↓ on S1: the end of the paragraph")
+assert(text(ov) == "T:beta gamma. Delta eps zeta", tostring(text(ov)))
 sel:_close()
 -- page 2: the sentence begun on page 1 is labelled at its visible part
 sel = fresh({ page = 2, zoom = 1, vx = 0, vy = 0 })

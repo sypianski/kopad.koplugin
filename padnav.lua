@@ -27,14 +27,16 @@ Reading:
                          ←/↑ from the last one
   Y held + D-pad         Select sentences: →/↓ from the first sentence, ←/↑
                          from the last one
-  A tapped               "Point from-to" (TASK-29, on sentences since
-                         TASK-35 / PC-022): two-symbol pad labels (D-pad +
+  A tapped               "Point from-to" (TASK-29; sentences TASK-35;
+                         TASK-36 / PC-023): two-symbol pad labels (D-pad +
                          A/B/X/Y, by position like the Vivaldi labels on the
-                         Deck) at the starts of the sentences; a label = the
-                         start (the sentence's first word), then labels at
-                         the sentence ends: a label = the end (its last
-                         word), B = no end (one word). R-stick ↓ in a step =
-                         to a word (see below). Then the usual word
+                         Deck) at the starts of the sentences; a label =
+                         letter labels on that sentence's words, a word
+                         label (or ← / ↑ = sentence / paragraph start) =
+                         the start; then labels on the words of the end
+                         sentence: a label (or ← / ↓ = sentence / paragraph
+                         end) = the end, → / ↑ move the end sentence, B =
+                         no end (one word) (see below). Then the usual word
                          selection (A + arrows adjust the range, A tapped =
                          action menu). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
@@ -115,18 +117,29 @@ FileManager (nothing on top of the file list):
 Point from-to (kopad's overlay in mode "point", context "selection"; A tapped
 while reading; Gamepad* path):
   D-pad / A / B / X / Y  Symbols of the labels, on the press (no repeat, no
-                         holds). The first one keeps only the labels starting
-                         with it, the second picks. No label starts with B
-                         (kopad_hints.lua: at most 56 sentences / words get
-                         a label).
-  R-stick ↓ / ↑          Refinement to a word on / off in the current step
-                         (status FROM WORD / TO WORD): a sentence label then
-                         shows labels over that sentence's words only, a
-                         word label = the start / end on that word. The end
-                         step starts without it again (PC-022).
-  B (nothing typed)      Start labels: close. End labels: no end = one word.
-                         Word labels: back to the sentence labels.
-  B (after a first symbol, when no label goes on with B): drop that symbol.
+                         holds). Each typed symbol keeps only the labels
+                         going on with it, the last one picks
+                         (kopad_hints.lua, TASK-36 / PC-023):
+    FROM                 Labels at the sentence starts (two symbols, never
+                         starting with B, at most 56). A label = that
+                         sentence's words.
+    FROM WORD            Letter labels over the sentence's words (first
+                         symbol Y / X / A, letters before arrows, never B;
+                         three symbols when it has more than 21 words). A
+                         label = the start there. ← = the sentence's start,
+                         ↑ = its paragraph's start (→ in RTL for ←).
+    TO                   Letter labels over the words of the current end
+                         sentence (the start sentence from the start word
+                         on), the range start .. its end inverted. A label =
+                         the end there. ← = its end, → = the next sentence
+                         (not past the page's last), ↑ = the previous one
+                         (not before the start sentence), ↓ = the end of
+                         its paragraph (← / → swapped in RTL).
+  B (nothing typed)      FROM: close. FROM WORD: back to the sentence
+                         labels. TO: no end = one word.
+  B (after a symbol, when no label goes on with B): drop that symbol.
+  R-stick                Consumed, nothing (the R↓ refinement of TASK-35
+                         is gone).
   Everything else        As in the selection (LB / RB close and turn the
                          page, Select / Start close and open the menu)
 
@@ -836,16 +849,16 @@ end
 
 -- R-stick: switches the selection level (TASK-17): ↓ sentence -> its first
 -- word, ↑ word -> the sentence containing it; ←/→ nothing. In "point
--- from-to" (TASK-35, PC-022) ↓ / ↑ turn the refinement to a word of the
--- current step on / off instead. While reading it does nothing (TASK-15).
--- Consumed whenever a selector exists.
+-- from-to" it does nothing (TASK-36: the word labels need no refinement
+-- any more). While reading it does nothing (TASK-15). Consumed whenever a
+-- selector exists.
 function PadNav:_rstick(dy)
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if not selector then return false end
     local ov = selector.overlay
     if ov and ov.mode == "point" then
-        if dy ~= 0 and type(ov.point_refine) == "function" then ov:point_refine(dy > 0) end
+        return true
     elseif ov then
         if dy > 0 then ov:to_words() elseif dy < 0 then ov:to_sentences() end
     end
@@ -2416,7 +2429,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: back to the previous location"
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 font size  \xE2\x86\x90/\xE2\x86\x92 margins"
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
-    .. "\nA: point from-to (sentence labels: start, then end; B = one word)"
+    .. "\nA: point from-to (sentence, then word labels: start, then end)"
     .. "\nY: highlights on the page"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
@@ -2445,11 +2458,11 @@ local CHEAT_READING = _("Reading mode")
     .. "\nB: parent folder    R-stick: quick actions"
 
 local CHEAT_SELECTION = _("Point from-to (A)")
-    .. "\nPress a label's two symbols (D-pad, A B X Y): the start sentence"
-    .. "\nThen a label at a sentence end: the end    B: one word"
-    .. "\nR-stick \xE2\x86\x93: to a word (labels on the words of the sentence)"
-    .. "\nR-stick \xE2\x86\x91 / B on word labels: back to sentences"
-    .. "\nB before a label: close"
+    .. "\nPress a label's symbols (D-pad, A B X Y): a sentence, then its words"
+    .. "\nStart: a word label    \xE2\x86\x90 sentence start    \xE2\x86\x91 paragraph start"
+    .. "\nEnd: a word label    \xE2\x86\x90 sentence end    \xE2\x86\x93 paragraph end"
+    .. "\nEnd: \xE2\x86\x92 / \xE2\x86\x91 next / previous sentence (labels move)"
+    .. "\nB: drop a typed symbol, else back to sentences / close; at the end one word"
     .. "\nThen as words: hold A + arrows = range, A = action menu"
     .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"

@@ -1168,8 +1168,8 @@ do
             show("struct")
         end
         selector._open_walk = function(_, from_end) log.sel[#log.sel + 1] = "_open_walk:" .. tostring(from_end); show("walk") end
-        -- point from-to (TASK-29): a scripted pointer -- B first = cancel,
-        -- the 4th symbol (start label + end label) = done, then words
+        -- point from-to (TASK-29 / TASK-36): a scripted pointer -- B first =
+        -- cancel, the 6th symbol = done, then words
         selector._open_point = function()
             log.sel[#log.sel + 1] = "_open_point"
             show("point")
@@ -1178,12 +1178,8 @@ do
                 log.ov[#log.ov + 1] = "point(" .. sym .. ")"
                 if presses == 0 and sym == "B" then return "cancel" end
                 presses = presses + 1
-                if presses == 4 then self.mode = "walk"; return "done" end
+                if presses == 6 then self.mode = "walk"; return "done" end
                 return presses == 2 and "start" or "prefix"
-            end
-            function ov:point_refine(on)
-                log.ov[#log.ov + 1] = "refine(" .. tostring(on) .. ")"
-                return true
             end
             return true
         end
@@ -1220,24 +1216,25 @@ do
     up(n, 0)
     assert(log.sel[1] == "_open_point" and n:_context() == "selection" and #log.ov == 0,
         "A tap = point from-to, no menu")
-    -- R-stick ↓ / ↑ in the labels: the refinement to a word (TASK-35,
-    -- PC-022), not the level switch; ←/→ nothing. Gamepad* path and legacy keys.
+    -- R-stick in the labels: consumed, nothing (TASK-36: no refinement, no
+    -- level switch). Gamepad* path and legacy keys.
     -- (T.now ticks one second per call: no stick bounce)
     assert(n:onGamepadAxisMotion({ axis = 3, value = 20000 }) == true)
     assert(n:onGamepadAxisMotion({ axis = 3, value = -20000 }) == true)
     assert(n:onGamepadAxisMotion({ axis = 2, value = 20000 }) == true)
     assert(n:onKPRStickDown() == true and n:onKPRStickUp() == true and n:onKPRStickLeft() == true)
-    assert(table.concat(log.ov, " ") == "refine(true) refine(false) refine(true) refine(false)",
-        "R-stick in the labels = refine: " .. table.concat(log.ov, " "))
-    log.ov = {}
-    -- the labels: D-pad and letters are symbols on the press; a held D-pad
-    -- does not repeat, A / Y / B start no hold (their release does nothing)
+    assert(#log.ov == 0 and n:_selector().overlay.mode == "point", "R-stick in the labels: nothing")
+    -- the labels: D-pad and letters are symbols on the press (the arrows =
+    -- the shortcuts of the word labels, TASK-36); a held D-pad does not
+    -- repeat, A / Y / B start no hold (their release does nothing)
     assert(down(n, 12) == true and #sched == 0, "no D-pad repeat on the labels"); up(n, 12)
     down(n, 0); up(n, 0)
     down(n, 3); up(n, 3)
+    assert(down(n, 14) == true and #sched == 0); up(n, 14)
     assert(down(n, 1) == true); up(n, 1)
-    assert(table.concat(log.ov, " ") == "point(down) point(A) point(Y) point(B)",
-        "symbols, no menu / Vortuyo / close: " .. table.concat(log.ov, " "))
+    assert(down(n, 13) == true); up(n, 13)
+    assert(table.concat(log.ov, " ") == "point(down) point(A) point(Y) point(right) point(B) point(left)",
+        "symbols, no menu / Vortuyo / close / step: " .. table.concat(log.ov, " "))
     assert(n:_selector().overlay.mode == "walk" and n:_context() == "selection" and #log.events == 0,
         "start + end chosen: the word walk")
     -- LT / RT and the sticks in the labels reach only the overlay's guarded

@@ -1,17 +1,18 @@
 --[[
-kopad_hints.lua -- "point from-to" (TASK-29, on sentences since TASK-35 /
-PC-022): pad labels at the sentences of the page, a start and an end chosen
-by pressing the label's two symbols, refined to a word on request.
+kopad_hints.lua -- "point from-to" (TASK-29; on sentences since TASK-35;
+letters on the words and arrows as shortcuts since TASK-36 / PC-023): pad
+labels at the sentences of the page, then over the words of one sentence; a
+start and an end chosen by pressing a label's symbols.
 
 Pure Lua, no KOReader dependency (tests/kopad_hints_test.lua). It knows nothing
 about documents: an ADAPTER turns the page into word boxes in screen
-coordinates plus the sentences as word-index ranges, and maps the chosen
-word indices back to words. The EPUB adapter lives in selector.lua
-(SelectorOverlay:_point_begin: paginmapo words and sentences); the PDF / DjVu
-adapter (PagedOverlay:_point_begin, pdfwords.lua) builds the same lists and
-uses this module unchanged.
+coordinates plus the sentences as word-index ranges (with their paragraph),
+and maps the chosen word indices back to words. The EPUB adapter lives in
+selector.lua (SelectorOverlay:_point_begin: paginmapo words and sentences);
+the PDF / DjVu adapter (PagedOverlay:_point_begin, pdfwords.lua) builds the
+same lists and uses this module unchanged.
 
-Symbols and placement follow the Vivaldi-on-the-Deck labels
+Sentence labels follow the Vivaldi-on-the-Deck labels
 (~/aparati/steamdeck/vivaldi-deck/ext/hints.js): eight symbols, the D-pad
 (up, down, left, right) and A / B / X / Y; the left part of a region starts
 with a D-pad symbol, the right part with a letter, and the direction of the
@@ -26,23 +27,35 @@ Coordinates are snapped to 1/GRID of the region before the anchors are
 compared, so an indent of a few pixels does not reorder a column of targets:
 neighbours share their first symbol.
 
+Word labels (M.word_labels) are LETTERS first: they start with Y, X or A
+(never an arrow: a lone arrow on the word level is a shortcut, see Pointer),
+the next symbols are letters before arrows, and B is never in them (B = back /
+drop the last symbol). Up to 21 words two symbols, up to 147 three.
+
 The contract with the adapters (see Pointer below):
-  sentences = { { first, last }, ... }   word indices, reading order
-  boxes[i]  = { x, y, w, h } | false     screen box of word i (false = off
-                                         the screen)
+  sentences = { { first, last, para }, ... }  word indices, reading order;
+                                              para = paragraph id (any value,
+                                              compared with ==; nil = the
+                                              sentence is its own paragraph)
+  boxes[i]  = { x, y, w, h } | false          screen box of word i (false =
+                                              off the screen)
 
 API:
   M.SYMBOLS / M.DIRS / M.BACK / M.FIRST    the vocabulary
-  M.MAX_LABELS                              56
+  M.WORD_FIRST / M.WORD_SYMBOLS            word labels: first / later symbols
+  M.MAX_LABELS                              56 sentence labels
+  M.WORD_MAX2 / M.WORD_MAX3                 21 / 147 word labels
   M.assign(points, first) -> labels         points = { {x, y}, ... }; labels[i]
                                             = { s1, s2 } or nil (overflow)
+  M.word_labels(n) -> labels                n words in reading order -> labels
+                                            of 2 (n <= 21) or 3 symbols
   M.lines_from_boxes(boxes) -> lines        word boxes in reading order ->
                                             { x, y, w, h, first, last } lines
-                                            (nil boxes skipped; a helper, the
-                                            pointer no longer uses lines)
+                                            (nil boxes skipped; selector.lua
+                                            draws the end step's preview with it)
   M.Pointer.new(sentences, boxes, opts)     opts.rtl = right-to-left script
   pointer:press(sym) -> result              see Pointer below
-  pointer:refine_to_word(on) -> changed     R-stick ↓ / ↑
+  pointer:preview() -> from, to             the end step's range (word indices)
   pointer:visible() -> { {sent, word, label, x, y, side, h, typed}, ... }
 ]]
 
@@ -182,42 +195,122 @@ function M.lines_from_boxes(boxes)
 end
 
 ----------------------------------------------------------------------
--- Pointer: the two steps, on sentences (TASK-35, PC-022)
+-- Word labels (TASK-36, PC-023): letters first
 ----------------------------------------------------------------------
--- Sentence (the contract with the adapters): { first, last } = indices into
--- `boxes`, the words of the page in reading order; boxes[i] = the word's
--- screen box { x, y, w, h }, or false / nil when it is not on the screen (a
--- zoomed PDF). Only the visible words of a sentence count, so a sentence
--- running over the page edge (or out of a zoomed view) is labelled at its
--- visible part, and one with no visible word gets no label.
+-- In reading order, not by position: a sentence is a few lines, and a
+-- position split over the A / X / Y anchors (all three on the right half of
+-- the diamond) would scatter neighbouring words over the groups and could not
+-- keep the letters first. The words are split into contiguous blocks, Y first
+-- (the top of the diamond = early in the sentence), then X, then A (bottom =
+-- late); a block into contiguous sub-blocks the same way. At every position
+-- the symbols go letters before arrows, the parent's own symbol first when it
+-- is a letter (so the first word of a block is a doubled symbol, "YY", like a
+-- lone sentence label), and as few children as keep the letters: as many
+-- labels as possible are letters only.
+
+M.WORD_FIRST = { "Y", "X", "A" }
+M.WORD_ARROWS = { "up", "left", "right", "down" }
+M.WORD_SYMBOLS = { "Y", "X", "A", "up", "left", "right", "down" }
+M.WORD_MAX2 = #M.WORD_FIRST * #M.WORD_SYMBOLS            -- 21
+M.WORD_MAX3 = M.WORD_MAX2 * #M.WORD_SYMBOLS              -- 147
+
+local function is_letter(c) return #c == 1 end
+
+local function copy(list)
+    local out = {}
+    for i, v in ipairs(list) do out[i] = v end
+    return out
+end
+
+-- The symbols of one position below the parent symbol p (nil = the first
+-- position): Y X A, then (not on the first position) the arrows; p first.
+local function word_order(p)
+    if not p then return M.WORD_FIRST end
+    local out = {}
+    if is_letter(p) then out[1] = p end
+    for _, c in ipairs(M.WORD_FIRST) do if c ~= p then out[#out + 1] = c end end
+    for _, c in ipairs(M.WORD_ARROWS) do out[#out + 1] = c end
+    return out
+end
+
+-- n items, `depth` symbols each, below the prefix `prefix` (a list), into
+-- `out` from index `at`. Children: enough that each holds at most
+-- 7^(depth-1), at least min(3, n) (the letters of this position).
+local function word_fill(out, at, n, depth, prefix)
+    local order = word_order(prefix[#prefix])
+    if depth == 1 then
+        for i = 1, n do
+            local l = copy(prefix)
+            l[#l + 1] = order[i]
+            out[at + i - 1] = l
+        end
+        return
+    end
+    local cap = (#M.WORD_SYMBOLS) ^ (depth - 1)
+    local k = math.max(math.ceil(n / cap), math.min(#M.WORD_FIRST, n))
+    k = math.min(k, #order)
+    local base, extra = math.floor(n / k), n % k
+    for c = 1, k do
+        local size = base + (c <= extra and 1 or 0)
+        local pre = copy(prefix)
+        pre[#pre + 1] = order[c]
+        word_fill(out, at, size, depth - 1, pre)
+        at = at + size
+    end
+end
+
+-- Labels for n words in reading order: two symbols up to WORD_MAX2, three up
+-- to WORD_MAX3; past that the first WORD_MAX3 get one (the caller windows).
+function M.word_labels(n)
+    local out = {}
+    n = math.min(n or 0, M.WORD_MAX3)
+    if n <= 0 then return out end
+    word_fill(out, 1, n, n <= M.WORD_MAX2 and 2 or 3, {})
+    return out
+end
+
+----------------------------------------------------------------------
+-- Pointer: the two steps (TASK-35 sentences, TASK-36 words + shortcuts)
+----------------------------------------------------------------------
+-- Sentence (the contract with the adapters): { first, last, para } =
+-- indices into `boxes`, the words of the page in reading order; boxes[i] =
+-- the word's screen box { x, y, w, h }, or false / nil when it is not on the
+-- screen (a zoomed PDF). Only the visible words of a sentence count, so a
+-- sentence running over the page edge (or out of a zoomed view) is labelled
+-- at its visible part, and one with no visible word gets no label.
 --
--- step "start": labels at the sentence STARTS (left of the first visible
---   word, right of it in RTL). A label = the start on the sentence's first
---   word -> step "end".
--- step "end": labels at the sentence ENDS (right of the last visible word,
---   left in RTL), from the start sentence down (the sentences before it
---   cannot end a selection). A label = the end on the sentence's last word
---   -> "done" (self.start .. self.stop, word indices).
--- Refinement ("word", R-stick ↓ / ↑): pointer:refine(true) in a step makes
---   the next sentence label open the labels of THAT sentence's words (level
---   "word"; in step "end" only the words from the start word on); a word
---   label = the start / end on that word. refine(false) goes back to the
---   sentence labels. It holds for the current step only: a new step starts
---   with sentences again. A sentence with more than MAX_LABELS visible words
---   (56) gets word labels on a window of MAX_LABELS words: the first ones in
---   step "start", the last ones in step "end" (a start is usually early in a
---   sentence, an end late); the rest is reached with A + arrows afterwards.
+-- step "start", level "sentence": labels at the sentence STARTS (left of the
+--   first visible word, right of it in RTL), M.assign. A label = that
+--   sentence's words (level "word"), it does not set the start yet.
+-- step "start", level "word": letter labels over the words of the sentence
+--   (self.sent). A label = the start on that word -> step "end". Shortcuts
+--   (a lone arrow, nothing typed; ← and → swapped in RTL): ← = the
+--   sentence's first word, ↑ = the first word of its paragraph (the first
+--   visible word of the run of sentences with the same `para` up to it);
+--   → / ↓ nothing.
+-- step "end" (always level "word"): the current end sentence E (self.sent,
+--   at first the start sentence) and letter labels over its words (in the
+--   start sentence from the start word on). A label = the end on that word ->
+--   "done". Shortcuts: ← = the end of E, done; → = E + 1 (the labels move
+--   there; nothing on the page's last sentence: a range never leaves the
+--   page); ↑ = E - 1 (never before the start sentence); ↓ = the end of E's
+--   paragraph, done. preview() = start .. the end of E (what ← gives).
+-- More than WORD_MAX2 (21) visible words in the step's sentence: every label
+--   has three symbols; more than WORD_MAX3 (147): the first 147 (in the end
+--   step's start sentence from the start word) get one, the rest is reached
+--   with A + arrows afterwards.
 -- press(sym) results:
---   "prefix"    first symbol of a label typed: only the labels with it stay
---   "unprefix"  B with a prefix that no label continues: prefix dropped
---   "sentence"  a sentence picked with refine on: now its word labels
---   "back"      B with nothing typed on word labels: the sentence labels of
---               the same step again
---   "start"     start chosen, now the end labels
+--   "prefix"    a symbol of a label typed: only the labels with it stay
+--   "unprefix"  B with a prefix that no label continues: last symbol dropped
+--   "sentence"  word labels of a sentence now (a sentence label picked, or
+--               → / ↑ in the end step)
+--   "back"      B with nothing typed on the start step's word labels: the
+--               sentence labels again
+--   "start"     start chosen, now the end step
 --   "done"      finished: self.start, self.stop (stop nil = no end, one word)
---   "cancel"    B with nothing typed on the start sentence labels: close
---   "ignored"   a symbol no label has
--- B with nothing typed on the end sentence labels = "done" without a stop.
+--   "cancel"    B with nothing typed on the sentence labels: close
+--   "ignored"   a symbol no label has, a shortcut with nowhere to go
+-- B with nothing typed in the end step = "done" without a stop.
 
 M.MAX_LABELS = #M.FIRST * #M.DIRS
 
@@ -228,9 +321,9 @@ M.Pointer = Pointer
 function Pointer.new(sentences, boxes, opts)
     local self = setmetatable({
         sentences = sentences or {}, boxes = boxes or {},
-        rtl = opts and opts.rtl or false, refine = false,
+        rtl = opts and opts.rtl or false,
     }, Pointer)
-    self:_sentence_labels("start")
+    self:_sentence_labels()
     return self
 end
 
@@ -254,13 +347,18 @@ function Pointer:_from_word(si)
     if self.step == "end" and si == self.start_sent then return self.start end
 end
 
--- Labels for `targets` ({ sent, word, x, y, side, h, px, py }; px / py = the
--- point the label is assigned by), in reading order.
-function Pointer:_set_targets(targets)
-    local points = {}
-    for k, t in ipairs(targets) do points[k] = { x = t.px, y = t.py } end
-    local labels = M.assign(points)
-    self.targets, self.typed = {}, nil
+function Pointer:_vis(si) return self:_visible_words(si, self:_from_word(si)) end
+
+-- Same paragraph: equal non-nil `para` (nil = a paragraph of its own).
+function Pointer:_same_para(a, b)
+    local pa = self.sentences[a] and self.sentences[a].para
+    local pb = self.sentences[b] and self.sentences[b].para
+    return pa ~= nil and pa == pb
+end
+
+-- Labels for `targets` ({ sent, word, x, y, side, h }) from a label list.
+function Pointer:_set_targets(targets, labels)
+    self.targets, self.typed = {}, {}
     for k, t in ipairs(targets) do
         if labels[k] then
             t.label = labels[k]
@@ -269,108 +367,167 @@ function Pointer:_set_targets(targets)
     end
 end
 
--- Sentence labels of step `step` ("start" / "end").
-function Pointer:_sentence_labels(step)
-    self.step, self.level, self.sent = step, "sentence", nil
-    local at_end = step == "end"
-    local left_edge = at_end == self.rtl   -- start: left (RTL right); end: right (RTL left)
-    local side = left_edge and "left" or "right"
-    local targets = {}
-    for si = (at_end and self.start_sent or 1), #self.sentences do
-        local vis = self:_visible_words(si, self:_from_word(si))
-        local wi = at_end and vis[#vis] or vis[1]
+-- Sentence labels (step "start", level "sentence").
+function Pointer:_sentence_labels()
+    self.step, self.level, self.sent = "start", "sentence", nil
+    local side = self.rtl and "right" or "left"
+    local targets, points = {}, {}
+    for si = 1, #self.sentences do
+        local wi = self:_vis(si)[1]
         local b = wi and box_of(self, wi)
         if b then
-            local x = left_edge and b.x or (b.x + b.w)
+            local x = self.rtl and (b.x + b.w) or b.x
             local y = b.y + b.h / 2
-            targets[#targets + 1] = { sent = si, word = wi, x = x, y = y, side = side,
-                                      h = b.h, px = x, py = y }
+            targets[#targets + 1] = { sent = si, word = wi, x = x, y = y, side = side, h = b.h }
+            points[#points + 1] = { x = x, y = y }
         end
     end
-    self:_set_targets(targets)
+    self:_set_targets(targets, M.assign(points))
 end
 
--- Word labels of sentence si (level "word"): over each visible word, its
--- top edge (side "top"), at most MAX_LABELS of them (see above).
+-- Word labels of sentence si (level "word") over each visible word, centred
+-- on its top edge (side "top"), at most WORD_MAX3 of them.
 function Pointer:_word_labels(si)
     self.level, self.sent = "word", si
-    local vis = self:_visible_words(si, self:_from_word(si))
-    local n, max = #vis, M.MAX_LABELS
-    local i0 = 1
-    if n > max then i0 = self.step == "end" and (n - max + 1) or 1 end
+    local vis = self:_vis(si)
     local targets = {}
-    for k = i0, math.min(n, i0 + max - 1) do
-        local wi = vis[k]
-        local b = box_of(self, wi)
-        targets[#targets + 1] = { sent = si, word = wi, x = b.x + b.w / 2, y = b.y,
-                                  side = "top", h = b.h,
-                                  px = b.x + b.w / 2, py = b.y + b.h / 2 }
+    for k = 1, math.min(#vis, M.WORD_MAX3) do
+        local b = box_of(self, vis[k])
+        targets[k] = { sent = si, word = vis[k], x = b.x + b.w / 2, y = b.y,
+                       side = "top", h = b.h }
     end
-    self:_set_targets(targets)
+    self:_set_targets(targets, M.word_labels(#targets))
+end
+
+-- The next / previous sentence (dir) from si with a visible word in this
+-- step, not before `min`.
+function Pointer:_next_sent(si, dir, min)
+    local j = si + dir
+    while j >= (min or 1) and j <= #self.sentences do
+        if #self:_vis(j) > 0 then return j end
+        j = j + dir
+    end
+end
+
+-- The first / last sentence of si's paragraph (consecutive equal `para`).
+function Pointer:_para_bound(si, dir)
+    local j = si
+    while self.sentences[j + dir] and self:_same_para(j, j + dir) do j = j + dir end
+    return j
+end
+
+function Pointer:_set_start(wi, si)
+    self.start, self.start_sent = wi, si
+    self.step = "end"
+    self:_word_labels(si)
+    return "start"
+end
+
+function Pointer:_done(stop)
+    self.stop = stop
+    self.step = "done"
+    self.targets, self.typed = {}, {}
+    return "done"
+end
+
+-- A lone arrow on the word level (nothing typed). `sym` is the physical
+-- symbol; in RTL ← and → swap (back = right).
+function Pointer:_shortcut(sym)
+    if self.rtl then
+        if sym == "left" then sym = "right" elseif sym == "right" then sym = "left" end
+    end
+    local E = self.sent
+    if self.step == "start" then
+        if sym == "left" then
+            local wi = self:_vis(E)[1]
+            if wi then return self:_set_start(wi, E) end
+        elseif sym == "up" then
+            for j = self:_para_bound(E, -1), E do
+                local wi = self:_vis(j)[1]
+                if wi then return self:_set_start(wi, j) end
+            end
+        end
+        return "ignored"
+    end
+    if sym == "left" then
+        local vis = self:_vis(E)
+        return self:_done(vis[#vis])
+    elseif sym == "right" or sym == "up" then
+        local j = self:_next_sent(E, sym == "right" and 1 or -1, self.start_sent)
+        if not j then return "ignored" end
+        self:_word_labels(j)
+        return "sentence"
+    elseif sym == "down" then
+        for j = self:_para_bound(E, 1), E, -1 do
+            local vis = self:_vis(j)
+            if #vis > 0 then return self:_done(vis[#vis]) end
+        end
+    end
+    return "ignored"
 end
 
 function Pointer:_pick(t)
-    if self.level == "sentence" and self.refine then
+    if self.level == "sentence" then
         self:_word_labels(t.sent)
         return "sentence"
     end
-    if self.step == "start" then
-        self.start, self.start_sent = t.word, t.sent
-        self.refine = false
-        self:_sentence_labels("end")
-        return "start"
-    end
-    self.stop = t.word
-    self.step = "done"
-    return "done"
+    if self.step == "start" then return self:_set_start(t.word, t.sent) end
+    return self:_done(t.word)
+end
+
+local function continues(label, typed, sym)
+    for i = 1, #typed do if label[i] ~= typed[i] then return false end end
+    return label[#typed + 1] == sym
 end
 
 function Pointer:press(sym)
     if self.step == "done" then return "ignored" end
-    if not self.typed then
-        for _, t in ipairs(self.targets) do
-            if t.label[1] == sym then self.typed = sym; return "prefix" end
-        end
-        if sym == M.BACK then
-            if self.level == "word" then
-                self:_sentence_labels(self.step)
-                return "back"
-            end
-            if self.step == "start" then return "cancel" end
-            self.step = "done"
-            return "done"
-        end
-        return "ignored"
+    local typed = self.typed
+    if #typed == 0 and self.level == "word" and not is_letter(sym) then
+        return self:_shortcut(sym)
     end
     for _, t in ipairs(self.targets) do
-        if t.label[1] == self.typed and t.label[2] == sym then return self:_pick(t) end
+        if continues(t.label, typed, sym) then
+            if #t.label == #typed + 1 then return self:_pick(t) end
+            typed[#typed + 1] = sym
+            return "prefix"
+        end
     end
-    if sym == M.BACK then self.typed = nil; return "unprefix" end
-    return "ignored"
+    if sym ~= M.BACK then return "ignored" end
+    if #typed > 0 then
+        typed[#typed] = nil
+        return "unprefix"
+    end
+    if self.step == "end" then return self:_done(nil) end
+    if self.level == "word" then
+        self:_sentence_labels()
+        return "back"
+    end
+    return "cancel"
 end
 
--- R-stick ↓ (on = true) / ↑ (false): refinement to the word in the current
--- step. Off while the word labels show = the sentence labels again. True
--- when something changed (a typed prefix stays when only the flag changes).
-function Pointer:refine_to_word(on)
-    on = on and true or false
-    if self.step == "done" or self.refine == on then return false end
-    self.refine = on
-    if not on and self.level == "word" then self:_sentence_labels(self.step) end
-    return true
+-- The end step's range: the start word .. the last visible word of E (word
+-- indices; nil outside the end step).
+function Pointer:preview()
+    if self.step ~= "end" or not self.start then return nil end
+    local vis = self:_vis(self.sent)
+    return self.start, vis[#vis] or self.start
 end
 
 -- The labels to draw: all of them, or those that continue the typed prefix.
--- `typed` = how many of the label's symbols are already pressed (0 or 1).
--- side: "left" / "right" = the label goes on that side of (x, y), "top" =
--- centred on (x, y), the top edge of the word. h = the word's height.
+-- `typed` = how many of the label's symbols are already pressed. side:
+-- "left" / "right" = the label goes on that side of (x, y), "top" = centred
+-- on (x, y), the top edge of the word. h = the word's height.
 function Pointer:visible()
     local out = {}
     if self.step == "done" then return out end
+    local typed = self.typed
     for _, t in ipairs(self.targets) do
-        if not self.typed or t.label[1] == self.typed then
+        local ok = true
+        for i = 1, #typed do if t.label[i] ~= typed[i] then ok = false; break end end
+        if ok then
             out[#out + 1] = { sent = t.sent, word = t.word, label = t.label, x = t.x, y = t.y,
-                              side = t.side, h = t.h, typed = self.typed and 1 or 0 }
+                              side = t.side, h = t.h, typed = #typed }
         end
     end
     return out
