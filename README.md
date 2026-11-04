@@ -211,7 +211,7 @@ Without keyreader, or with the switch off, nothing changes. Windows opened by ot
 
 ### Text fields and dictation (diktonoti, opt-in via pluginaro)
 
-In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **Y** or **Start** = the on-screen keyboard (on a Steam Deck Steam's own, elsewhere KOReader's), **B** = close without saving.
+In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **Y** or **Start** = the on-screen keyboard (under Steam — Steam Deck, Big Picture — Steam's own, elsewhere KOReader's), **B** = close without saving. Held **X** deletes whole words, held D-pad **←** / **→** moves the cursor by words (a tap = one character).
 
 The note window of the selection's action menu opens with the highlight's saved note, is wide, and grows from a medium to a large height once the text no longer fits; an emptied note is removed when saved.
 

@@ -425,12 +425,24 @@ the last pad is unplugged. Text input with a pad: RT held = dictation, X =
 backspace, A = accept, Y and Start = a keyboard by hand (`M.toggle_keyboard`,
 focus anywhere in the dialog; Start used to be padconfirm's "A" = Save, which
 closed the note): KOReader's when up = hide it; else `M.system_keyboard()` =
-Steam's on a Deck the way SDL opens it (`SDL_HasScreenKeyboardSupport`,
+Steam's, only under Steam (`M.under_steam()`: env
+`SDL_ENABLE_STEAM_SCREEN_KEYBOARD`, which Steam sets for what it starts --
+Deck game mode, Big Picture; a desktop gets KOReader's even when SDL has some
+screen keyboard), the way SDL opens it (`SDL_HasScreenKeyboardSupport`,
 cdef'd; `SDL_StopTextInput` -- SDL skips a keyboard it thinks is up, and
 Steam's own hide does not tell it -- hint `"1"`, `SDL_StartTextInput`, hint
 back to `"0"`); no SDL screen keyboard (a desktop) = KOReader's (startup skip
 flag cleared; dictation keeps working under it). While Steam's is up Steam
-owns the pad, so RT types there instead of dictating (`_text_field_button`, `_dictate_hold`).
+owns the pad, so RT types there instead of dictating. **Holds on the field**
+(padnav `_text_hold_start`, `text_step`): X / D-pad ←→ tapped = one
+character (`delChar`, stock `leftChar` / `rightChar`, visual), held past
+`TEXT_HOLD_S` = a word every `TEXT_REPEAT_S` until `onGamepadButtonUp`
+(`_text_held`; `_text_gen` retires old ticks): `M.del_word_left` (blanks
+before the cursor too; delChar's undo fields), `M.move_word` (`word_left` /
+`word_right` over `charlist`; ← goes forward when `M.rtl_text` -- the first
+strong letter Hebrew / Arabic by UTF-8 lead bytes -- like the visual
+character move). Under KOReader's keyboard the D-pad stays the keyboard's;
+↑/↓ stay stock (`_text_field_button`, `_dictate_hold`).
 **A keyboard is the user's choice, hiding it never closes the dialog:**
 Steam's keyboard opened by hand (Steam + X) hides with a Back (Escape) key,
 and stock InputText (`onKeyPress`, focused field) / InputDialog (key event

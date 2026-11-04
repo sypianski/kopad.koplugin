@@ -1527,6 +1527,59 @@ do
 
     -- X = backspace, A = default button; with the focus on a button row A is stock
     assert(n:onGamepadButtonDown({ button = 2 }) == true and log[1] == "del", "X = backspace")
+    assert(#sched == 1, "X held: the word step is scheduled")
+    n:onGamepadButtonUp({ button = 2 })
+    run_sched()
+    assert(#log == 1 and #sched == 0, "X released before the hold: one character only")
+
+    -- held X = words to the left; held D-pad ←/→ = word moves (tap = one character)
+    do
+        local function chars(s) local t = {} for c in s:gmatch(".") do t[#t + 1] = c end return t end
+        local f = { focused = true, charlist = chars("one two three"), charpos = 14, inits = 0 }
+        function f:delChar() table.remove(self.charlist, self.charpos - 1); self.charpos = self.charpos - 1 end
+        function f:initTextBox() self.inits = self.inits + 1 end
+        function f:leftChar() self.charpos = self.charpos - 1 end
+        function f:rightChar() self.charpos = self.charpos + 1 end
+        function f:moveCursorToCharPos(p) self.charpos = p end
+        local saved_in = dlg._input_widget
+        dlg._input_widget = f
+        n:onGamepadButtonDown({ button = 2 })
+        assert(table.concat(f.charlist) == "one two thre", "X tap: one character")
+        run_sched()
+        assert(table.concat(f.charlist) == "one two " and f.charpos == 9, "X held: the word")
+        run_sched()
+        assert(table.concat(f.charlist) == "one " and f.charpos == 5, "still held: the next word, blanks too")
+        n:onGamepadButtonUp({ button = 2 })
+        run_sched()
+        assert(table.concat(f.charlist) == "one " and #sched == 0, "released: stops")
+
+        f.charlist, f.charpos = chars("alpha beta gamma"), 17
+        assert(n:onGamepadButtonDown({ button = 13 }) == true and f.charpos == 16, "← tap: one character")
+        run_sched()
+        assert(f.charpos == 12, "← held: start of the word")
+        run_sched()
+        assert(f.charpos == 7, "← still held: the previous word")
+        n:onGamepadButtonUp({ button = 13 })
+        run_sched()
+        assert(n:onGamepadButtonDown({ button = 14 }) == true and f.charpos == 8, "→ tap")
+        run_sched()
+        assert(f.charpos == 12, "→ held: next word")
+        n:onGamepadButtonUp({ button = 14 })
+        run_sched()
+        assert(#sched == 0, "nothing left scheduled")
+        -- right-to-left text: ← held goes forward (as the visual character move)
+        f.charlist, f.charpos = { "\216\167", "\217\132", " ", "\217\133", "\217\134" }, 2
+        n:onGamepadButtonDown({ button = 13 })
+        run_sched()
+        assert(f.charpos == 4, "RTL: ← held = next word")
+        n:onGamepadButtonUp({ button = 13 })
+        run_sched()
+        -- the D-pad on the buttons (field not focused): stock
+        f.focused = false
+        assert(n:onGamepadButtonDown({ button = 13 }) == false, "focus on the buttons: stock D-pad")
+        f.focused = true
+        dlg._input_widget = saved_in
+    end
     assert(n:onGamepadButtonDown({ button = 0 }) == true and log[2] == "save", "A = Save")
     dlg.selected = { x = 1, y = 2 }
     assert(n:onGamepadButtonDown({ button = 0 }) == false and #log == 2, "A on a button row: stock")

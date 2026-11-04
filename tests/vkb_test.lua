@@ -177,6 +177,12 @@ do
         SDL_SetHint = function(k, v) calls[#calls + 1] = "hint=" .. v end,
     } }
     package.loaded["device"] = { isSDL = function() return true end }
+    local steam_env = "1"
+    local getenv = os.getenv
+    os.getenv = function(k)
+        if k == "SDL_ENABLE_STEAM_SCREEN_KEYBOARD" then return steam_env end
+        return getenv(k)
+    end
     local d10 = new_dlg({ skip_first_show_keyboard = true })
     function d10:isKeyboardVisible() return self.kb == true end
     function d10:onShowKeyboard() self.kb = true end
@@ -186,7 +192,35 @@ do
     support = false
     assert(V.toggle_keyboard(d10) == true and d10.kb == true, "no screen keyboard: KOReader's")
     assert(V.toggle_keyboard(d10) == true and d10.kb == false, "KOReader's up: hidden")
+    -- not under Steam (a desktop, even with an SDL screen keyboard): KOReader's
+    support, steam_env, calls = true, nil, {}
+    assert(V.toggle_keyboard(d10) == true and d10.kb == true and #calls == 0, "no Steam: KOReader's")
+    d10.kb = false
+    steam_env = "0"
+    assert(V.under_steam() == false and V.toggle_keyboard(d10) == true and d10.kb == true, "Steam's switched off: KOReader's")
+    os.getenv = getenv
     package.loaded["ffi/SDL3"], package.loaded["device"] = nil, nil
+end
+
+-- 11. word helpers: word_left / word_right over a charlist, RTL detection,
+-- del_word_left with the undo fields
+do
+    local function chars(s) local t = {} for c in s:gmatch(".") do t[#t + 1] = c end return t end
+    local c = chars("ab  cd e")
+    assert(V.word_left(c, 9) == 8 and V.word_left(c, 8) == 5 and V.word_left(c, 5) == 1, "word_left")
+    assert(V.word_left(c, 1) == 1, "word_left at the start")
+    assert(V.word_right(c, 1) == 5 and V.word_right(c, 5) == 8 and V.word_right(c, 8) == 9, "word_right")
+    assert(V.rtl_text({ "1", " ", "\216\167" }) == true, "Arabic after digits: RTL")
+    assert(V.rtl_text({ "\215\144" }) == true, "Hebrew: RTL")
+    assert(V.rtl_text(chars("x")) == false and V.rtl_text({ "\208\182" }) == false, "Latin / Cyrillic: LTR")
+    assert(V.rtl_text({}) == false, "empty: LTR")
+    local f = { charlist = chars("one two  "), charpos = 10, inits = 0 }
+    function f:initTextBox() self.inits = self.inits + 1 end
+    assert(V.del_word_left(f) == true and table.concat(f.charlist) == "one " and f.charpos == 5, "del_word_left")
+    assert(table.concat(f.undo_charlist) == "two  " and f.undo_charpos == 10 and f.undo_startpos == 5 and f.inits == 1, "undo fields")
+    f.charpos = 1
+    assert(V.del_word_left(f) == false and f.inits == 1, "nothing left of the cursor")
+    assert(V.del_word_left({ readonly = true, charlist = {}, charpos = 1 }) == false, "read-only")
 end
 
 -- 7. pad check on a non-SDL device: false without touching SDL

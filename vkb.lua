@@ -213,13 +213,87 @@ function M.wrap_back()
     return true
 end
 
+-- Word moves in a text field (pad: X / D-pad ←→ held), pure over InputText's
+-- `charlist` (one UTF-8 character per entry) and `charpos` (the cursor is
+-- before charlist[charpos]). A word = a run of non-blank characters.
+local function blank(c) return c == nil or c:find("^%s$") ~= nil end
+
+-- Start of the word left of `pos` (blanks before the cursor skipped first).
+function M.word_left(chars, pos)
+    local i = pos - 1
+    while i >= 1 and blank(chars[i]) do i = i - 1 end
+    while i >= 1 and not blank(chars[i]) do i = i - 1 end
+    return i + 1
+end
+
+-- Start of the next word right of `pos` (#chars + 1 = the end).
+function M.word_right(chars, pos)
+    local n, i = #chars, pos
+    while i <= n and not blank(chars[i]) do i = i + 1 end
+    while i <= n and blank(chars[i]) do i = i + 1 end
+    return i
+end
+
+-- True when the first strong letter is Hebrew / Arabic / Syriac / Thaana /
+-- N'Ko (U+0590..U+08FF, presentation forms U+FB1D..U+FEFF), by the UTF-8
+-- lead bytes; Latin, Greek, Cyrillic, Armenian (C3..D5) count as LTR.
+function M.rtl_text(chars)
+    if type(chars) ~= "table" then return false end
+    for _, c in ipairs(chars) do
+        local b1, b2 = c:byte(1, 2)
+        if b1 then
+            if c:find("^%a$") then return false end
+            if b1 >= 0xD6 and b1 <= 0xDF then return true end
+            if b1 == 0xE0 and b2 and b2 >= 0xA0 and b2 <= 0xA3 then return true end
+            if b1 == 0xEF and b2 and b2 >= 0xAC and b2 <= 0xBB then return true end
+            if b1 >= 0xC3 and b1 <= 0xD5 then return false end
+        end
+    end
+    return false
+end
+
+-- Delete the word left of the cursor (blanks before it included), with the
+-- undo fields InputText:delChar keeps.
+function M.del_word_left(input)
+    if input.readonly then return false end
+    if type(input.isTextEditable) == "function" and not input:isTextEditable(true) then return false end
+    local pos = input.charpos
+    local start = M.word_left(input.charlist, pos)
+    if start >= pos then return false end
+    local removed = {}
+    for i = pos - 1, start, -1 do table.insert(removed, 1, table.remove(input.charlist, i)) end
+    input.undo_charpos, input.undo_charlist, input.undo_startpos = pos, removed, start
+    input.charpos = start
+    input.is_text_edited = true
+    input:initTextBox()
+    return true
+end
+
+-- Move the cursor one word; `back` = towards the start of the text.
+function M.move_word(input, back)
+    local chars = input.charlist
+    local pos = back and M.word_left(chars, input.charpos) or M.word_right(chars, input.charpos)
+    if pos == input.charpos then return false end
+    input:moveCursorToCharPos(pos)
+    return true
+end
+
+-- Steam offers its keyboard (Steam sets this for the games it starts: Deck
+-- game mode, Big Picture). Anywhere else -- a desktop, a Mac -- a pad gets
+-- KOReader's keyboard, even when SDL could show some other screen keyboard.
+function M.under_steam()
+    local v = os.getenv("SDL_ENABLE_STEAM_SCREEN_KEYBOARD")
+    return v ~= nil and v ~= "" and v ~= "0"
+end
+
 -- Open the system's screen keyboard (Steam's on a Deck) the way SDL does it
 -- for a focused field: SDL_StartTextInput with the hint on, then the hint
 -- back to "0" so later focus changes do not open it. A stop first, because
 -- SDL does not show a keyboard it believes is up (Steam's own hide button
--- does not tell SDL). False when SDL has no screen keyboard (a desktop).
+-- does not tell SDL). False outside Steam (M.under_steam) or when SDL has no
+-- screen keyboard.
 function M.system_keyboard()
-    if not is_sdl() then return false end
+    if not (is_sdl() and M.under_steam()) then return false end
     local ok, res = pcall(function()
         local S = require("ffi/SDL3")
         local SDL = S.SDL

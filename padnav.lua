@@ -1229,6 +1229,7 @@ function PadNav:onGamepadButtonUp(ev)
         Trace.log("padnav btn=%s up: role=%s", tostring(ev.button), tostring(btn))
     end
     if self._dpad_held == btn then self:_dpad_stop() end
+    if self._text_held == btn then self._text_held = nil end
     if self._x_hold == btn then
         self._x_hold, self._x_mode = nil, false
     end
@@ -1935,12 +1936,61 @@ local function enter_default_button(dlg)
     return nil
 end
 
+-- One step of X / D-pad ←→ on a text field: a tap = one character (stock
+-- leftChar / rightChar, which move visually), held = a word (vkb.lua; ← goes
+-- forward in a right-to-left text, as the visual character move does).
+-- Returns true when the input had the method (else stock handles the key).
+local function text_step(input, btn, word)
+    local ok, err = pcall(function()
+        if btn == BTN_X then
+            if word then Vkb.del_word_left(input) else input:delChar() end
+        elseif word then
+            local back = btn == BTN_DPAD_LEFT
+            if Vkb.rtl_text(input.charlist) then back = not back end
+            Vkb.move_word(input, back)
+        elseif btn == BTN_DPAD_LEFT then
+            input:leftChar()
+        else
+            input:rightChar()
+        end
+    end)
+    if not ok then logger.warn("kopad: text field step failed: " .. tostring(err)) end
+    return ok
+end
+
+-- X / D-pad ←→ held on a text field: after TEXT_HOLD_S word steps every
+-- TEXT_REPEAT_S until the release (onGamepadButtonUp clears _text_held), the
+-- field loses the focus or TEXT_REPEAT_MAX. `_text_gen` retires the ticks of
+-- an earlier hold.
+local TEXT_HOLD_S, TEXT_REPEAT_S, TEXT_REPEAT_MAX = 0.45, 0.25, 200
+function PadNav:_text_hold_start(btn, input)
+    if not Vkb or type(UIManager.scheduleIn) ~= "function" then return end
+    local gen = (self._text_gen or 0) + 1
+    self._text_gen, self._text_held = gen, btn
+    local n = 0
+    local tick
+    tick = function()
+        if self._text_gen ~= gen or self._text_held ~= btn then return end
+        local _, cur, under_kb = text_dialog()
+        n = n + 1
+        if cur ~= input or under_kb or n > TEXT_REPEAT_MAX then
+            self._text_held = nil
+            return
+        end
+        text_step(input, btn, true)
+        UIManager:scheduleIn(TEXT_REPEAT_S, tick)
+    end
+    UIManager:scheduleIn(TEXT_HOLD_S, tick)
+end
+
 -- Buttons in a text-input dialog (ctx "window"): X = backspace, A = accept
 -- (the default button, like Enter) while the focus is on the text field; B
 -- keeps the stock Back = close without saving (or cancels a recording, see
--- _diktonoti_route). Y and Start = KOReader's on-screen keyboard on / off
--- (vkb.lua hides it at the start; dictation still works under it), with the
--- focus anywhere in the dialog. Start comes here before _confirm_button,
+-- _diktonoti_route). X and D-pad ←/→ held on the field go by words
+-- (_text_hold_start; under KOReader's keyboard the D-pad stays its own).
+-- Y and Start = a keyboard (vkb.toggle_keyboard: Steam's under Steam, else
+-- KOReader's; vkb.lua hides it at the start; dictation still works under
+-- KOReader's), with the focus anywhere in the dialog. Start comes here before _confirm_button,
 -- whose Start = the "A" button (Save) closed a note meant to be typed into.
 -- Stock gives these dialogs no pad action for X or Y, and A on the field does
 -- nothing. Returns true = consumed.
@@ -1954,16 +2004,16 @@ function PadNav:_text_field_button(btn)
         Trace.log("padnav btn=%s: keyboard toggle ok=%s res=%s", tostring(btn), tostring(ok), tostring(res))
         return ok and res == true
     end
-    if btn ~= BTN_X and btn ~= BTN_A then return false end
+    local side = btn == BTN_DPAD_LEFT or btn == BTN_DPAD_RIGHT
+    if btn ~= BTN_X and btn ~= BTN_A and not side then return false end
     local dlg, input, under_kb = text_dialog()
     if not dlg then return false end
-    -- A on the on-screen keyboard (opened by a tap / the toggle): stock types its key.
-    if btn == BTN_A and under_kb then return false end
-    if btn == BTN_X then
-        if type(input.delChar) == "function" then
-            local ok, err = pcall(input.delChar, input)
-            if not ok then logger.warn("kopad: backspace failed: " .. tostring(err)) end
-        end
+    -- A / D-pad on the on-screen keyboard (opened by a tap / the toggle): stock
+    -- types / moves over its keys.
+    if (btn == BTN_A or side) and under_kb then return false end
+    if btn == BTN_X or side then
+        if not text_step(input, btn, false) and side then return false end
+        self:_text_hold_start(btn, input)
         return true
     end
     -- A with the D-pad focus moved onto a button row: stock presses that button.
