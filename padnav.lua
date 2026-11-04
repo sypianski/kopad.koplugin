@@ -120,7 +120,8 @@ while reading; Gamepad* path):
                          A label = the words, cursor on the sentence's first
                          visible word, no range (TASK-42 / PC-024; the word
                          labels, end step and arrow shortcuts of TASK-36..41
-                         are gone).
+                         are gone), in the sentence phase (TASK-44 /
+                         PC-025, below).
   B (nothing typed)      Close.
   B (after a symbol, when no label goes on with B): drop that symbol.
   R-stick                Consumed, nothing.
@@ -130,28 +131,31 @@ while reading; Gamepad* path):
 Selection (kopad's overlay; two levels, sentences "struct" and words "walk",
 plus the saved highlights "hl" opened by Y):
   D-pad / L-stick ←/→    Words: word          Sentences: sentence
-  D-pad / L-stick ↑/↓    Words: D-pad = sentence start (TASK-42 / PC-024: ↓
-                         the next one, ↑ the cursor's own, on a start the
-                         previous one); L-stick = one line, the word under
-                         the cursor's x (TASK-43; a word hyphenated over two
-                         lines counts on both)
+  D-pad / L-stick ↑/↓    Words: one line, the word under the cursor's x
+                         (TASK-44 / PC-025, D-pad and L-stick alike; a word
+                         hyphenated over two lines counts on both)
                          Sentences: paragraph
                          Highlights: previous / next one (all four)
                          Past the page edge: the next / previous page, both
                          directions (TASK-18). Held D-pad repeats (TASK-16)
                          and speeds up after a few steps (TASK-25).
-  RT held + arrows       Words (TASK-42 / PC-024): a range from the cursor
-                         at the first move (a range kept from before goes
-                         on). ←/→ = its moving end by a word; ↓ = to the end
-                         of the sentence, on an end to the end of the next
-                         one; ↑ = one sentence off (the end of the previous
-                         one, never before the anchor); on the anchor ↑ goes
-                         back to the sentence start (on a start: the
-                         previous one), before the anchor ↓ goes to the next
-                         start, not past the anchor. L-stick ↑/↓ (TASK-43):
-                         the moving end by a line. Never leaves the page;
-                         releasing RT keeps the range. RT's release is
-                         polled (_rt_hold), its auto-repeat does nothing.
+  RT held + arrows       Words (TASK-42, TASK-44 / PC-025): a range from the
+                         cursor at the first move (a range kept from before
+                         goes on); its moving end by a word (←/→) or a line
+                         (↑/↓). Never leaves the page; releasing RT keeps
+                         the range. RT's release is polled (_rt_hold), its
+                         auto-repeat does nothing.
+  Sentence phase         Right after a label (cursor on the sentence's
+                         first visible word, no other move yet): RT + ↓ =
+                         the whole sentence (anchor = its start), again =
+                         to the end of the next one; RT + ↑ = one sentence
+                         off, the last one off = no range, cursor back on
+                         the start. The first other move (D-pad / L-stick
+                         without RT, RT + ←/→) ends it; RT + ←/→ keeps the
+                         sentence range and moves its end by a word, then
+                         RT + ↑/↓ go by a line. B drops a range (the phase
+                         ends unless the cursor is on the start word); a
+                         new label = a new phase. Status line: START.
   RT / LT                Sentences: next / previous paragraph (TASK-25), as
                          ↓/↑; highlights: next / previous. Over the page
                          edge; held, it keeps jumping; with A held = range.
@@ -691,12 +695,11 @@ end
 
 -- Arrows in the selection overlay (D-pad, L-stick): dx / dy are screen
 -- directions, dx flipped for RTL here; the overlay moves word / sentence /
--- highlight (step) or sentence start / paragraph (line). While RT is held
+-- highlight (step) or line / paragraph (line). While RT is held
 -- (TASK-42 / PC-024, _rt_hold) or A (Gamepad* path, TASK-16, the older
--- alias) the move extends a range from the anchor. by_line (the L-stick,
--- TASK-43): ↑/↓ in words go by a line instead of a sentence start (the
--- overlay ignores it in the other modes).
-function PadNav:_sel_move(dx, dy, by_line)
+-- alias) the move extends a range from the anchor (right after a sentence
+-- label ↑/↓ by whole sentences, TASK-44 / PC-025: the overlay decides).
+function PadNav:_sel_move(dx, dy)
     local selector = self:_selector()
     local ov = selector and selector.overlay
     if not ov then return end
@@ -706,17 +709,11 @@ function PadNav:_sel_move(dx, dy, by_line)
     if a_range then self._a_moved = true end
     local range = a_range or self:_rt_active(ov)
     if self:_is_rtl() then dx = -dx end
-    if dx ~= 0 then
-        ov:step(dx, range)
-    elseif by_line then
-        ov:line(dy, range, true)
-    else
-        ov:line(dy, range)
-    end
+    if dx ~= 0 then ov:step(dx, range) else ov:line(dy, range) end
 end
 
--- L-stick: in the selection the same as the D-pad, except ↑/↓ in words =
--- one line (TASK-43; with RT / A held a range by a line). Its repeat is the
+-- L-stick: in the selection the same as the D-pad (TASK-44 / PC-025; the
+-- L-stick-only lines of TASK-43 are the D-pad's too now). Its repeat is the
 -- stock axis auto-repeat: every repeat is one more move with the range flag
 -- of that moment, as a held D-pad's (_dpad_start). While reading it does
 -- nothing (TASK-12, TASK-15) but is consumed, so that the stock
@@ -728,7 +725,7 @@ function PadNav:_lstick(dx, dy)
     if not self:_is_enabled() then return false end
     local selector = self:_selector()
     if not selector then return false end
-    if selector.overlay then self:_sel_move(dx, dy, true) end
+    if selector.overlay then self:_sel_move(dx, dy) end
     return true
 end
 
@@ -2624,10 +2621,9 @@ local CHEAT_SELECTION = _("Point from-to (A)")
     .. "\nB: drop the last symbol, else close"
     .. "\n\n" .. _("Selection mode")
     .. "\nD-pad / L-stick \xE2\x86\x90/\xE2\x86\x92: word / sentence"
-    .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: words: sentence start    sentences: paragraph"
-    .. "\nL-stick \xE2\x86\x91/\xE2\x86\x93 (words): one line"
-    .. "\nHold RT + arrows (words): select, \xE2\x86\x93 to the sentence end, \xE2\x86\x91 one sentence off,"
-    .. " L-stick \xE2\x86\x91/\xE2\x86\x93 a line"
+    .. "\nD-pad / L-stick \xE2\x86\x91/\xE2\x86\x93: words: line    sentences: paragraph"
+    .. "\nHold RT + arrows (words): select by word / line"
+    .. "\nRight after a label: RT + \xE2\x86\x93 the whole sentence, again the next, RT + \xE2\x86\x91 one off"
     .. "\nRT / LT (sentences): next / previous paragraph"
     .. "\nA: action menu    Y: Vortuyo"
     .. "\nR-stick \xE2\x86\x93: words    \xE2\x86\x91: sentences"

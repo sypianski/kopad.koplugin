@@ -42,12 +42,13 @@ padnav.lua; this is a summary. Use menu > kopad > "Button cheat sheet" on-device
     B                        Drop the typed symbol, else close
 
   Selection (sentences / words; highlights after Y):
-    D-pad / L-stick          ←/→ word or sentence, ↑/↓ sentence start (words)
+    D-pad / L-stick          ←/→ word or sentence, ↑/↓ line (words, TASK-44)
                              or paragraph, across page edges; held D-pad
                              repeats, faster
-    L-stick ↑/↓ (words)      One line (TASK-43), RT / A held: range by a line
-    RT held + arrows         Words: range (TASK-42): ←/→ word, ↓ to the
-                             sentence end, ↑ one sentence off
+    RT held + arrows         Words: range by a word / line (TASK-44 / PC-025);
+                             right after a label ↓ = the whole sentence,
+                             again the next one, ↑ one off (until the first
+                             other move)
     RT / LT                  Sentences: next / previous paragraph; words:
                              nothing besides RT held
     A held + arrows          The older range alias (not the A hold that

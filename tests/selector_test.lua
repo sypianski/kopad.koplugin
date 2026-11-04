@@ -197,74 +197,54 @@ assert(ov:_status_text():match("^SENTENCES"), "range in the status line")
 assert(not ov:_status_text():find("%d"), "no counters: " .. ov:_status_text())
 
 -- 5. Words (D-pad): first / last word, word moves over page edges; ↑/↓ =
--- sentence starts (TASK-42 / PC-024: ↓ the next one, ↑ the cursor's own or,
--- on a start, the previous one), over page edges too
+-- one line, the word under the cursor's x (TASK-44 / PC-025: the D-pad and
+-- the L-stick alike, no sentence jumps), over page edges too
 sel:_close()
 sel, doc = fresh()
 sel:_open_walk(false); ov = sel.overlay
 assert(ov.mode == "walk" and text(ov) == "t1", "D-pad ↓/→ opens on the first word")
-assert(ov.from_labels == false, "not from the labels")
+assert(ov.from_labels == false and ov.sent_phase == false, "not from the labels, no sentence phase")
 ov:step(1); assert(text(ov) == "t2")
-ov:line(1); assert(text(ov) == "t5", "↓ = the start of the next sentence (S2): " .. tostring(text(ov)))
-ov:line(-1); assert(doc.page == 1 and text(ov) == "t1", "↑ on a start = the previous sentence's start")
-ov:step(1); ov:step(1)
-ov:line(-1); assert(text(ov) == "t1", "↑ inside a sentence = its own start")
+ov:line(1); assert(text(ov) == "t5", "↓ = the word below at the same x: " .. tostring(text(ov)))
+ov:line(-1)
+assert(doc.page == 1 and text(ov) == "t2", "↑ = the word above, not the one on the left: " .. tostring(text(ov)))
 ov:line(1); ov:line(1)
-assert(doc.page == 2 and text(ov) == "t9", "↓ past the page's last sentence = the next start on the next page"
-    .. " (S2's other half skipped): " .. tostring(text(ov)))
-ov:line(-1); assert(doc.page == 2 and text(ov) == "t7", "↑ = S2's visible start on page 2")
-ov:line(-1); assert(doc.page == 1 and text(ov) == "t5", "↑ again = S2's real start, on page 1: " .. tostring(text(ov)))
-ov:line(-1); ov:line(-1); assert(doc.page == 1 and text(ov) == "t1", "first sentence of the book: stays")
+assert(doc.page == 2 and text(ov) == "t7", "↓ on the last line = next page, first word")
+ov:line(-1); assert(doc.page == 1 and text(ov) == "t6", "↑ on the first line = previous page, last word")
+ov:step(-1); ov:step(-1); ov:step(-1); ov:step(-1); ov:step(-1)
+assert(text(ov) == "t1")
 ov:step(1); ov:step(1); ov:step(1); ov:step(1); ov:step(1)
 assert(text(ov) == "t6")
 ov:step(1); assert(doc.page == 2 and text(ov) == "t7", "→ on the last word = next page")
 ov:step(-1); assert(doc.page == 1 and text(ov) == "t6", "← on the first word = previous page, last word")
 assert(ov:_status_text():match("^WORD ") and not ov:_status_text():find("%d"))
-assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence L\xE2\x86\x95 line"
+assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 line"
     .. " \xC2\xB7 RT select \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text())
 assert(ov:_status_text(true) == "WORD \xC2\xB7 A menu \xC2\xB7 B close", ov:_status_text(true))
 assert(ov:back() == false, "B without a range, not from the labels: padnav closes")
 sel:_close()
--- the end of the book: ↓ on the last sentence stays
+-- the end of the book: ↓ on the last line stays, ↑ off the first line =
+-- the previous page's last word
 sel, doc = fresh(3)
 sel:_open_walk(true); ov = sel.overlay
-ov:line(-1); assert(text(ov) == "t17", "↑ = the start of S6")
-ov:line(1); assert(doc.page == 3 and text(ov) == "t17", "↓ on the book's last sentence: stays")
-ov:line(-1); ov:line(-1)
-assert(doc.page == 3 and text(ov) == "t13", "↑ = S4's visible start t13")
-ov:line(-1); assert(doc.page == 2 and text(ov) == "t11", "↑ again = S4's real start on page 2: " .. tostring(text(ov)))
+assert(text(ov) == "t18")
+ov:line(-1); assert(text(ov) == "t15", "↑ = the word above")
+ov:line(1); assert(text(ov) == "t18")
+ov:line(1); assert(doc.page == 3 and text(ov) == "t18", "↓ on the book's last line: stays")
+ov:line(-1); ov:line(-1); assert(doc.page == 2 and text(ov) == "t12", "↑ off the first line = page 2, last word")
 sel:_close()
 
--- 5c. L-stick ↑/↓ in words (TASK-43, line(dir, range, true)): one line,
--- the word under the cursor's x (as before TASK-42), over page edges without
--- a range; with RT / A held (range) by a line, never off the page. The
--- D-pad ↑/↓ (no flag) stay the sentence starts.
-sel, doc = fresh()
-sel:_open_walk(false); ov = sel.overlay
-ov:step(1); assert(text(ov) == "t2")
-ov:line(1, false, true); assert(text(ov) == "t5", "L ↓ = the word below at the same x: " .. tostring(text(ov)))
-ov:line(-1, false, true)
-assert(doc.page == 1 and text(ov) == "t2", "L ↑ = the word above, not the one on the left: " .. tostring(text(ov)))
-ov:line(1, false, true); ov:line(1, false, true)
-assert(doc.page == 2 and text(ov) == "t7", "L ↓ on the last line = next page, first word")
-ov:line(-1, false, true); assert(doc.page == 1 and text(ov) == "t6", "L ↑ on the first line = previous page, last word")
-ov:line(-1); assert(text(ov) == "t5", "D-pad ↑ still = the sentence start (S2)")
-sel:_close()
--- a range by a line: anchor stays, both directions, never off the page
+-- 5c. A range by a line (RT / A held, TASK-43 / TASK-44): the anchor stays,
+-- both directions, never off the page; a plain move drops it.
 sel, doc = fresh()
 sel:_open_walk(false); ov = sel.overlay
 ov:step(1)
-ov:line(1, true, true); assert(ov.ww_anchor and text(ov) == "t2 t3 t4 t5", "RT + L ↓ = range to the line below")
-ov:line(1, true, true); assert(doc.page == 1 and text(ov) == "t2 t3 t4 t5", "range: no page turn")
-ov:line(-1, true, true); assert(text(ov) == "t2", "RT + L ↑ = back by a line")
-ov:line(-1, true, true); assert(doc.page == 1 and text(ov) == "t2", "range: not off the page (top)")
-ov:step(1, true); ov:line(1, true, true); assert(text(ov) == "t2 t3 t4 t5 t6", "word, then a line")
-ov:line(1, false, true); assert(ov.ww_anchor == nil and doc.page == 2, "without a range the anchor goes")
-sel:_close()
--- the flag only matters in words: sentences = paragraph, highlights = step
-sel, doc = fresh()
-sel:_open(); ov = sel.overlay
-ov:line(1, false, true); assert(doc.page == 2 and text(ov) == "t9 t10", "sentences: L ↓ = next paragraph")
+ov:line(1, true); assert(ov.ww_anchor and text(ov) == "t2 t3 t4 t5", "RT + ↓ = range to the line below, not to the sentence end")
+ov:line(1, true); assert(doc.page == 1 and text(ov) == "t2 t3 t4 t5", "range: no page turn")
+ov:line(-1, true); assert(text(ov) == "t2", "RT + ↑ = back by a line")
+ov:line(-1, true); assert(doc.page == 1 and text(ov) == "t2", "range: not off the page (top)")
+ov:step(1, true); ov:line(1, true); assert(text(ov) == "t2 t3 t4 t5 t6", "word, then a line")
+ov:line(1); assert(ov.ww_anchor == nil and doc.page == 2, "without a range the anchor goes")
 sel:_close()
 -- a word hyphenated over two lines (t3: head at the end of line 1, tail at
 -- the start of line 2): a line move lands on the fragment under the x, and
@@ -282,16 +262,16 @@ function doc:getWordFromPosition(pos)
     return Doc.getWordFromPosition(self, pos)
 end
 sel:_open_walk(false); ov = sel.overlay
-ov:line(1, false, true)
-assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "tail", "L ↓ from t1: t3's tail on line 2: "
+ov:line(1)
+assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "tail", "↓ from t1: t3's tail on line 2: "
     .. tostring(text(ov)) .. " " .. tostring(ov.ww_word.is_split_fragment))
-ov:line(-1, false, true)
-assert(text(ov) == "t1", "L ↑ from the tail = line 1 at the tail's x: " .. tostring(text(ov)))
+ov:line(-1)
+assert(text(ov) == "t1", "↑ from the tail = line 1 at the tail's x: " .. tostring(text(ov)))
 for _ = 1, 6 do ov:step(1) end; assert(text(ov) == "t6", "t3 counts twice (head, tail)")
-ov:line(-1, false, true)
-assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "head", "L ↑ from t6: t3's head: "
+ov:line(-1)
+assert(text(ov) == "t3" and ov.ww_word.is_split_fragment == "head", "↑ from t6: t3's head: "
     .. tostring(ov.ww_word.is_split_fragment))
-ov:line(1, false, true); assert(text(ov) == "t6", "L ↓ from the head = the word under it")
+ov:line(1); assert(text(ov) == "t6", "↓ from the head = the word under it")
 sel:_close()
 
 -- 5a. Y + D-pad ↑/← (TASK-28): the sentences from the page's last one
@@ -330,45 +310,18 @@ for _ = 1, 6 do ov:step(1, true) end
 assert(doc.page == 1 and text(ov) == "t2 t3 t4 t5 t6", "range stays on the page (end)")
 assert(ov:_status_text():match("^WORDS"))
 
--- 6a. RT held (TASK-42 / PC-024; padnav passes range = true): ↓ = the range
--- end to the end of the sentence, on an end the end of the next one; ↑ = a
--- sentence off (the end of the previous one, never before the anchor); on
--- the anchor ↑ goes back to the sentence start (on a start: the previous
--- one), and before the anchor ↓ goes to the next start, never past the
--- anchor. Never off the page.
+-- 6a. RT held outside the sentence phase (TASK-44 / PC-025): ↑/↓ by a
+-- line (see 5c), ←/→ by a word; B drops the range, the cursor stays at its
+-- moving end.
 sel:_close()
 sel, doc = fresh()
 sel:_open_walk(false); ov = sel.overlay
 ov:line(1, true)
-assert(ov.ww_anchor and text(ov) == "t1 t2 t3 t4", "↓ = to the end of S1: " .. tostring(text(ov)))
+assert(ov.ww_anchor and text(ov) == "t1 t2 t3 t4", "↓ = the line below (t4 under t1): " .. tostring(text(ov)))
 assert(ov:_status_text():match("^WORDS") and ov:_status_text(true):find("B clear", 1, true))
-ov:line(1, true); assert(text(ov) == "t1 t2 t3 t4 t5 t6", "↓ on an end = the end of S2 (on the page)")
-ov:line(1, true); assert(doc.page == 1 and text(ov) == "t1 t2 t3 t4 t5 t6", "a range stays on the page")
-ov:line(-1, true); assert(text(ov) == "t1 t2 t3 t4", "↑ = one sentence off")
-ov:line(-1, true); assert(text(ov) == "t1", "↑: not before the anchor")
-ov:line(-1, true); assert(doc.page == 1 and text(ov) == "t1", "on the anchor at the page's first start: stays")
-ov:step(1, true); ov:step(1, true); assert(text(ov) == "t1 t2 t3", "←/→ = by a word")
-ov:line(1, true); assert(text(ov) == "t1 t2 t3 t4", "↓ from inside the sentence = its end")
--- B (back): the range goes, the cursor stays at its moving end
-assert(ov:back() == true and ov.ww_anchor == nil and text(ov) == "t4", "B clears the range")
-sel:_close()
--- backwards from the anchor
-sel, doc = fresh()
-sel:_open_walk(false); ov = sel.overlay
-ov:step(1); ov:step(1)
-ov:line(-1, true); assert(text(ov) == "t1 t2 t3", "↑ on the anchor = back to the sentence start")
-ov:line(1, true); assert(text(ov) == "t3", "↓ before the anchor: the next start is past it -> the anchor")
-sel:_close()
-sel, doc = fresh(2)
-sel:_open_walk(false); ov = sel.overlay
-ov:step(1); ov:step(1); ov:step(1); assert(text(ov) == "t10")
-ov:line(-1, true); assert(text(ov) == "t9 t10", "↑ on the anchor: S3's start")
-ov:line(-1, true); assert(text(ov) == "t7 t8 t9 t10", "↑ on a start: the previous start (S2's visible one)")
-ov:line(-1, true); assert(doc.page == 2 and text(ov) == "t7 t8 t9 t10", "never off the page")
-ov:line(1, true); assert(text(ov) == "t9 t10", "↓ before the anchor = the next start")
-ov:line(1, true); assert(text(ov) == "t10", "... not past the anchor")
-ov:line(1, true); assert(text(ov) == "t10 t11 t12", "on the anchor ↓ = the end of the next sentence (t10 ends S3)")
-ov:line(-1, true); assert(text(ov) == "t10", "↑ = S4 off, back to the anchor")
+ov:step(1, true); assert(text(ov) == "t1 t2 t3 t4 t5", "→ = by a word")
+ov:line(1, true); assert(doc.page == 1 and text(ov) == "t1 t2 t3 t4 t5", "a range stays on the page")
+assert(ov:back() == true and ov.ww_anchor == nil and text(ov) == "t5", "B clears the range")
 sel:_close()
 
 -- 7. Levels (TASK-17): R-stick ↓ sentence -> its first word, ↑ word -> its sentence
@@ -455,10 +408,10 @@ assert(not painted.invertRect, "labels: no selection painted")
 assert(press(ov, label_of(ov, 2)) == "done")
 assert(ov.mode == "walk" and ov.pointer == nil and ov.ww_anchor == nil and text(ov) == "t5",
     "S2's first word: " .. tostring(text(ov)))
-assert(ov.from_labels == true)
-assert(ov:_status_text() == "WORD \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 sentence L\xE2\x86\x95 line"
-    .. " \xC2\xB7 RT select \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text())
-assert(ov:_status_text(true) == "WORD \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text(true))
+assert(ov.from_labels == true and ov.sent_phase == true, "from the labels, in the sentence phase")
+assert(ov:_status_text() == "START \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 word \xE2\x86\x91\xE2\x86\x93 line"
+    .. " \xC2\xB7 RT\xE2\x86\x93 sentence \xC2\xB7 X hl \xC2\xB7 Y vort \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text())
+assert(ov:_status_text(true) == "START \xC2\xB7 A menu \xC2\xB7 B back", ov:_status_text(true))
 paint()
 assert(painted.invertRect, "the cursor word painted")
 -- B: back to the labels on the same page
@@ -475,7 +428,8 @@ sel:_close()
 sel, doc = fresh()
 sel:_open_point(); ov = sel.overlay
 press(ov, label_of(ov, 2))
-ov:line(1); assert(doc.page == 2 and text(ov) == "t9")
+ov:line(1); assert(doc.page == 2 and text(ov) == "t7", "↓ off the last line = the next page (a line move)")
+assert(ov.sent_phase == false, "a plain move ends the phase")
 assert(ov:back() == true and ov.mode == "point" and #ov.pointer:visible() == 3 and ov.words[1].xp0 == "w7",
     "the labels of page 2")
 sel:_close()
@@ -485,7 +439,59 @@ sel:_open_point(); ov = sel.overlay
 vis = ov.pointer:visible()
 assert(#vis == 3 and vis[1].word == 1 and ov.words[1].xp0 == "w7", "S2's visible part: t7")
 assert(press(ov, label_of(ov, 1)) == "done" and text(ov) == "t7", "the label = its first visible word")
-ov:line(-1); assert(doc.page == 1 and text(ov) == "t5", "↑ = its real start, on page 1")
+-- the phase on page 2: RT + ↓ = S2's words on this page, then S3, S4 (its
+-- last word on the page), never past the page; RT + ↑ one sentence off
+ov:line(1, true); assert(text(ov) == "t7 t8", "RT↓ = S2 to its last word on the page: " .. tostring(text(ov)))
+ov:line(1, true); assert(text(ov) == "t7 t8 t9 t10", "RT↓ again = to the end of S3")
+ov:line(1, true); assert(text(ov) == "t7 t8 t9 t10 t11 t12", "RT↓ = S4's last word on the page")
+ov:line(1, true); assert(doc.page == 2 and text(ov) == "t7 t8 t9 t10 t11 t12", "no next sentence: stays")
+ov:line(-1, true); assert(text(ov) == "t7 t8 t9 t10", "RT↑ = S4 off")
+ov:line(-1, true); ov:line(-1, true)
+assert(ov.ww_anchor == nil and text(ov) == "t7" and ov.sent_phase, "the start sentence off: no range, phase on")
+ov:line(-1); assert(doc.page == 1 and text(ov) == "t6", "↑ = a line: page 1's last word")
+sel:_close()
+-- 10a. The sentence phase (TASK-44 / PC-025) on page 1: S1 = t1-t4, S2 = t5-t6
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1)); assert(text(ov) == "t1" and ov.sent_phase)
+ov:line(1, true); assert(ov.ww_anchor and text(ov) == "t1 t2 t3 t4", "RT↓ = the whole sentence")
+assert(ov.ww_anchor.pos0 == "w1" and ov.sent_phase, "anchor = the start word, still in the phase")
+ov:line(1, true); assert(text(ov) == "t1 t2 t3 t4 t5 t6", "RT↓ again = the end of the next sentence")
+ov:line(1, true); assert(doc.page == 1 and text(ov) == "t1 t2 t3 t4 t5 t6", "never past the page")
+ov:line(-1, true); assert(text(ov) == "t1 t2 t3 t4", "RT↑ = one sentence off")
+ov:line(-1, true); assert(ov.ww_anchor == nil and text(ov) == "t1" and ov.sent_phase,
+    "the last one off: no range, the cursor on the start, the phase goes on")
+ov:line(-1, true); assert(ov.ww_anchor == nil and text(ov) == "t1" and ov.sent_phase, "RT↑ without a range: nothing")
+ov:line(1, true); assert(text(ov) == "t1 t2 t3 t4")
+-- RT + → ends the phase, keeps the anchor and moves the end by a word;
+-- after that RT + ↑/↓ go by a line
+ov:step(1, true); assert(text(ov) == "t1 t2 t3 t4 t5" and not ov.sent_phase, "RT→ = the end by a word, phase over")
+assert(ov:_status_text():match("^WORDS") and ov:_status_text():find("RT select", 1, true))
+ov:line(-1, true); assert(text(ov) == "t1 t2", "RT↑ now = a line up (t2 above t5): " .. tostring(text(ov)))
+sel:_close()
+-- a plain move ends the phase: RT + ↓ is then a line
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1))
+ov:step(1); assert(text(ov) == "t2" and not ov.sent_phase, "→ without RT ends the phase")
+ov:line(1, true); assert(text(ov) == "t2 t3 t4 t5", "RT↓ = to the line below, not the sentence end")
+sel:_close()
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1))
+ov:line(1); assert(text(ov) == "t4" and not ov.sent_phase, "↓ without RT = a line, ends the phase")
+sel:_close()
+-- B: dropping a sentence range ends the phase (the cursor is not on the
+-- start word); the labels again and a new label = a new phase
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 2)); assert(text(ov) == "t5")
+ov:line(1, true); assert(text(ov) == "t5 t6", "RT↓ = S2 on page 1")
+assert(ov:back() == true and ov.ww_anchor == nil and text(ov) == "t6" and not ov.sent_phase, "B: range off, phase over")
+ov:line(1, true); assert(text(ov) == "t6", "RT↓ = a line now: none below on the page")
+assert(ov:back() == true and ov:back() == true and ov.mode == "point", "B: range off, then the labels")
+press(ov, label_of(ov, 1)); assert(text(ov) == "t1" and ov.sent_phase, "a new label = a new phase")
+ov:to_sentences(); ov:to_words(); assert(ov.mode == "walk" and not ov.sent_phase, "the levels end the phase")
 sel:_close()
 -- R-stick ↓ from sentences into words: not from the labels, B closes
 sel, doc = fresh()

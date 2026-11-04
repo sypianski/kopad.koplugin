@@ -186,34 +186,25 @@ ov:paintTo(bb, 0, 0)
 assert(ov.words[1].sbox and ov.words[1].sbox.x == 60 and ov.words[3].sbox == nil, "boxes from the view at paint time")
 assert(#painted > 0, "something painted")
 ui.view.visible_area.x = 430
--- ↓ from gamma (TASK-42): the start of the next sentence, Delta
-ov:line(1); assert(cur(ov) == "Delta", "↓ = the next sentence start: " .. tostring(cur(ov)))
-ov:step(1); ov:step(1); assert(cur(ov) == "zeta")
+-- ↓ / ↑ (TASK-44 / PC-025: D-pad and L-stick alike) = one line, the
+-- nearest word by x; past the first / last line the previous / next page
+ov:line(1); assert(cur(ov) == "zeta", "↓ = the word below: " .. tostring(cur(ov)))
+ov:line(-1); assert(cur(ov) == "gamma.", "↑ = the word above")
+ov:line(1); assert(cur(ov) == "zeta")
 -- AC#1: past the last word = next page (a whole page), its first word
 events = {}
 ov:step(1)
 assert(events[1] == "GotoPage:2" and ov.page == 2 and cur(ov) == "eta", "page edge →: " .. tostring(events[1]))
 ov:step(-1)
 assert(ov.page == 1 and cur(ov) == "zeta", "page edge ←: the last word of the previous page")
--- ↓ on the page's last sentence = the next page's first sentence start (S2's
--- continuation "eta theta." skipped); ↑ = its visible start, then its real
--- start on the previous page
-ov:line(1); assert(ov.page == 2 and cur(ov) == "Iota", "↓ past the page: " .. tostring(cur(ov)))
-ov:line(-1); assert(ov.page == 2 and cur(ov) == "eta", "↑ = the visible start of S2's continuation")
-ov:line(-1); assert(ov.page == 1 and cur(ov) == "Delta", "↑ again = S2's real start on page 1: " .. tostring(cur(ov)))
-ov:step(1); ov:step(1); assert(cur(ov) == "zeta")
--- TASK-43: the L-stick ↑/↓ (line(dir, range, true)) = one line, the nearest
--- word by x; past the first / last line the previous / next page
-ov:line(-1, false, true); assert(cur(ov) == "gamma.", "L ↑ = the word above: " .. tostring(cur(ov)))
-ov:line(1, false, true); assert(cur(ov) == "zeta", "L ↓ = the word below")
 events = {}
-ov:line(1, false, true)
-assert(events[1] == "GotoPage:2" and ov.page == 2 and cur(ov) == "eta", "L ↓ on the last line = next page, first word")
-ov:line(-1, false, true); assert(ov.page == 1 and cur(ov) == "zeta", "L ↑ on the first line = previous page, last word")
+ov:line(1)
+assert(events[1] == "GotoPage:2" and ov.page == 2 and cur(ov) == "eta", "↓ on the last line = next page, first word")
+ov:line(-1); assert(ov.page == 1 and cur(ov) == "zeta", "↑ on the first line = previous page, last word")
 -- with RT / A held a range by a line, never off the page
-ov:line(-1, true, true); assert(text(ov) == "T:gamma. Delta eps zeta", "range by a line: " .. tostring(text(ov)))
-ov:line(-1, true, true); assert(ov.page == 1 and text(ov) == "T:gamma. Delta eps zeta", "range: not off the page")
-ov:line(1, true, true); ov:line(1, true, true)
+ov:line(-1, true); assert(text(ov) == "T:gamma. Delta eps zeta", "range by a line: " .. tostring(text(ov)))
+ov:line(-1, true); assert(ov.page == 1 and text(ov) == "T:gamma. Delta eps zeta", "range: not off the page")
+ov:line(1, true); ov:line(1, true)
 assert(ov.page == 1 and text(ov) == "T:zeta", "range back to the anchor, no page turn: " .. tostring(text(ov)))
 ov:step(-1); ov:step(1); assert(ov.ww_anchor == nil and cur(ov) == "zeta")
 -- the dictionary gets the selection with SCREEN boxes (highlights: tests/pdfhl_test.lua)
@@ -299,7 +290,8 @@ assert(ok == false and why == "reflow" and claims == 0, "reflow")
 
 -- point from-to on a PDF page (TASK-35; TASK-42 / PC-024): labels at the
 -- sentences, from the words on the screen; a label = the word walk at that
--- sentence's first word; RT held (range = true) + ↑/↓ by sentences; B back
+-- sentence's first word, in the sentence phase (TASK-44 / PC-025): RT held
+-- (range = true) + ↓/↑ add / take off whole sentences; B back
 local function label_of(o, sent)
     for _, v in ipairs(o.pointer:visible()) do
         if v.sent == sent then return v.label end
@@ -322,15 +314,21 @@ ov:paintTo(bb, 0, 0)
 assert(#painted > 0, "labels painted")
 assert(press(ov, label_of(ov, 2)) == "done" and ov.mode == "walk" and ov.ww_anchor == nil
     and cur(ov) == "Delta", "label = the cursor on Delta, nothing selected")
-ov:line(1, true); assert(text(ov) == "T:Delta eps zeta", "RT ↓ = to the end of S2: " .. tostring(text(ov)))
+assert(ov.sent_phase and ov:_status_text():match("^START"), "the sentence phase: " .. ov:_status_text())
+ov:line(1, true); assert(text(ov) == "T:Delta eps zeta", "RT ↓ = the whole of S2: " .. tostring(text(ov)))
 ov:line(1, true); assert(ov.page == 1 and text(ov) == "T:Delta eps zeta", "a range stays on the page")
-ov:line(-1, true); assert(text(ov) == "T:Delta", "↑ = the sentence off, back to the anchor")
-ov:line(-1, true)
-assert(text(ov) == "T:Alpha beta gamma. Delta", "on the anchor ↑ = the previous start: " .. tostring(text(ov)))
-assert(ov:back() == true and ov.ww_anchor == nil and cur(ov) == "Alpha", "B: the range goes")
+ov:line(-1, true); assert(ov.ww_anchor == nil and cur(ov) == "Delta" and ov.sent_phase, "RT ↑ = S2 off, no range")
+-- RT + ← ends the phase and keeps the anchor; then RT + ↑ = a line
+ov:line(1, true); ov:step(-1, true)
+assert(text(ov) == "T:Delta eps" and not ov.sent_phase, "RT ← = the end by a word: " .. tostring(text(ov)))
+ov:line(-1, true); assert(text(ov) == "T:beta gamma. Delta", "RT ↑ now = a line up: " .. tostring(text(ov)))
+assert(ov:back() == true and ov.ww_anchor == nil and cur(ov) == "beta", "B: the range goes")
 assert(ov:back() == true and ov.mode == "point", "B: the labels again")
-assert(press(ov, label_of(ov, 1)) == "done" and cur(ov) == "Alpha")
-ov:line(1); assert(cur(ov) == "Delta", "↓ = the next sentence start")
+assert(press(ov, label_of(ov, 1)) == "done" and cur(ov) == "Alpha" and ov.sent_phase, "a new phase")
+ov:line(1, true); assert(text(ov) == "T:Alpha beta gamma.", "RT ↓ = S1")
+ov:line(1, true); assert(text(ov) == "T:Alpha beta gamma. Delta eps zeta", "RT ↓ again = to the end of S2")
+ov:line(-1, true); ov:line(-1, true); assert(ov.ww_anchor == nil and cur(ov) == "Alpha", "both off")
+ov:line(1); assert(cur(ov) == "Delta" and not ov.sent_phase, "↓ without RT = a line, the phase ends")
 ov:para(1); ov:para(-1); assert(cur(ov) == "Delta", "LT / RT: nothing in words")
 sel:_close()
 -- page 2: the sentence begun on page 1 is labelled at its visible part
@@ -398,22 +396,19 @@ ov:para(1); assert(text(ov):match("^T:Next morning"), "LT / RT in sentences = �
 ov:para(-1); assert(text(ov):match("^T:The quick"))
 sel:_close()
 
--- words (TASK-42): ↑/↓ = sentence starts, over the page edge; LT / RT nothing
+-- words (TASK-44 / PC-025): ↑/↓ = lines, over the page edge; LT / RT nothing
 sel = fresh({ zoom = 1, vx = 0, vy = 0 })
 assert(sel:_open_walk(false) == true)
 ov = sel.overlay
 assert(cur(ov) == "The")
 ov:step(1); ov:step(1)
 ov:para(1); assert(cur(ov) == "brown", "RT in words: no move")
-ov:line(1); assert(cur(ov) == "Then", "↓: the next sentence: " .. tostring(cur(ov)))
-ov:line(1); assert(cur(ov) == "Next")
-ov:step(1); ov:step(1)
-assert(cur(ov) == "came")
-ov:line(-1); assert(cur(ov) == "Next", "↑: start of this sentence")
-ov:line(-1); assert(cur(ov) == "Then", "↑ again: the previous sentence")
-ov:line(1); ov:line(1)
-assert(ov.page == 2 and cur(ov) == "Still", "↓ past the last sentence: next page")
-ov:line(-1); assert(ov.page == 1 and cur(ov) == "Next", "↑ back over the edge: the last sentence's start")
+ov:line(1); assert(cur(ov) == "lazy", "↓: the word below: " .. tostring(cur(ov)))
+ov:line(-1); assert(cur(ov) == "brown", "↑: back")
+for _ = 1, 4 do ov:line(1) end
+assert(ov.page == 1 and cur(ov) == "we", "↓ four times = the last line: " .. tostring(cur(ov)))
+ov:line(1); assert(ov.page == 2 and cur(ov) == "Still", "↓ past the last line: next page: " .. tostring(cur(ov)))
+ov:line(-1); assert(ov.page == 1 and cur(ov) == "forever.", "↑ back over the edge: the last word")
 sel:_close()
 
 -- two columns, the engine delivers the lines row by row (left, right, left, ...)
@@ -453,15 +448,14 @@ sel:_close()
 sel = fresh({ zoom = 1, vx = 0, vy = 0 })
 assert(sel:_open_walk(false) == true)
 ov = sel.overlay
-ov:line(1); assert(cur(ov) == "Kkk")
-ov:line(1); assert(cur(ov) == "Ghi", "↓ over the column break: " .. tostring(cur(ov)))
-ov:line(-1); assert(cur(ov) == "Kkk", "↑: the previous sentence")
--- TASK-43: L-stick lines in reading order -- the left column's last line,
--- then the right column's first
-for _ = 1, 2 do ov:line(1, false, true) end
-assert(cur(ov) == "sss", "L ↓ twice from Kkk = the left column's last line: " .. tostring(cur(ov)))
-ov:line(1, false, true); assert(cur(ov) == "www", "L ↓ over the column break: " .. tostring(cur(ov)))
-ov:line(-1, false, true); assert(cur(ov) == "vvv", "L ↑ = back to the left column, nearest by x: " .. tostring(cur(ov)))
+-- lines in reading order (TASK-43 / TASK-44) -- the left column's last
+-- line, then the right column's first
+for _ = 1, 3 do ov:line(1) end
+assert(cur(ov) == "Kkk", "↓ three times from Aaa = line 4: " .. tostring(cur(ov)))
+for _ = 1, 2 do ov:line(1) end
+assert(cur(ov) == "sss", "↓ twice from Kkk = the left column's last line: " .. tostring(cur(ov)))
+ov:line(1); assert(cur(ov) == "www", "↓ over the column break: " .. tostring(cur(ov)))
+ov:line(-1); assert(cur(ov) == "vvv", "↑ = back to the left column, nearest by x: " .. tostring(cur(ov)))
 sel:_close()
 custom = nil
 assert(claims == 0)
