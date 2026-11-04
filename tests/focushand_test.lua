@@ -133,4 +133,26 @@ do
     assert(base_calls == 2 and #painted == 1)
 end
 
+-- 4. regression (0.1.22 crashed KOReader at the first repaint): colors can be nil/false,
+-- and nothing raised while deciding may escape the paint path
+do
+    local FH, painted = fresh()
+    assert(FH.is_focused({ _underline_container = {} }) == false, "no color")
+    assert(FH.is_focused({ _underline_container = { color = false } }) == false)
+    FH._black = false
+    assert(FH.is_focused(item(0, 0, 1, 1, BLACK)) == false, "no black available")
+    FH._black = BLACK
+
+    package.loaded["ui/widget/menu"] = { getItemShortCutIcon = function() return {} end }
+    package.loaded["ui/widget/focusmanager"] = { onFocusMove = function() end, moveFocusTo = function() end }
+    FH.install(function() return true end)
+    local bad = setmetatable({ _underline_container = { color = BLACK } },
+        { __index = function(_, k) if k == "dimen" then error("boom") end end })
+    FH.note_focus({ getFocusItem = function() return bad end })
+    local calls = 0
+    local icon = FH.wrap_icon({ dimen = { w = 5, h = 5 }, paintTo = function() calls = calls + 1 end })
+    icon:paintTo(nil, 1, 1)
+    assert(calls == 1 and #painted == 0, "falls back to the stock icon")
+end
+
 print("focushand_test: OK")

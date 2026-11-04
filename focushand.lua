@@ -65,8 +65,11 @@ function M.contains(d, x, y)
         and x >= d.x and x < d.x + d.w and y >= d.y and y < d.y + d.h
 end
 
+-- NOTE: Blitbuffer colors are cdata with an __eq that indexes both operands:
+-- `color == nil` / `color ~= nil` raises. Compare colors only with each other,
+-- test presence by truthiness and use rawequal against nil.
 local function black()
-    if M._black == nil then
+    if rawequal(M._black, nil) then
         local ok, Blitbuffer = pcall(require, "ffi/blitbuffer")
         M._black = ok and Blitbuffer.COLOR_BLACK or false
     end
@@ -77,13 +80,24 @@ end
 -- and MosaicMenuItem, Unfocus sets it back.
 function M.is_focused(item)
     local u = type(item) == "table" and item._underline_container
-    return u and u.color ~= nil and u.color == black() or false
+    if not u then return false end
+    local color, b = u.color, black()
+    if not color or not b then return false end
+    return color == b
 end
 
 -- Is the point (x, y) inside the focused item?
 function M.focus_hits(x, y)
     local item = focus.item
     return M.is_focused(item) and M.contains(item.dimen, x, y) or false
+end
+
+-- The same, on the paint path: whatever goes wrong here must never take the
+-- paint loop down (it once did: the cdata __eq above).
+local function hits_safe(x, y)
+    local ok, hit = pcall(M.focus_hits, x, y)
+    if not ok then warn(hit) return false end
+    return hit
 end
 
 -- The check mark slot of a TouchMenuItem painted at (x, y): its left edge,
@@ -109,7 +123,7 @@ function M.wrap_icon(icon, hidden)
     local orig = icon.paintTo
     icon.paintTo = function(self, bb, x, y)
         if M.active() then
-            if M.focus_hits(x, y) then
+            if hits_safe(x, y) then
                 local d = self.dimen
                 if d and d.w and d.h then
                     M.paint_safe(bb, x, y, d.w, d.h)
@@ -183,8 +197,9 @@ function M.patch_touch_class(item)
     local orig = cls.paintTo
     rawset(cls, "paintTo", function(self, bb, x, y)
         orig(self, bb, x, y)
-        if M.active() and M.is_focused(self) and self.checkmark_tap_width and self.dimen then
+        if M.active() and self.checkmark_tap_width and self.dimen then
             local ok, err = pcall(function()
+                if not M.is_focused(self) then return end
                 local Size = require("ui/size")
                 local s = M.touch_slot(self, x, y, Size.padding.default)
                 M.paint(bb, s.x, s.y, s.w, s.h)
