@@ -357,11 +357,55 @@ end
 assert(ov:_status_text() == "FROM WORD \xC2\xB7 " .. LEFT .. " sentence " .. UP .. " paragraph \xC2\xB7 B sentences",
     ov:_status_text())
 assert(ov:_status_text(true) == "FROM WORD \xC2\xB7 B sentences")
-paint()
-assert(painted.paintBorder, "word labels painted")
--- a first symbol, then B = undo it; B again = the sentence labels
+-- the word blocks (TASK-38): no label on a word, an underline under each
+-- block's lines (Y = t1 t2, X = t3, A = t4) and one badge per block, beside or
+-- above / below its first word; nothing painted over a word box
+local rects
+local rbb = setmetatable({}, { __index = function(_, k) return function(_, a, b, c, d)
+    local r
+    if k == "paintCircle" then r = { x = a - c, y = b - c, w = 2 * c, h = 2 * c }
+    elseif k == "paintRect" or k == "paintBorder" or k == "invertRect" then r = { x = a, y = b, w = c, h = d } end
+    if r then r.k = k; rects[#rects + 1] = r end
+end end })
+local function draw_point() rects = {}; ov:_draw_point(rbb, 0, 0); return rects end
+local function overlaps(r, b) return r.x < b.x + b.w and b.x < r.x + r.w and r.y < b.y + b.h and b.y < r.y + r.h end
+local function nothing_on_words(what)
+    for _, r in ipairs(rects) do
+        for i = 1, 6 do
+            assert(not overlaps(r, doc:box(i)), what .. ": " .. r.k .. " over t" .. i
+                .. (" (%d,%d %dx%d)"):format(r.x, r.y, r.w, r.h))
+        end
+    end
+end
+local function underlines()
+    local out = {}
+    for _, r in ipairs(rects) do if r.k == "paintRect" and r.h <= 2 then out[#out + 1] = r end end
+    return out
+end
+assert(ov.pointer:stage().kind == "blocks")
+draw_point()
+nothing_on_words("blocks")
+local ul = underlines()
+assert(#ul == 3, "three underlines (Y on line 1, X on line 1, A on line 2): " .. #ul)
+assert(ul[1].x == 10 and ul[1].w == 180 and ul[1].y == 31, "Y: under t1 t2, below the box")
+assert(ul[3].y == 71 and ul[3].x == 10, "A: under t4")
+local circles = 0
+for _, r in ipairs(rects) do if r.k == "paintCircle" then circles = circles + 1 end end
+assert(circles == 6, "one badge (two circles: fill + ring) per block: " .. circles)
+-- X starts mid-line with room for the badge: left of t3, in the gap after t2
+local badge_x
+for _, r in ipairs(rects) do if r.k == "paintCircle" and r.y >= 10 and r.y + r.h <= 30 then badge_x = r end end
+assert(badge_x and badge_x.x >= 190 and badge_x.x + badge_x.w <= 210, "X's badge between t2 and t3")
+-- a first symbol = that block's words with one-symbol badges, above / below
 local l2 = label_of(ov, nil, 2)
 assert(ov:point_press(l2[1]) == "prefix" and ov:_status_text():find("B undo", 1, true))
+assert(ov.pointer:stage().kind == "words")
+draw_point()
+nothing_on_words("words")
+assert(#underlines() == 0, "no underline on the word stage")
+circles = 0
+for _, r in ipairs(rects) do if r.k == "paintCircle" then circles = circles + 1 end end
+assert(circles == 4, "badges only on the block's two words: " .. circles)
 assert(ov:point_press("B") == "unprefix" and #ov.pointer:visible() == 4)
 assert(ov:point_press("B") == "back" and #ov.pointer:visible() == 2, "B: the sentence labels again")
 -- the Deck case: from a word to the end of its sentence (sentence, word, ←)

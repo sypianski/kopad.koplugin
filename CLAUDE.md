@@ -20,7 +20,7 @@ on a fake three-page document: moves, page crossing, ranges, levels,
 highlights, point from-to) and `lua tests/kopad_hints_test.lua` (kopad_hints.lua: label
 placement, prefix filter, B, lines from word boxes, the pointer's two
 steps, word labels (letters first, three symbols past 21, 147-word window),
-every arrow shortcut, RTL) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
+every arrow shortcut, RTL, the drawing stages of TASK-38) and `lua tests/pdfwords_test.lua` (pdfwords.lua, plus the PDF overlay
 on a fake three-page PDF in a zoomed, panned page view: screen boxes, moves
 over page edges, sentences, point from-to, scan / reflow), `lua tests/pdfpara_test.lua` (pdfpara.lua: columns, paragraph heuristics), `lua tests/pdfhl_test.lua`
 (highlights in PDF, TASK-31: X saves / removes through a stub ReaderHighlight /
@@ -349,8 +349,9 @@ screen). Only visible words count: a sentence over the page edge / out of a
 zoomed view is labelled at its visible part, one without a visible word gets
 no label. Step `start`, level `sentence`: `M.assign` labels left of each
 sentence's first visible word (right in RTL); a label returns `sentence` =
-level `word`: `M.word_labels` over that sentence's visible words (side
-`top`, centred on the word's top edge), a word label = `start`. Lone arrows
+level `word`: `M.word_labels` over that sentence's visible words (in
+`visible()` side `top`, x / y = the word's top centre; drawn through
+`stage()`, below), a word label = `start`. Lone arrows
 on the word level (`_shortcut`, nothing typed; ← / → swapped in RTL): start
 step ← = the sentence's first word, ↑ = the first visible word of its
 paragraph (the run of sentences with equal `para`), → / ↓ ignored. Step
@@ -365,8 +366,23 @@ B) / `sentence` / `back` (B on the start step's word labels) / `start` /
 `done` (`self.start`, `self.stop` = WORD indices; stop nil = B in the end
 step = one word) / `cancel` (B on the sentence labels) / `ignored`. More than
 147 words: a window of the first 147 (end step: from the start word).
-`visible()` = the labels to draw (only those continuing the typed prefix;
-`sent`, `word`, `typed` = count, `side`, anchor `x`, `y`, word height `h`).
+`visible()` = the labels still in play (only those continuing the typed
+prefix; `sent`, `word`, `typed` = count, `side`, anchor `x`, `y`, word height
+`h`): the label LOGIC, what tests and the status line look up.
+**Stages (TASK-38): what is drawn.** Word labels are never painted whole over
+the words (a two-badge pill hid the word and the line above on the Deck).
+`stage()` -> `{ kind, typed, items }` for the typed prefix: `sentence` =
+the `visible()` entries; on the word level, while >= 2 symbols are left,
+`blocks` = the groups of the next symbol (contiguous in reading order:
+`symbol`, `words`, `first`, `lines` from `lines_from_boxes` for the
+underline, `box`, `side` left / RTL right, `x` / `y` = that edge / middle of
+the first word, `h`, `room` = free width there up to the nearest box in the
+same line band or the screen edge, `opts.width` in RTL, else `math.huge`);
+with 1 symbol left, `words` = one entry per word (`symbol` = the label's last
+symbol, `box`, `side` / `x` = the word edge the badge aligns to, `place`
+`above` for the 1st, 3rd, ... word, `below` for the 2nd, 4th, ..., `y` = top /
+bottom edge). Two symbols: blocks -> words; three: blocks -> sub-blocks ->
+words; B = unprefix = the previous stage; `done` = no items.
 The R-stick refinement of TASK-35 (`refine_to_word`) is gone.
 `M.lines_from_boxes(boxes)` (word boxes -> lines `{ x, y, w, h, first, last
 }`) draws the end step's preview. The adapter is
@@ -598,11 +614,18 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   TASK-36), and on `done` `_point_finish` turns the
   overlay into `walk` with `ww_anchor` = the start word (`p.start`),
   `ww_word` = the end word (`p.stop`; no end = the start word alone, no
-  anchor). `_draw_point` paints the labels (white pill, D-pad symbols as
-  rounded squares with an arrow, letters as circles, a pressed symbol grey;
-  beside the sentence start / end when the margin allows, else over the
-  text; word labels, two or three symbols, centred on the word's top edge)
-  and, in the end step, the preview `pointer:preview()` = start .. the end
+  anchor). `_draw_point` paints `pointer:stage()` (TASK-38): sentence
+  labels as before (`_draw_point_pills`: white pill, a pressed symbol grey,
+  beside the sentence start when the margin allows, else over the text);
+  word blocks = a 1-2 px underline under each block's lines (1 px below the
+  boxes) + ONE badge with the block's symbol before the first word when
+  `room` holds it, else above the word (below when above is off the screen);
+  word badges = one symbol at the word's left edge (RTL right), above / below
+  as `place` says (the other side when off the screen). Badges
+  (`paint_badge`): white, black outline, D-pad symbols rounded squares with
+  an arrow, letters circles; size `badge_size(h)` = `POINT_BADGE_RATIO`
+  (0.65) of the word height, clamped to `POINT_BADGE_MIN` / `_MAX`
+  (scaleBySize 12 / 18), face from `point_face(d)`. Then, in the end step, the preview `pointer:preview()` = start .. the end
   of the current end sentence inverted ALWAYS (also while that is the start
   sentence: the range ← would give; line boxes via `lines_from_boxes`).
   Status `_point_status(short)`: `FROM · label = sentence · B close`, `FROM

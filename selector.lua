@@ -6,7 +6,9 @@ text layer, driven by the handlers in padnav.lua. Four modes: sentences
 highlights ("hl", Y) and "point from-to" ("point", A tapped, TASK-29 / TASK-35 /
 TASK-36: pad labels at the sentences, then letter labels over the words of
 one sentence pick the start and the end, lone arrows are shortcuts to the
-sentence / paragraph start and end; then it is a word walk);
+sentence / paragraph start and end; then it is a word walk; the word labels
+are drawn in stages, TASK-38: underlined blocks with one badge, then small
+one-symbol badges above / below the words);
 R-stick ↓/↑ switches between sentence and word. The
 arrows move a cursor; while A is held padnav passes range = true and an
 anchor stays where the range began. Without a range the cursor crosses the
@@ -734,7 +736,8 @@ end
 function SelectorOverlay:_point_begin()
     local boxes = {}
     for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
-    local pointer = Hints.Pointer.new(self:_point_sentences(), boxes, { rtl = self.is_rtl })
+    local pointer = Hints.Pointer.new(self:_point_sentences(), boxes,
+        { rtl = self.is_rtl, width = Screen:getWidth() })
     if #pointer:visible() == 0 then return false end
     self.mode = "point"
     self.pointer = pointer
@@ -1257,18 +1260,77 @@ function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
     end
 end
 
--- Point from-to: the labels (a pill with two or three badges per target:
--- next to the sentence start, over the text when the margin is too narrow;
--- on the word labels centred on the top edge of the word), and in the end
--- step the preview: start word .. the end of the current end sentence
--- inverted, always (also while that is the start sentence), so the range the
--- ← shortcut would give is on the screen and → / ↑ visibly move it
--- (TASK-36). D-pad symbols are rounded squares with an arrow, letters are
--- circles; a symbol already pressed is grey.
+-- Point from-to: what kopad_hints.lua's Pointer:stage() says for the typed
+-- prefix, and in the end step the preview: start word .. the end of the
+-- current end sentence inverted, always (also while that is the start
+-- sentence), so the range the ← shortcut would give is on the screen and
+-- → / ↑ visibly move it (TASK-36).
+--   sentence level: a pill with the whole label next to each sentence start
+--     (over the text when the margin is too narrow), as since TASK-35;
+--   word blocks (TASK-38): no label on the words, a thin underline under
+--     each block's lines and ONE small badge with the block's symbol before
+--     its first word (left, RTL right) when the line has room there, else
+--     above the word (below when above is off the screen);
+--   word badges (TASK-38): one small badge per word with the label's last
+--     symbol, at the word's left edge (RTL right), above the 1st, 3rd, ...
+--     word and below the 2nd, 4th, ... (the other side when off the screen).
+-- Badges are about 65 % of the line height (POINT_BADGE_*). D-pad symbols
+-- are rounded squares with an arrow, letters are circles; a symbol already
+-- pressed (sentence pills) is grey.
 local POINT_GLYPHS = {
     up = "\xE2\x86\x91", down = "\xE2\x86\x93", left = "\xE2\x86\x90", right = "\xE2\x86\x92",
     A = "A", B = "B", X = "X", Y = "Y",
 }
+local POINT_BADGE_RATIO = 0.65  -- of the word's height
+local POINT_BADGE_MIN = 12      -- scaleBySize: still readable on the Deck
+local POINT_BADGE_MAX = 18
+
+local point_faces = {}
+-- A face whose glyphs fit a badge of d px (Font:getFace scales by itself).
+local function point_face(d)
+    local scale = Screen:scaleBySize(100) / 100
+    local size = math.max(6, math.floor(d * 0.62 / (scale > 0 and scale or 1) + 0.5))
+    if not point_faces[size] then
+        point_faces[size] = require("ui/font"):getFace("infofont", size) or LABEL_FACE
+    end
+    return point_faces[size]
+end
+
+local function badge_size(h)
+    local d = math.floor((h or 0) * POINT_BADGE_RATIO + 0.5)
+    return math.max(Screen:scaleBySize(POINT_BADGE_MIN), math.min(d, Screen:scaleBySize(POINT_BADGE_MAX)))
+end
+
+-- One badge of d px at (x, y) (screen, without the offset): white, a black
+-- outline, the glyph; a circle for a letter, a rounded square for an arrow.
+local function paint_badge(bb, ox, oy, x, y, d, sym, fg, border, face)
+    local bx, by = ox + x, oy + y
+    if #sym == 1 then
+        local r = math.floor(d / 2)
+        bb:paintCircle(bx + r, by + r, r, Blitbuffer.COLOR_WHITE, r)
+        bb:paintCircle(bx + r, by + r, r, fg, border)
+    else
+        bb:paintRect(bx, by, d, d, Blitbuffer.COLOR_WHITE)
+        bb:paintBorder(bx, by, d, d, border, fg, math.floor(d / 4))
+    end
+    local tw = TextWidget:new{ text = POINT_GLYPHS[sym] or sym, face = face or LABEL_FACE,
+                               bold = true, fgcolor = fg }
+    local sz = tw:getSize()
+    tw:paintTo(bb, bx + math.floor((d - sz.w) / 2), by + math.floor((d - sz.h) / 2))
+    tw:free()
+end
+
+-- y of a badge of d px above (top edge - d) or below (bottom edge) a box, the
+-- other side when that one is off the screen.
+local function above_or_below(box, d, place, sh)
+    local up, down = box.y - d, box.y + box.h
+    if place == "above" then
+        if up >= 0 or down + d > sh then return math.max(0, up) end
+        return down
+    end
+    if down + d <= sh or up < 0 then return math.min(sh - d, down) end
+    return up
+end
 
 function SelectorOverlay:_draw_point(bb, ox, oy)
     local p = self.pointer
@@ -1284,10 +1346,50 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
             invert_rounded_rect(bb, ox, oy, l.x, l.y, l.w, l.h)
         end
     end
+    local st = p:stage()
+    if st.kind == "sentence" then return self:_draw_point_pills(bb, ox, oy, st.items) end
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local border = math.max(1, Screen:scaleBySize(1))
+    local gap = Screen:scaleBySize(2)
+    local black = Blitbuffer.COLOR_BLACK
+    if st.kind == "blocks" then
+        local th = Screen:scaleBySize(1) >= 2 and 2 or 1   -- the underline: 1-2 px
+        for _, g in ipairs(st.items) do
+            for _, l in ipairs(g.lines) do
+                local y = l.y + l.h + 1
+                if y + th <= sh then bb:paintRect(ox + l.x, oy + y, l.w, th, black) end
+            end
+            local d = badge_size(g.h)
+            local x, y
+            if g.room >= d + 2 * gap then
+                x = g.side == "right" and (g.x + gap) or (g.x - gap - d)
+                y = math.floor(g.y - d / 2)
+            else
+                x = g.side == "right" and (g.box.x + g.box.w - d) or g.box.x
+                y = above_or_below(g.box, d, "above", sh)
+            end
+            x = math.max(0, math.min(sw - d, x))
+            y = math.max(0, math.min(sh - d, y))
+            paint_badge(bb, ox, oy, x, y, d, g.symbol, black, border, point_face(d))
+        end
+    elseif st.kind == "words" then
+        for _, v in ipairs(st.items) do
+            local d = badge_size(v.h)
+            local x = v.side == "right" and (v.box.x + v.box.w - d) or v.box.x
+            x = math.max(0, math.min(sw - d, x))
+            local y = above_or_below(v.box, d, v.place, sh)
+            paint_badge(bb, ox, oy, x, y, d, v.symbol, black, border, point_face(d))
+        end
+    end
+end
+
+-- The sentence labels: a pill with the whole label (two badges) left of the
+-- sentence start (right in RTL), kept on the screen.
+function SelectorOverlay:_draw_point_pills(bb, ox, oy, items)
     local sw, sh = Screen:getWidth(), Screen:getHeight()
     local border = math.max(1, Screen:scaleBySize(1))
     local gap = Screen:scaleBySize(3)
-    for _, v in ipairs(p:visible()) do
+    for _, v in ipairs(items) do
         local d = math.max(Screen:scaleBySize(14), math.min(v.h or 0, Screen:scaleBySize(22)))
         local n = #v.label
         local pw, ph = n * d + (n + 1) * gap, d + 2 * gap

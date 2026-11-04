@@ -307,6 +307,42 @@ ov:paintTo(bb, 0, 0)
 assert(press(ov, label_of(ov, 1)) == "sentence" and #ov.pointer:visible() == 3, "S1's three words")
 local l = ov.pointer:visible()[1].label
 assert(l[1] == "Y" or l[1] == "X" or l[1] == "A", "letter labels")
+-- the word blocks (TASK-38) at the screen boxes: underlines below the words,
+-- one badge per block, nothing over a word; a block letter = one-symbol
+-- badges above / below its words
+local function rects_of(calls)
+    local out = {}
+    for _, c in ipairs(calls) do
+        local k, a, b, w, h = c[1], c[2], c[3], c[4], c[5]
+        if k == "paintCircle" then out[#out + 1] = { k = k, x = a - w, y = b - w, w = 2 * w, h = 2 * w }
+        elseif k == "paintRect" or k == "paintBorder" then out[#out + 1] = { k = k, x = a, y = b, w = w, h = h } end
+    end
+    return out
+end
+local function clear_of_words(o, what)
+    painted = {}
+    o:_draw_point(bb, 0, 0)
+    local rs = rects_of(painted)
+    assert(#rs > 0, what .. ": something painted")
+    for _, r in ipairs(rs) do
+        for i, w in ipairs(o.words) do
+            local b = w.sbox
+            if b then
+                assert(not (r.x < b.x + b.w and b.x < r.x + r.w and r.y < b.y + b.h and b.y < r.y + r.h),
+                    what .. ": " .. r.k .. " over word " .. i)
+            end
+        end
+    end
+    return rs
+end
+assert(ov.pointer:stage().kind == "blocks" and #ov.pointer:stage().items == 3, "S1: blocks Y, X, A")
+local rs = clear_of_words(ov, "PDF blocks")
+local thin = 0
+for _, r in ipairs(rs) do if r.k == "paintRect" and r.h <= 2 then thin = thin + 1 end end
+assert(thin == 3, "an underline per block: " .. thin)
+assert(ov:point_press(l[1]) == "prefix" and ov.pointer:stage().kind == "words")
+clear_of_words(ov, "PDF words")
+assert(ov:point_press("B") == "unprefix" and ov.pointer:stage().kind == "blocks")
 assert(ov:point_press("left") == "start" and ov.pointer.start == 1)
 assert(ov:point_press("right") == "sentence")
 painted = {}

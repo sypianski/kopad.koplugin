@@ -334,4 +334,113 @@ do
     assert(p:press("left") == "done" and p.stop == 160, "← = the real end of the sentence")
 end
 
+-- 8. Stages (TASK-38): what is drawn for the typed prefix. The sentence
+-- level = the sentence labels; on the word level, while two or more symbols
+-- are left, the BLOCKS of the next symbol (contiguous words, an underline +
+-- one badge before the first word); with one symbol left, one-symbol badges
+-- on the words, above / below in turn, at the word's left edge (RTL right).
+local function seq(list) return table.concat(list, ",") end
+do
+    local boxes = page(20)
+    local p = H.Pointer.new(SENTS, boxes)
+    local st = p:stage()
+    assert(st.kind == "sentence" and #st.items == 4 and st.items[2].word == 4, "sentence labels as visible()")
+    pick(p, "sent", 2)                                  -- S2 = words 4..12, two symbols
+    st = p:stage()
+    assert(st.kind == "blocks" and #st.typed == 0 and #st.items == 3, "three blocks")
+    local all = {}
+    for k, g in ipairs(st.items) do
+        assert(g.symbol == H.WORD_FIRST[k], "blocks Y, X, A: " .. tostring(g.symbol))
+        assert(g.first == g.words[1] and g.side == "left")
+        local b = boxes[g.first]
+        assert(g.x == b.x and g.y == b.y + b.h / 2 and g.h == b.h and g.box.x == b.x, "before the first word")
+        for _, wi in ipairs(g.words) do all[#all + 1] = wi end
+        -- the lines of the block (for the underline) cover exactly its words
+        local covered = 0
+        for _, l in ipairs(g.lines) do covered = covered + (l.last - l.first + 1) end
+        assert(covered == #g.words)
+        for _, wi in ipairs(g.words) do assert(label_for(p, "word", wi)[1] == g.symbol, "the block's own words") end
+    end
+    assert(seq(all) == "4,5,6,7,8,9,10,11,12", "the blocks are contiguous, in reading order: " .. seq(all))
+    assert(seq(st.items[1].words) == "4,5,6" and #st.items[1].lines == 2, "Y = 4..6 over two lines")
+    -- room before the first word: to the previous word on its line, or the screen edge
+    assert(st.items[1].room == boxes[4].x - (boxes[3].x + boxes[3].w), "word 4: up to word 3")
+    assert(st.items[3].first == 10 and st.items[3].room == boxes[10].x - (boxes[9].x + boxes[9].w))
+    p = H.Pointer.new({ { first = 6, last = 12 } }, boxes)
+    pick(p, "sent", 1)
+    assert(p:stage().items[1].room == boxes[6].x, "word 6 starts a line: up to the screen edge")
+
+    -- a block letter: only its words, each with the NEXT symbol, above / below in turn
+    p = H.Pointer.new(SENTS, boxes)
+    pick(p, "sent", 2)
+    assert(p:press("X") == "prefix")
+    st = p:stage()
+    assert(st.kind == "words" and seq(st.typed) == "X" and #st.items == 3)
+    for k, v in ipairs(st.items) do
+        local b = boxes[v.word]
+        assert(v.word == 6 + k and v.symbol == v.label[2] and v.label[1] == "X", "block X's words")
+        assert(v.place == (k % 2 == 1 and "above" or "below"), "odd above, even below")
+        assert(v.y == (v.place == "above" and b.y or b.y + b.h), "outside the word's box")
+        assert(v.side == "left" and v.x == b.x, "at the left edge")
+    end
+    assert(st.items[1].symbol == "X", "the block's first word: a doubled symbol")
+    -- B = back to the blocks; B again = the sentence labels
+    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().items == 3)
+    assert(p:press("B") == "back" and p:stage().kind == "sentence")
+
+    -- the end step: the blocks of E from the start word
+    pick(p, "sent", 2)
+    assert(pick(p, "word", 8) == "start")
+    st = p:stage()
+    assert(st.kind == "blocks" and st.items[1].first == 8, "end step from the start word")
+    assert(p:press("left") == "done" and p:stage().kind == "done" and #p:stage().items == 0)
+
+    -- three symbols (22 words): blocks, sub-blocks, then the words
+    local b30 = page(30, 10)
+    p = H.Pointer.new({ { first = 1, last = 8 }, { first = 9, last = 30 } }, b30)
+    pick(p, "sent", 2)
+    st = p:stage()
+    assert(st.kind == "blocks" and #st.items == 3)
+    local l = label_for(p, "word", 20)
+    assert(#l == 3)
+    assert(p:press(l[1]) == "prefix")
+    st = p:stage()
+    assert(st.kind == "blocks" and seq(st.typed) == l[1], "sub-blocks after the first symbol")
+    local n, found = 0, false
+    for _, g in ipairs(st.items) do
+        n = n + #g.words
+        for _, wi in ipairs(g.words) do
+            local wl = label_for(p, "word", wi)
+            assert(wl[1] == l[1] and wl[2] == g.symbol, "a sub-block = the second symbol")
+            if wi == 20 then found = g.symbol == l[2] end
+        end
+    end
+    assert(found and n == #p:visible(), "every word of the block in one sub-block")
+    assert(p:press(l[2]) == "prefix")
+    st = p:stage()
+    assert(st.kind == "words" and seq(st.typed) == l[1] .. "," .. l[2])
+    for k, v in ipairs(st.items) do
+        assert(v.symbol == v.label[3] and v.place == (k % 2 == 1 and "above" or "below"))
+    end
+    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().typed == 1, "B: the sub-blocks")
+    assert(p:press("B") == "unprefix" and p:stage().kind == "blocks" and #p:stage().typed == 0, "B: the blocks")
+
+    -- RTL: the block badge goes right of the first word, the word badges at the right edge
+    p = H.Pointer.new(SENTS, boxes, { rtl = true, width = 400 })
+    pick(p, "sent", 2)
+    st = p:stage()
+    local g = st.items[1]
+    assert(g.side == "right" and g.x == boxes[4].x + boxes[4].w, "RTL: right of the first word")
+    assert(g.room == boxes[5].x - (boxes[4].x + boxes[4].w), "RTL room: up to the next word on the right")
+    assert(st.items[3].first == 10 and st.items[3].room == 400 - (boxes[10].x + boxes[10].w),
+        "RTL, last word of a line: up to the screen width")
+    assert(p:press("Y") == "prefix")
+    for _, v in ipairs(p:stage().items) do
+        assert(v.side == "right" and v.x == boxes[v.word].x + boxes[v.word].w, "RTL: the right edge")
+    end
+    p = H.Pointer.new(SENTS, boxes, { rtl = true })
+    pick(p, "sent", 2)
+    assert(p:stage().items[3].room == math.huge, "RTL without a width: no limit at the line end")
+end
+
 print("kopad_hints_test: OK")
