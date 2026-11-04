@@ -66,8 +66,16 @@ calls in `main.lua`, `logger.dbg` elsewhere).
 **Version.** `version` in `_meta.lua` (KOReader shows it in the plugin list) is
 the only place the plugin keeps one; the family does the same (`keyreader`,
 `vortpaf`). Bump it FIRST on every deploy to the devices (patch for ordinary
-changes, minor for bigger ones), commit, push, then pull in
-`~/modi/koreader/koplugins/kopad.koplugin`. The `version = 1` of the `padmap`
+changes, minor for bigger ones), commit, push, then move koligilo's gallery
+entry `sypianski/kopad.koplugin` to the pushed commit -- that is what reaches
+the readers (Steam Deck included; its `plugins/kopad.koplugin` carries a
+`.koligilo` marker): on this VPS, with the token from
+`~/.local/share/koligilo/admin-token.txt`, `POST
+http://127.0.0.1:7210/api/admin/gallery/updates/check`, then `POST
+/api/admin/gallery/update {"repo":"sypianski/kopad.koplugin"}` (or the panel).
+Each reader installs it on its next sync, after a confirmation on the reader
+(PC-004 in koligilo). The Syncthing folder `~/modi/koreader/koplugins/` does
+NOT reach the Deck. The `version = 1` of the `padmap`
 data is a different thing: the data contract with koligilo.
 
 ## Architecture
