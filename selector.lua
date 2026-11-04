@@ -43,6 +43,25 @@ local LABEL_FACE  = require("ui/font"):getFace("infofont", 12)
 
 local SEL_RADIUS = 8
 
+-- Vortpaf's glosses on the screen (TASK-46; Vortpaf >= 0.7.1, plain method
+-- pageGlosses, see its main.lua): a list, nil when the plugin or the API is
+-- missing. Plain methods stay functions; a callable table (PluginLoader's
+-- sandbox of on* methods) is accepted too.
+local function page_glosses(ui)
+    local vp = ui and ui.vortpaf
+    local f = type(vp) == "table" and vp.pageGlosses
+    local mt = type(f) == "table" and getmetatable(f)
+    if type(f) ~= "function" and not (type(mt) == "table" and mt.__call) then return nil end
+    local ok, items = pcall(f, vp)
+    return ok and type(items) == "table" and items or {}
+end
+
+-- hl_kind "note" (TASK-46): only highlights with a note.
+local function hl_kind_ok(kind, ann)
+    if kind == "note" then return type(ann.note) == "string" and ann.note ~= "" end
+    return true
+end
+
 local function invert_rounded_rect(bb, ox, oy, x, y, w, h)
     local r = math.min(SEL_RADIUS, math.floor(w / 2), math.floor(h / 2))
     bb:invertRect(ox + x, oy + y, w, h)
@@ -96,6 +115,11 @@ function SelectorOverlay:init()
 
     self.hl_items = {}       -- on-screen highlights { ann, boxes, sbox }
     self.hl_cur   = 0        -- focused highlight index in mode "hl" (0 = none)
+    -- What hl_items holds (TASK-46): nil = every highlight, "note" = only
+    -- the noted ones, "gloss" = Vortpaf's glosses on the screen ({ gloss,
+    -- boxes, sbox }; A / X open Vortpaf's cards, see _gloss_card). Set by
+    -- Selector:_open_highlights before it recollects.
+    self.hl_kind  = nil
 
     -- RTL: reverse ↔ direction for right-to-left scripts
     local rtl_langs = { ar=true, he=true, fa=true, ur=true }
@@ -169,11 +193,12 @@ end
 function SelectorOverlay:_collect_highlights()
     self.hl_items = {}
     self.hl_cur   = 0
+    if self.hl_kind == "gloss" then return self:_collect_glosses() end
     local anns = self.ui and self.ui.annotation and self.ui.annotation.annotations
     if not anns then return end
     local sh = Screen:getHeight()
     for _, ann in ipairs(anns) do
-        if ann.pos0 and ann.pos1 then
+        if ann.pos0 and ann.pos1 and hl_kind_ok(self.hl_kind, ann) then
             local ok, boxes = pcall(function()
                 return self.doc:getScreenBoxesFromPositions(ann.pos0, ann.pos1, true)
             end)
@@ -192,6 +217,52 @@ function SelectorOverlay:_collect_highlights()
         end
     end
     table.sort(self.hl_items, function(a, b) return a.sbox.y < b.sbox.y end)
+end
+
+-- Vortpaf's glosses on the screen (hl_kind "gloss", TASK-46), in its order
+-- (reading order). Boxes: the ones Vortpaf hands out, else from the
+-- xpointer (the word alone, a range would need its end).
+function SelectorOverlay:_collect_glosses()
+    local items = page_glosses(self.ui)
+    for _, g in ipairs(items or {}) do
+        local boxes = type(g.sboxes) == "table" and #g.sboxes > 0 and g.sboxes or nil
+        if not boxes and type(g.xp) == "string" then
+            local ok, b = pcall(function()
+                return self.doc:getScreenBoxesFromPositions(g.xp, g.xp, true)
+            end)
+            boxes = ok and type(b) == "table" and #b > 0 and b or nil
+        end
+        if boxes then
+            table.insert(self.hl_items, { gloss = g, boxes = boxes, sbox = boxes[1] })
+        end
+    end
+end
+
+-- A / X on the focused gloss: Vortpaf's definition card ("open") or its
+-- removal card ("remove"), on top of the overlay, which stays (context
+-- "window" while the card is up, padconfirm drives it). Once the card is
+-- gone (open) or after a removal the glosses are recollected, the focus
+-- kept in place; none left = the overlay closes.
+function SelectorOverlay:_gloss_card(what)
+    local item = self.hl_items[self.hl_cur]
+    local vp = self.ui and self.ui.vortpaf
+    if not item or type(vp) ~= "table" then return false end
+    local overlay = self
+    local function changed()
+        if overlay.closed then return end
+        local cur = overlay.hl_cur
+        overlay:_collect_highlights()
+        if #overlay.hl_items == 0 then
+            if overlay.selector then overlay.selector:_close() end
+            return
+        end
+        overlay.hl_cur = math.max(1, math.min(cur, #overlay.hl_items))
+        overlay:_refresh()
+    end
+    if what == "remove" then
+        return vp:openGlossRemove(item.gloss, changed) ~= false
+    end
+    return vp:openGloss(item.gloss, changed) ~= false
 end
 
 function SelectorOverlay:_nearest_word(px, py)
@@ -800,6 +871,7 @@ end
 
 function SelectorOverlay:action_menu()
     if self.mode == "point" then return end
+    if self.hl_kind == "gloss" then return self:_gloss_card("open") end
     local sel = self:_get_selection()
     if not sel then return end
 
@@ -878,7 +950,7 @@ function SelectorOverlay:_get_selection()
     if self.mode == "point" then return nil end
     if self.mode == "hl" then
         local item = self.hl_items[self.hl_cur]
-        if not item then return nil end
+        if not item or not item.ann then return nil end -- a gloss: no selection
         local ann = item.ann
         local ok, text = pcall(function()
             return self.doc:getTextFromXPointers(ann.pos0, ann.pos1)
@@ -932,6 +1004,10 @@ SelectorOverlay.ACTIONS = ACTIONS
 -- is shown after the overlay is gone, so nothing paints over it. False when
 -- there is no selection (nothing happens, the overlay stays).
 function SelectorOverlay:act(name, sel)
+    -- glosses (TASK-46): X removes, the selection actions do not apply
+    if self.hl_kind == "gloss" then
+        return name == "toggle_highlight" and self:_gloss_card("remove") or false
+    end
     local method = ACTIONS[name]
     if not method then return false end
     sel = sel or self:_get_selection()
@@ -1305,7 +1381,8 @@ end
 -- ring. No numbers and no sentence labels: the pad has no digit input (visel's
 -- labels are there to be typed) and the selection itself is inverted (TASK-14).
 function SelectorOverlay:_draw_hl_marks(bb, ox, oy)
-    if #self.hl_items == 0 then return end
+    -- glosses: Vortpaf's own badges mark them
+    if #self.hl_items == 0 or self.hl_kind == "gloss" then return end
     local sh = Screen:getHeight()
     local sw = Screen:getWidth()
     local page_right = 0
@@ -1397,6 +1474,10 @@ function SelectorOverlay:_status_text(short)
     end
     if self.mode == "walk" then
         return self:_walk_status(short)
+    end
+    if self.mode == "hl" and self.hl_kind == "gloss" then
+        return "GLOSS" .. (short and " \xC2\xB7 A open \xC2\xB7 B close"
+            or " \xC2\xB7 X remove \xC2\xB7 A open \xC2\xB7 B close")
     end
     if self.mode == "hl" then
         local item = self.hl_items[self.hl_cur]
@@ -1675,7 +1756,7 @@ function PagedOverlay:_collect_highlights()
     local page, rh = self.page, self.ui.highlight
     for i, ann in ipairs(anns) do
         local p0, p1 = ann.pos0, ann.pos1
-        if ann.drawer and type(p0) == "table" and type(p1) == "table"
+        if ann.drawer and hl_kind_ok(self.hl_kind, ann) and type(p0) == "table" and type(p1) == "table"
                 and type(p0.page) == "number" and type(p1.page) == "number"
                 and p0.page <= page and page <= p1.page then
             local q0, q1, stored = hl_positions(rh, ann, i, page)
@@ -2227,10 +2308,20 @@ end
 -- False, with nothing shown, when the page has none.
 -- PDF / DjVu (TASK-31): the highlights of the whole page (top page in
 -- continuous view), the view pans to the focused one; reflow = false,
--- "reflow".
-function Selector:_open_highlights()
+-- "reflow". `kind` (TASK-46, hold B / Y): "note" = only the noted
+-- highlights, "gloss" = Vortpaf's glosses on the screen (EPUB; none in a
+-- PDF: false before any overlay is made).
+function Selector:_open_highlights(kind)
+    if kind == "gloss" and (self.ui.paging and not self.ui.rolling
+            or #(page_glosses(self.ui) or {}) == 0) then
+        return false
+    end
     local ov, why = self:_new_overlay()
     if not ov then return Selector._refused(why) end
+    if kind then
+        ov.hl_kind = kind
+        ov:_collect_highlights()
+    end
     if #ov.hl_items == 0 then
         Pluginaro.release_overlay(self.ui, "kopad")
         return false
@@ -2293,6 +2384,8 @@ function Selector:getMenuItems()
         },
     }
 end
+
+Selector.page_glosses = page_glosses
 
 -- for the tests
 Selector._PagedOverlay = PagedOverlay

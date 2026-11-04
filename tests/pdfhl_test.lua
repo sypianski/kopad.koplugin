@@ -281,6 +281,14 @@ ov:line(1); assert(ov.hl_cur == 3 and ov:_status_text():find("^HIGHLIGHT %[note%
 ov:step(1); assert(ov.hl_cur == 1, "wraps")
 ov:para(-1); assert(ov.hl_cur == 3, "LT = previous, wraps")
 ov:step(1)
+-- hold B (TASK-46): the noted ones only, the same mode; a glossed PDF does not exist
+local ov_all = ov
+sel.overlay = nil -- a second overlay for the test only (claim counted twice)
+assert(sel:_open_highlights("note") == true and sel.overlay.hl_kind == "note"
+    and #sel.overlay.hl_items == 1 and sel.overlay.hl_items[1].ann == h2, "notes only: h2")
+sel:_close()
+assert(sel:_open_highlights("gloss") == false and sel.overlay == nil, "PDF: no glosses, nothing opens")
+sel.overlay, ov = ov_all, ov_all
 
 -- the boxes: page view at zoom 1, the focused one inverted on paint
 local painted = {}

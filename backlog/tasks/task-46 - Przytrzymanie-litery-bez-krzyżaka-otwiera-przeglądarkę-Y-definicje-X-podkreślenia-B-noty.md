@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-04 09:49'
-updated_date: '2026-11-04 11:19'
+updated_date: '2026-11-04 11:45'
 labels: []
 dependencies: []
 priority: medium
@@ -53,4 +53,6 @@ Uzupełnienie opisu (fragment wypadł przy zakładaniu): akcje przytrzymania jak
 Zgoda usera na wdrożenie (2026-11-04), z wydaniem na Decka; push publicznego repo za osobną zgodą.
 
 Wydane 2026-11-04: 0.1.17 (eb40329) pushed, galeria koligilo → Bigyo, ONYX Go6, Onyx NoteAir3C, SteamDeck. Decyzja usera: X = wszystkie podkreślenia (highlight+note), B = tylko z notatką. Testy: 12/12 zestawów OK. Do sprawdzenia na Decku: dymek po ~0,6 s; Y przytrzymane → lista glos Vortpafa 0.7.0 (EPUB); X/B → lista zakładek z filtrem, po zamknięciu lista bez filtra; Y/B w zaznaczeniu działają od razu; w PDF B + krzyżak dalej zoomuje. Koligilo (padmap.go/web) nie zna jeszcze klucza hold ani nowych id akcji.
+
+Korekta usera (2026-11-04): przytrzymanie nie otwiera listy z całej książki, tylko tryb na BIEŻĄCEJ STRONIE — zaznacza pierwszy element danego rodzaju, D-pad przechodzi do kolejnych, A otwiera, X usuwa, B zamyka. Y = glosy Vortpafa na stronie (A = karta glosy, X = usuwanie z wyborem zakresu), X = podkreślenia strony (także z notą; istniejący tryb hl z TASK-31), B = tylko noty strony. Brak elementów = komunikat. Listy z całej książki zostają: glosy w Narzędzia → Vortpaf, zakładki pod X+RB. Krótkie Y bez zmian. Wymaga Vortpafa 0.7.1 (publiczne API glos strony, koreader backlog). 0.1.18 = poprawka HandlerSandbox (onX to wywoływalna tabela).
 <!-- SECTION:NOTES:END -->

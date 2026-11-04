@@ -258,12 +258,23 @@ A, Y and B act on the RELEASE, and only when no D-pad came in between.
   X combos win. `onGamepadButtonUp` -> `_hold_end(btn)`: a ready hold marks
   `_y_used` / `_b_used` (no tap) and `_run_hold` runs the action through
   `_run_action` (idle reading only). Actions from `res.hold`
-  (`Padmap.build_hold`, default `DEFAULT_HOLD`). Runners: `vortpaf_glosses`
+  (`Padmap.build_hold`, default `DEFAULT_HOLD`). Default runners (0.1.19,
+  on the page shown): `page_glosses` / `page_highlights` / `page_notes` =
+  `page_mode(kind)` -> `PadNav:_open_highlights(selector, kind)` ->
+  `Selector:_open_highlights(kind)`: the overlay's mode "hl" with
+  `ov.hl_kind` nil / "note" (`hl_kind_ok`: non-empty `ann.note`, also in
+  `PagedOverlay:_collect_highlights`) / "gloss" (`_collect_glosses` from
+  Vortpaf's plain `pageGlosses()`, >= 0.7.1; A = `vp:openGloss(item, cb)`,
+  X = `vp:openGlossRemove(item, cb)` via `_gloss_card`, the card is a window
+  on top of the overlay, `cb` recollects and clamps, none left = close; no
+  dots, status "GLOSS"; PDF = none). Missing page API = a message
+  (`callable()`). The book-wide runners stay actions: `vortpaf_glosses`
   (event `VortpafGlosses` when `ui.vortpaf.onVortpafGlosses` exists, else a
   message), `bookmarks_highlights` / `bookmarks_notes` (`ReaderBookmark`
   `match_table` = {highlight, note} / {note}, stock's own type filter, reset
   by the list's close_callback; none in the book = a message). Tests:
-  section 18 of `tests/padmap_test.lua`.
+  section 18 of `tests/padmap_test.lua`, 9a of `tests/selector_test.lua`,
+  `tests/pdfhl_test.lua` (notes kind).
 - **D-pad**: in an EPUB (reading / selection) `_button_dispatch` calls the
   `KPUp2`.. handlers itself and, in the selection, `_dpad_start` repeats the
   step via `UIManager:scheduleIn` (`DPAD_REPEAT_*`) until the release, a context
@@ -330,10 +341,11 @@ default. Directions `M.QUICK_DIRS` (clockwise from `up`); `x_modifier` never,
 `files` only `M.QUICK_FILES_ACTIONS` (`quick_allowed`). Contract with koligilo
 (`padmapQuick*` in `padmap.go`, `QUICK_*` in `web/padmap.js`).
 **Letter holds (TASK-46):** `res.hold` (`build_hold`) = `M.DEFAULT_HOLD`
-(y vortpaf_glosses, x bookmarks_highlights, b bookmarks_notes) with the
-data's `hold` entries on top, per role (`M.HOLD_ROLES` b / x / y; `none`
-removes one; `x_modifier` never). Not yet known to koligilo (nor the three
-new action ids) — its side has to follow.
+(y page_glosses, x page_highlights, b page_notes; before 0.1.19 the
+book-wide vortpaf_glosses / bookmarks_highlights / bookmarks_notes, still in
+the vocabulary) with the data's `hold` entries on top, per role
+(`M.HOLD_ROLES` b / x / y; `none` removes one; `x_modifier` never). Not yet
+known to koligilo (nor the six TASK-46 action ids) — its side has to follow.
 The vocabulary (physical names, roles, layouts, actions) is a contract with koligilo's
 panel editor (TASK-25 there) — change both sides together. Layout ids are a
 closed list kept in `M.LAYOUTS` / `M.LAYOUT_ORDER` (`xbox`, `playstation`,

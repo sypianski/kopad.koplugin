@@ -169,12 +169,17 @@ M.LAYOUT_ORDER = { "xbox", "playstation", "nintendo", "valve" }
 --  Selection and dictionary
 --   sentence_select         open the sentence selector (A today)
 --   highlights              browse the page's highlights, a message if none (Y today)
---   vortpaf_glosses         Vortpaf's gloss browser (Dispatcher action
---                           vortpaf_glosses, event VortpafGlosses; a message
---                           without Vortpaf). Y held today (TASK-46)
+--   page_highlights         the same (X held today, TASK-46)
+--   page_notes              the same, only highlights with a note (B held today)
+--   page_glosses            browse the Vortpaf glosses on the screen: A opens
+--                           the card, X its removal; a message if none or
+--                           without Vortpaf >= 0.7.1 (Y held today)
+--   vortpaf_glosses         Vortpaf's gloss browser for the whole book
+--                           (Dispatcher action vortpaf_glosses, event
+--                           VortpafGlosses; a message without Vortpaf)
 --   bookmarks_highlights / bookmarks_notes
 --                           the book's bookmark list filtered to highlights
---                           (with or without a note) / to notes. X / B held
+--                           (with or without a note) / to notes
 --   word_walk / crosshair   open the word walk (crosshair: kept for old data,
 --                           the crosshair itself was removed in kopad TASK-15)
 --   dict_lookup             the "look up a word" input dialog
@@ -203,7 +208,8 @@ M.ACTION_ORDER = {
     "book_map", "page_browser", "fulltext_search", "book_status", "book_info",
     "reading_progress",
     "history", "file_browser", "last_book", "favorites", "collections",
-    "sentence_select", "highlights", "vortpaf_glosses", "bookmarks_highlights", "bookmarks_notes",
+    "sentence_select", "highlights", "page_highlights", "page_notes", "page_glosses",
+    "vortpaf_glosses", "bookmarks_highlights", "bookmarks_notes",
     "word_walk", "crosshair", "dict_lookup",
     "font_bigger", "font_smaller",
     "zoom_in", "zoom_out", "zoom_fit_width", "zoom_fit_page",
@@ -256,7 +262,8 @@ M.DEFAULT_QUICK = {
 M.HOLD_ROLES = { "b", "x", "y" }
 local HOLD_ROLE_OK = {}
 for _, r in ipairs(M.HOLD_ROLES) do HOLD_ROLE_OK[r] = true end
-M.DEFAULT_HOLD = { y = "vortpaf_glosses", x = "bookmarks_highlights", b = "bookmarks_notes" }
+-- On the page shown (TASK-46): the first item focused, the D-pad steps.
+M.DEFAULT_HOLD = { y = "page_glosses", x = "page_highlights", b = "page_notes" }
 
 -- Logical (kind, id) -> role name; nil for controls outside the vocabulary.
 local ROLE_BY_CONTROL = { button = {}, axis = {} }

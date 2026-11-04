@@ -364,6 +364,69 @@ assert(claims == 0)
 sel = fresh(3, { { pos0 = "w2", pos1 = "w3e" } })
 assert(sel:_open_highlights() == false and sel.overlay == nil and claims == 0)
 
+-- 9a. Hold B / Y (TASK-46): the same mode over the noted highlights only, or
+-- over Vortpaf's glosses on the screen (A = its card, X = its removal card)
+do
+    -- notes: only the noted highlight, steps stay on it; none = nothing opens
+    local na = { { pos0 = "w1", pos1 = "w1e" }, { pos0 = "w4", pos1 = "w5e", note = "n" },
+                 { pos0 = "w6", pos1 = "w6e", note = "" } }
+    local s = fresh(1, na)
+    assert(s:_open_highlights("note") == true and s.overlay.mode == "hl" and s.overlay.hl_kind == "note")
+    assert(#s.overlay.hl_items == 1 and text(s.overlay) == "t4 t5", "only the noted one")
+    s.overlay:step(1); assert(text(s.overlay) == "t4 t5", "one note: wraps onto itself")
+    s:_close()
+    s = fresh(1, { { pos0 = "w1", pos1 = "w1e" } })
+    assert(s:_open_highlights("note") == false and s.overlay == nil and claims == 0, "no notes: nothing")
+
+    -- glosses: Vortpaf's items in its order; boxes from it, else from the xpointer
+    local gl, calls = nil, {}
+    local function vortpaf(d)
+        gl = { { word = "t2", xp = "w2", headword = "t2", anchored = true, sboxes = { d:box(2) } },
+               { word = "t5", xp = "w5", headword = "t5", anchored = true } }
+        return {
+            pageGlosses = function() local out = {}; for i, g in ipairs(gl) do out[i] = g end; return out end,
+            openGloss = function(_, item, cb) calls[#calls + 1] = { "open", item, cb }; return true end,
+            openGlossRemove = function(_, item, cb) calls[#calls + 1] = { "remove", item, cb }; return true end,
+        }
+    end
+    local d, u
+    s, d, u = fresh(1, { { pos0 = "w3", pos1 = "w3e" } })
+    u.vortpaf = vortpaf(d)
+    assert(s:_open_highlights("gloss") == true and claims == 1)
+    local ov = s.overlay
+    assert(ov.mode == "hl" and ov.hl_kind == "gloss" and ov.hl_cur == 1 and #ov.hl_items == 2, "two glosses, the first focused")
+    assert(ov.hl_items[1].gloss.word == "t2" and ov.hl_items[2].boxes[1].x == d:box(5).x, "boxes: Vortpaf's / from the xpointer")
+    assert(ov:_status_text():match("^GLOSS") and ov:_status_text():find("X remove", 1, true), ov:_status_text())
+    assert(ov:_get_selection() == nil, "a gloss is no text selection")
+    ov:step(1); assert(ov.hl_cur == 2)
+    ov:step(1); assert(ov.hl_cur == 1, "wraps forward")
+    ov:line(-1); assert(ov.hl_cur == 2, "wraps back")
+    -- A: Vortpaf's card for the focused gloss, the overlay stays under it
+    ov:action_menu()
+    assert(calls[1][1] == "open" and calls[1][2].word == "t5" and s.overlay == ov, "A = openGloss(focused)")
+    calls[1][3]() -- the card closed, nothing removed
+    assert(#ov.hl_items == 2 and ov.hl_cur == 2, "card closed: same glosses, same focus")
+    -- Y / the selection actions do nothing on a gloss
+    assert(ov:act("vortuyo") == false and ov:act("copy") == false and s.overlay == ov)
+    -- X: the removal card; after a removal the list is recollected, the focus clamped
+    assert(ov:act("toggle_highlight") == true and calls[2][1] == "remove" and calls[2][2].word == "t5")
+    table.remove(gl, 2); calls[2][3]()
+    assert(s.overlay == ov and #ov.hl_items == 1 and ov.hl_cur == 1 and ov.hl_items[1].gloss.word == "t2",
+        "removed: one left, focused")
+    ov:act("toggle_highlight"); table.remove(gl, 1); calls[3][3]()
+    assert(s.overlay == nil and claims == 0, "the last one removed: the overlay closes")
+    calls[3][3]() -- a late callback on the closed overlay: nothing
+    -- none on the screen / a PDF / no Vortpaf API: nothing opens, no claim left
+    gl = {}
+    u.vortpaf.pageGlosses = function() return {} end
+    assert(s:_open_highlights("gloss") == false and s.overlay == nil and claims == 0, "no glosses")
+    u.vortpaf = nil
+    assert(s:_open_highlights("gloss") == false and claims == 0, "no Vortpaf")
+    u.vortpaf = vortpaf(d)
+    u.paging, u.rolling = { current_page = 1 }, nil
+    assert(s:_open_highlights("gloss") == false and claims == 0, "PDF: no glosses")
+end
+
 -- 10. Point from-to (A tapped, TASK-29; sentences TASK-35; sentence labels
 -- only since TASK-42 / PC-024): labels at the sentences of the page (page 1:
 -- S1 = t1-t4, S2 = t5-t6 visible); a label = the word walk with the cursor

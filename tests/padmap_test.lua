@@ -408,7 +408,8 @@ do
     local other = { footer_menu = true, sentence_select = true, highlights = true, word_walk = true,
                     crosshair = true, cheat_sheet = true, x_modifier = true, none = true,
                     zoom_in = true, zoom_out = true,
-                    vortpaf_glosses = true, bookmarks_highlights = true, bookmarks_notes = true } -- TASK-46: section 18
+                    vortpaf_glosses = true, bookmarks_highlights = true, bookmarks_notes = true, -- TASK-46: section 18
+                    page_highlights = true, page_notes = true, page_glosses = true }
     for _, id in ipairs(P.ACTION_ORDER) do
         assert((EVENTS[id] ~= nil) ~= (other[id] ~= nil), id .. " is covered by exactly one test group")
     end
@@ -2053,25 +2054,27 @@ do
 end
 
 -- 18. Letter holds (TASK-46): Y / X / B held past HOLD_S and released alone
--- open their hold action (padmap `hold`, DEFAULT_HOLD: Vortpaf glosses, the
--- book's highlights, its notes); the tap, the letter + D-pad modes and the X
--- combos stay as they were; the selection keeps Y / B on the press.
+-- open their hold action (padmap `hold`, DEFAULT_HOLD: on the page shown,
+-- Vortpaf's glosses / the highlights / the notes, the first one focused; the
+-- mode itself is in tests/selector_test.lua 9a); the tap, the letter + D-pad
+-- modes and the X combos stay as they were; the selection keeps Y / B on the
+-- press. The book-wide lists stay as actions (padmap `hold` override).
 do
     -- padmap: `hold` parsing (additive, merged over DEFAULT_HOLD, robust)
     local h = P.build(nil, "xbox").hold
-    assert(h.y == "vortpaf_glosses" and h.x == "bookmarks_highlights" and h.b == "bookmarks_notes" and h.a == nil,
+    assert(h.y == "page_glosses" and h.x == "page_highlights" and h.b == "page_notes" and h.a == nil,
         "default holds")
     h = P.build({ version = 1, hold = { y = "toc", b = "none" } }, "xbox").hold
-    assert(h.y == "toc" and h.b == nil and h.x == "bookmarks_highlights", "merge: override, none, untouched")
+    assert(h.y == "toc" and h.b == nil and h.x == "page_highlights", "merge: override, none, untouched")
     local w, warn = warns()
     h = P.build({ version = 1, hold = { a = "toc", y = "jump", x = "x_modifier", b = 7, [1] = "toc" } }, "xbox", warn).hold
     assert(#w == 5, "five bad entries, five warnings, got " .. #w)
-    assert(h.y == "vortpaf_glosses" and h.x == "bookmarks_highlights" and h.b == "bookmarks_notes" and h.a == nil,
+    assert(h.y == "page_glosses" and h.x == "page_highlights" and h.b == "page_notes" and h.a == nil,
         "bad entries keep the defaults")
     w, warn = warns()
     h = P.build({ version = 1, hold = "nope", actions = { rb = "toc" } }, "xbox", warn)
-    assert(#w == 1 and h.hold.y == "vortpaf_glosses" and h.actions.rb == "toc", "broken hold keeps defaults and actions")
-    assert(P.build({ version = 2, hold = { y = "toc" } }, "xbox").hold.y == "vortpaf_glosses", "wrong version ignored")
+    assert(#w == 1 and h.hold.y == "page_glosses" and h.actions.rb == "toc", "broken hold keeps defaults and actions")
+    assert(P.build({ version = 2, hold = { y = "toc" } }, "xbox").hold.y == "page_glosses", "wrong version ignored")
 
     local PadNav = require("padnav")
     local UIM = require("ui/uimanager")
@@ -2092,7 +2095,9 @@ do
         UIM.scheduleIn = function(_, s, fn) sched[#sched + 1] = { s = s, fn = fn } end
         for _, e in ipairs(list) do e.fn() end
     end
-    -- opts: paged (PDF), no_vortpaf, annotations, padmap
+    -- opts: paged (PDF), no_vortpaf, old_vortpaf (0.7.0: no page API),
+    -- sandboxed (the page API as callable tables too), none (the page mode
+    -- finds nothing), annotations, padmap
     local function reader(opts)
         opts = opts or {}
         local log = { events = {}, sel = {}, ov = {}, text = {}, hint = {}, bm = {} }
@@ -2104,6 +2109,12 @@ do
         -- as PluginLoader leaves it: on* wrapped in a callable HandlerSandbox table
         if not opts.no_vortpaf then
             ui.vortpaf = { onVortpafGlosses = setmetatable({}, { __call = function() end }) }
+            if not opts.old_vortpaf then
+                -- plain methods: real functions (or, defensively, callable tables)
+                local function m() return opts.sandboxed and setmetatable({}, { __call = function() return {} end })
+                    or function() return {} end end
+                ui.vortpaf.pageGlosses, ui.vortpaf.openGloss, ui.vortpaf.openGlossRemove = m(), m(), m()
+            end
         end
         ui.annotation = { annotations = opts.annotations or { { drawer = "lighten" }, { drawer = "lighten", note = "n" } } }
         ui.bookmark = {
@@ -2134,7 +2145,10 @@ do
         selector._open_paged = function(_, words, from_end)
             log.sel[#log.sel + 1] = "_open_paged:" .. tostring(words) .. ":" .. tostring(from_end); show("struct")
         end
-        selector._open_highlights = function() log.sel[#log.sel + 1] = "_open_highlights"; return true end
+        selector._open_highlights = function(_, kind)
+            log.sel[#log.sel + 1] = "_open_highlights" .. (kind and (":" .. kind) or "")
+            return not opts.none
+        end
         selector._close = function() log.sel[#log.sel + 1] = "_close"; selector.overlay = nil; set_stack(ui) end
         local n = setmetatable({ ui = ui, enabled_ref = { enabled = true, subs = { selector = selector } } },
             { __index = PadNav })
@@ -2155,13 +2169,18 @@ do
     up(n, 3)
     assert(log.sel[1] == "_open_highlights" and #log.events == 0 and #log.hint == 0 and #sched == 0,
         "Y tap = page highlights, no glosses")
-    -- Y held alone: a hint after the threshold, the glosses on the release (no page highlights)
+    -- Y held alone: a hint after the threshold, the page's glosses on the release
     n, log = reader()
     down(n, 3); elapse()
-    assert(#log.hint == 1 and log.hint[1]:find("Vortpaf glosses", 1, true), "hint names the hold action: " .. tostring(log.hint[1]))
+    assert(#log.hint == 1 and log.hint[1]:find("glosses on the page", 1, true), "hint names the hold action: " .. tostring(log.hint[1]))
     up(n, 3)
-    assert(log.events[1] == "VortpafGlosses" and #log.events == 1 and #log.sel == 0, "Y held = Vortpaf glosses")
-    -- Y held + D-pad after the threshold: the sentences, no browser
+    assert(log.sel[1] == "_open_highlights:gloss" and #log.sel == 1 and #log.events == 0 and #log.text == 0,
+        "Y held = the gloss mode on the page, no book browser: " .. tostring(log.sel[1]))
+    -- the page API wrapped like a sandboxed on* method still counts
+    n, log = reader({ sandboxed = true })
+    down(n, 3); elapse(); up(n, 3)
+    assert(log.sel[1] == "_open_highlights:gloss", "callable tables accepted")
+    -- Y held + D-pad after the threshold: the sentences, no glosses
     n, log = reader()
     down(n, 3); elapse(); down(n, 12)
     assert(log.sel[1] == "_open:false" and #log.events == 0, "Y held + D-pad = sentences: " .. tostring(log.sel[1]))
@@ -2172,53 +2191,77 @@ do
     down(n, 3); down(n, 11)
     assert(#sched == 0 or sched[1].s ~= 0.6, "D-pad spends the hold")
     up(n, 11); up(n, 3)
-    assert(#log.events == 0, "no glosses")
-    -- no Vortpaf: a message instead of an error
-    n, log = reader({ no_vortpaf = true })
+    assert(#log.events == 0 and #log.sel == 1, "no glosses")
+    -- no glosses on the page: a message
+    n, log = reader({ none = true })
     down(n, 3); elapse(); up(n, 3)
-    assert(#log.events == 0 and #log.text == 1 and log.text[1]:find("Vortpaf", 1, true), "no Vortpaf = message")
+    assert(log.sel[1] == "_open_highlights:gloss" and log.text[1] == "No glosses on this page", tostring(log.text[1]))
+    -- no Vortpaf, or one without the page API (0.7.0): a message, no mode, no error
+    for _, o in ipairs({ { no_vortpaf = true }, { old_vortpaf = true } }) do
+        n, log = reader(o)
+        down(n, 3); elapse(); up(n, 3)
+        assert(#log.events == 0 and #log.sel == 0 and #log.text == 1 and log.text[1]:find("Vortpaf 0.7.1", 1, true),
+            "no page API = message: " .. tostring(log.text[1]))
+    end
+    -- the book-wide browser stays an action: hold.y = vortpaf_glosses
+    n, log = reader({ padmap = { version = 1, hold = { y = "vortpaf_glosses" } } })
+    down(n, 3); elapse(); up(n, 3)
+    assert(log.events[1] == "VortpafGlosses" and #log.sel == 0, "hold.y = the book's gloss list")
 
-    -- X held alone: the book's highlights (noted ones too); a short X does nothing
+    -- X held alone: the page's highlights (noted ones too); a short X does nothing
     n, log = reader()
     down(n, 2); assert(n._x_mode and #sched == 1, "X arms the modifier and the hold")
-    up(n, 2); assert(not n._x_mode and #log.bm == 0 and #log.events == 0, "short X: nothing")
+    up(n, 2); assert(not n._x_mode and #log.sel == 0 and #log.events == 0, "short X: nothing")
     down(n, 2); elapse()
-    assert(log.hint[1] and log.hint[1]:find("highlights", 1, true), "X hint")
+    assert(log.hint[1] and log.hint[1]:find("highlights on the page", 1, true), "X hint")
     up(n, 2)
-    assert(log.bm[1] == "highlight+note" and not n._x_mode, "X held = highlights list: " .. tostring(log.bm[1]))
-    -- X combo after the threshold: still the combo, no list
+    assert(log.sel[1] == "_open_highlights" and #log.bm == 0 and not n._x_mode, "X held = page highlights: " .. tostring(log.sel[1]))
+    n, log = reader({ none = true })
+    down(n, 2); elapse(); up(n, 2)
+    assert(log.text[1] == "No highlights on this page", "no highlights = message")
+    -- X combo after the threshold: still the combo, no mode
     n, log = reader()
     down(n, 2); elapse(); down(n, 11)
     assert(log.events[1] == "ShowMenu", "X + up after the threshold = top menu")
     up(n, 11); up(n, 2)
-    assert(#log.bm == 0 and not n._x_mode, "combo cancels the hold")
-    -- X + LB (TOC) before the threshold, then a long wait: no list
+    assert(#log.sel == 0 and not n._x_mode, "combo cancels the hold")
+    -- X + LB (TOC) before the threshold, then a long wait: no mode
     n, log = reader()
     down(n, 2); down(n, 9); elapse(); up(n, 9); up(n, 2)
-    assert(log.events[1] == "ShowToc" and #log.bm == 0 and #log.hint == 0, "X + LB = TOC only")
+    assert(log.events[1] == "ShowToc" and #log.sel == 0 and #log.hint == 0, "X + LB = TOC only")
     -- X + a trigger spends it too
     n, log = reader()
     down(n, 2); n:onGamepadAxisMotion({ axis = 5, value = 32767 }); elapse(); up(n, 2)
-    assert(#log.bm == 0, "X + RT: no list")
+    assert(#log.sel == 0, "X + RT: no mode")
+    -- the book's bookmark list stays an action: hold.x = bookmarks_highlights
+    n, log = reader({ padmap = { version = 1, hold = { x = "bookmarks_highlights" } } })
+    down(n, 2); elapse(); up(n, 2)
+    assert(log.bm[1] == "highlight+note" and #log.sel == 0, "hold.x = the book's highlights list")
 
-    -- B held alone: the notes; B tapped = back; B + D-pad = view size, no list
+    -- B held alone: the page's notes; B tapped = back; B + D-pad = view size, no mode
     n, log = reader()
-    down(n, 1); elapse(); up(n, 1)
-    assert(log.bm[1] == "note" and #log.events == 0, "B held = notes, not back: " .. tostring(log.events[1]))
+    down(n, 1); elapse()
+    assert(log.hint[1] and log.hint[1]:find("notes on the page", 1, true), "B hint")
+    up(n, 1)
+    assert(log.sel[1] == "_open_highlights:note" and #log.events == 0, "B held = page notes, not back: " .. tostring(log.sel[1]))
     n, log = reader()
     down(n, 1); up(n, 1)
-    assert(log.events[1] == nil and #log.bm == 0, "B tap: no list") -- back = ui.link (absent here)
+    assert(log.events[1] == nil and #log.sel == 0, "B tap: no mode") -- back = ui.link (absent here)
     n, log = reader()
     down(n, 1); elapse(); down(n, 11); up(n, 11); up(n, 1)
-    assert(log.events[1] == "IncreaseFontSize:1" and #log.bm == 0, "B + D-pad = font, no list")
-    -- no notes in the book: a message, no empty list
-    n, log = reader({ annotations = { { drawer = "lighten" } } })
+    assert(log.events[1] == "IncreaseFontSize:1" and #log.sel == 0, "B + D-pad = font, no mode")
+    -- no notes on the page: a message
+    n, log = reader({ none = true })
     down(n, 1); elapse(); up(n, 1)
-    assert(#log.bm == 0 and log.text[1] == "No notes in this book", "no notes = message")
+    assert(log.text[1] == "No notes on this page", "no notes = message: " .. tostring(log.text[1]))
+    -- the book's notes list stays an action, with its own message
+    n, log = reader({ annotations = { { drawer = "lighten" } }, padmap = { version = 1, hold = { b = "bookmarks_notes" } } })
+    down(n, 1); elapse(); up(n, 1)
+    assert(#log.bm == 0 and log.text[1] == "No notes in this book", "hold.b = book notes; none = message")
     -- padmap `hold`: b = none -> a long B is a tap again; y = toc
     n, log = reader({ padmap = { version = 1, hold = { b = "none", y = "toc" } } })
     down(n, 1); assert(#sched == 0, "no hold for B"); up(n, 1)
-    assert(#log.bm == 0, "B: no list")
+    assert(#log.sel == 0, "B: no mode")
     down(n, 3); elapse(); up(n, 3)
     assert(log.events[1] == "ShowToc", "hold.y = toc")
 
@@ -2228,11 +2271,14 @@ do
     down(n, 3); up(n, 3)
     assert(log.sel[1] == "_open_highlights" and #log.events == 0, "PDF: Y tap = page highlights")
     down(n, 3); elapse(); up(n, 3)
-    assert(log.events[1] == "VortpafGlosses" and #log.sel == 1, "PDF: Y held = glosses event")
+    assert(log.sel[2] == "_open_highlights:gloss", "PDF: Y held = gloss mode (the selector says none)")
     down(n, 2); elapse(); up(n, 2)
-    assert(log.bm[1] == "highlight+note", "PDF: X held = highlights")
+    assert(log.sel[3] == "_open_highlights", "PDF: X held = page highlights")
     down(n, 1); elapse(); up(n, 1)
-    assert(log.bm[2] == "note", "PDF: B held = notes")
+    assert(log.sel[4] == "_open_highlights:note", "PDF: B held = page notes")
+    n, log = reader({ paged = true, none = true })
+    down(n, 3); elapse(); up(n, 3)
+    assert(log.text[1] == "No glosses on this page", "PDF: no glosses = message")
 
     -- the selection: Y / B act on the PRESS, start no hold, the release does nothing
     n, log = reader()
@@ -2245,6 +2291,7 @@ do
     selector:_open(false)
     assert(down(n, 1) == true and log.ov[2] == "back" and #sched == 0, "selection: B = back on the press")
     up(n, 1)
+    for _, e in ipairs(log.sel) do assert(not e:find("_open_highlights", 1, true), "selection: no page mode on the release") end
     assert(#log.bm == 0, "selection: no notes on the release")
     -- a context change before the threshold (a menu on top) drops the hold
     n, log = reader()

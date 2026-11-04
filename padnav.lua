@@ -21,8 +21,9 @@ Reading:
                          (both sides, MARGIN_STEP); held = repeated (TASK-33)
   B held (no D-pad)      Held past HOLD_S (0.6 s; a toast then names what
                          the release opens) and released without the D-pad
-                         or another control: the book's notes (bookmark
-                         list, notes filter; TASK-46). padmap `hold`
+                         or another control: the notes on the page, as Y
+                         tapped but only highlights with a note (TASK-46);
+                         none = a message. padmap `hold`
   D-pad                 Pages: →/↓ next, ←/↑ previous (←/→ mirrored in RTL
                          books; TASK-28). Letter + D-pad = a mode, a tapped
                          letter = its action (Gamepad* path; the legacy key
@@ -43,10 +44,14 @@ Reading:
                          below). Legacy key path: sentences
   Y tapped               The page's saved highlights (D-pad steps between
                          them); none on the page = a message
-  Y held (no D-pad)      Past HOLD_S, released alone: Vortpaf's gloss browser
-                         (event VortpafGlosses; without Vortpaf a message).
-                         The D-pad after the threshold still opens the
-                         sentences (TASK-46)
+  Y held (no D-pad)      Past HOLD_S, released alone: the Vortpaf glosses on
+                         the screen (Vortpaf >= 0.7.1 pageGlosses), the first
+                         glossed word inverted; D-pad = next / previous
+                         (wrapping), A = Vortpaf's card, X = its removal
+                         card (this occurrence / device / Vortuyo), B
+                         closes. None = a message, no Vortpaf (or older) =
+                         a message. The D-pad after the threshold still
+                         opens the sentences (TASK-46)
   L-stick                Nothing (consumed; TASK-12 / TASK-15)
   R-stick                The quick-action wheel (TASK-26, PC-021): a
                          ButtonDialog of padmap's `quick.reading` set, drawn
@@ -60,10 +65,12 @@ Reading:
                          trigger acting as X: a latch, spent by one combo.
                          Documents only; dropped as soon as the pad is used
                          anywhere but plain reading.
-  X held (no combo)      Past HOLD_S, released with no combo: the book's
-                         highlights (bookmark list, highlights + notes
-                         filter; TASK-46). A combo after the threshold still
-                         fires and cancels it. Holds: Gamepad* path only
+  X held (no combo)      Past HOLD_S, released with no combo: the page's
+                         highlights, noted ones included (as Y tapped;
+                         TASK-46). A combo after the threshold still fires
+                         and cancels it. Holds: Gamepad* path only. The
+                         book-wide lists stay elsewhere: X + RB bookmarks,
+                         Vortpaf's own gloss list (its menu / Dispatcher)
 
 Context (PadNav:_context; Gamepad* path = KOReader >= 2026.07): what the pad
 drives depends on the topmost non-toast window of the UIManager stack. The
@@ -231,8 +238,9 @@ LB/RB and LT/RT change the page, always by a whole page:
   Y tapped               The page's highlights (TASK-31; as in an EPUB: the
                          D-pad steps between them, the view pans to each,
                          X removes one); none = a message
-  Y / X / B held alone   As in an EPUB (TASK-46): Vortpaf glosses (Vortpaf
-                         itself says it has none in a PDF), highlights, notes
+  Y / X / B held alone   As in an EPUB (TASK-46): the page's highlights / its
+                         noted ones; glosses = a message (Vortpaf has none
+                         in a PDF)
   LB / RB, LT / RT       Previous / next page (GotoPage, view from the top)
 The selection itself (context "selection") is the EPUB one on the page's
 text boxes (selector.lua PagedOverlay): the same keys, LB / RB close it and
@@ -1216,10 +1224,16 @@ end
 -- The page's saved highlights (TASK-15): the overlay in mode "hl" on the
 -- first one, the D-pad steps between them; none on the page = a short
 -- message. Y in reading, and the `highlights` action (ACTION_RUNNERS).
-function PadNav:_open_highlights(selector)
-    local ok, why = selector:_open_highlights()
+-- `kind` (TASK-46): "note" = the noted ones, "gloss" = Vortpaf's glosses.
+local NONE_ON_PAGE = {
+    note  = _("No notes on this page"),
+    gloss = _("No glosses on this page"),
+}
+function PadNav:_open_highlights(selector, kind)
+    local ok, why = selector:_open_highlights(kind)
     if ok == false then
-        self:_show_text(why and no_select_text(why) or _("No highlights on this page"), 2)
+        self:_show_text(why and no_select_text(why) or NONE_ON_PAGE[kind]
+            or _("No highlights on this page"), 2)
     end
 end
 
@@ -1361,6 +1375,25 @@ end
 -- (TASK-46): stock ReaderBookmark, its own filter (match_table, reset by the
 -- list's close_callback) as its "Filter by type" buttons set it. None of
 -- those types in the book = a message instead of an empty list.
+-- The page modes of the letter holds (TASK-46): the overlay in mode "hl"
+-- over the page's highlights / noted highlights / Vortpaf glosses, also in
+-- an idle PDF / DjVu (glosses there: a message). Glosses need Vortpaf's
+-- plain pageGlosses / openGloss / openGlossRemove (0.7.1).
+local function page_mode(kind)
+    return function(self)
+        local selector = self:_selector() or self:_any_selector()
+        if not selector or selector.overlay then return false end
+        if kind == "gloss" then
+            local vp = self.ui and self.ui.vortpaf
+            if type(vp) ~= "table" or not (callable(vp.pageGlosses) and callable(vp.openGloss)
+                    and callable(vp.openGlossRemove)) then
+                self:_show_text(_("Vortpaf is not available (glosses on the page need Vortpaf 0.7.1 or newer)."), 3)
+                return
+            end
+        end
+        self:_open_highlights(selector, kind)
+    end
+end
 local function bookmark_list(types, none_text)
     return function(self)
         local bm = self.ui and self.ui.bookmark
@@ -1422,11 +1455,12 @@ local ACTION_RUNNERS = {
     -- selection and dictionary
     sentence_select   = with_selector(function(self) self:_open_sentence_select() end),
     -- also in an idle PDF / DjVu, whose selector _selector() hides (TASK-31)
-    highlights        = function(self)
-        local selector = self:_selector() or self:_any_selector()
-        if not selector or selector.overlay then return false end
-        self:_open_highlights(selector)
-    end,
+    highlights        = page_mode(nil),
+    -- the letter holds' defaults (TASK-46)
+    page_highlights   = page_mode(nil),
+    page_notes        = page_mode("note"),
+    page_glosses      = page_mode("gloss"),
+    -- the book-wide lists, no longer hold defaults
     vortpaf_glosses   = vortpaf_glosses,
     -- a noted highlight is a highlight too (ReaderBookmark types it "note")
     bookmarks_highlights = bookmark_list({ highlight = true, note = true }, _("No highlights in this book")),
@@ -2695,7 +2729,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nHold A + D-pad: select words    Hold Y + D-pad: sentences"
     .. "\nA: point from-to (sentence labels, then words; RT held = select)"
     .. "\nY: highlights on the page"
-    .. "\nHold alone (0.6 s): Y Vortpaf glosses  X book highlights  B notes"
+    .. "\nHold alone (0.6 s), on the page: Y glosses  X highlights  B notes"
     .. "\nHold X + D-pad: \xE2\x86\x91 menu  \xE2\x86\x93 footer  \xE2\x86\x90 history  \xE2\x86\x92 files"
     .. "\nHold X + LB: TOC    X + RB: bookmarks"
     .. "\nR-stick: quick actions (A run, B close)"
@@ -2704,7 +2738,7 @@ local CHEAT_READING = _("Reading mode")
     .. "\nHold B + D-pad: \xE2\x86\x91/\xE2\x86\x93 zoom in / out  \xE2\x86\x90/\xE2\x86\x92 fit page / text width"
     .. "\nHold A + D-pad: words    Hold Y + D-pad: sentences    A: point from-to"
     .. "\nY: highlights on the page    X in a selection: highlight / remove"
-    .. "\nHold alone: Y Vortpaf glosses  X book highlights  B notes"
+    .. "\nHold alone: X highlights  B notes on the page (no glosses in a PDF)"
     .. "\nLB / RB, LT / RT: previous / next page"
     .. "\n\n" .. _("Top menu open")
     .. "\nRB / LB: next / previous category"
@@ -2786,6 +2820,9 @@ local ACTION_LABELS = {
     collections       = _("collections"),
     sentence_select   = _("sentence selector"),
     highlights        = _("highlights"),
+    page_highlights   = _("highlights on the page"),
+    page_notes        = _("notes on the page"),
+    page_glosses      = _("glosses on the page"),
     vortpaf_glosses   = _("Vortpaf glosses"),
     bookmarks_highlights = _("highlights in the book"),
     bookmarks_notes   = _("notes in the book"),
@@ -2921,6 +2958,7 @@ local ACTION_GLYPHS = {
     toc = "\u{F03A}", toggle_bookmark = "\u{F02E}", bookmarks = "\u{F097}", book_map = "\u{F279}",
     page_browser = "\u{F00A}", fulltext_search = "\u{F002}", reading_progress = "\u{F200}",
     book_status = "\u{F046}", book_info = "\u{F05A}", highlights = "\u{F1FC}",
+    page_highlights = "\u{F1FC}", page_notes = "\u{F249}", page_glosses = "\u{F27B}",
     vortpaf_glosses = "\u{F27B}", bookmarks_highlights = "\u{F0CA}", bookmarks_notes = "\u{F249}", dict_lookup = "\u{F02D}",
     back_location = "\u{F112}", forward_location = "\u{F064}", goto_page = "\u{F18E}", skim = "\u{F07E}",
     next_chapter = "\u{F051}", prev_chapter = "\u{F048}",
