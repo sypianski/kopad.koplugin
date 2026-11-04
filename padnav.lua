@@ -1341,10 +1341,17 @@ end
 -- Vortpaf's gloss browser (TASK-46): the event its Dispatcher action
 -- vortpaf_glosses sends (Vortpaf >= 0.7.0, Vortpaf:onVortpafGlosses), through
 -- the reader as the Dispatcher's UIManager:sendEvent would. Without the
--- plugin (not installed, disabled, older) a message instead.
+-- plugin (not installed, disabled, older) a message instead. PluginLoader
+-- wraps a plugin's on* methods in a HandlerSandbox, a table callable through
+-- its metatable's __call, so a plain function check misses every real one.
+local function callable(v)
+    if type(v) == "function" then return true end
+    local mt = type(v) == "table" and getmetatable(v)
+    return type(mt) == "table" and mt.__call ~= nil
+end
 local function vortpaf_glosses(self)
     local vp = self.ui and self.ui.vortpaf
-    if type(vp) == "table" and type(vp.onVortpafGlosses) == "function" then
+    if type(vp) == "table" and callable(vp.onVortpafGlosses) then
         self.ui:handleEvent(Event:new("VortpafGlosses"))
     else
         self:_show_text(_("Vortpaf is not available (glosses need Vortpaf 0.7.0 or newer)."), 3)

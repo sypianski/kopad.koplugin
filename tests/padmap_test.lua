@@ -2101,7 +2101,10 @@ do
                          log.events[#log.events + 1] = ev.name .. (ev.args[1] ~= nil and (":" .. tostring(ev.args[1])) or "")
                      end }
         if opts.paged then ui.paging = { current_page = 3 } else ui.rolling = {} end
-        if not opts.no_vortpaf then ui.vortpaf = { onVortpafGlosses = function() end } end
+        -- as PluginLoader leaves it: on* wrapped in a callable HandlerSandbox table
+        if not opts.no_vortpaf then
+            ui.vortpaf = { onVortpafGlosses = setmetatable({}, { __call = function() end }) }
+        end
         ui.annotation = { annotations = opts.annotations or { { drawer = "lighten" }, { drawer = "lighten", note = "n" } } }
         ui.bookmark = {
             getBookmarkType = function(item)
