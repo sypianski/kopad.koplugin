@@ -213,6 +213,8 @@ Without keyreader, or with the switch off, nothing changes. Windows opened by ot
 
 In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **B** = close without saving (stock Back).
 
+The note window of the selection's action menu opens with the highlight's saved note, is wide, and grows from a medium to a large height once the text no longer fits; an emptied note is removed when saved.
+
 While kopad is enabled and a gamepad is connected, these dialogs open **without the on-screen keyboard** (it would cover half of the screen), and moving the focus back onto the field with the D-pad does not bring it up either. On a Steam Deck this includes Steam's own keyboard, which SDL would otherwise open over KOReader (and which takes the pad over: its hide button closed the dialog); tap the field or the dialog's keyboard button to bring it up.
 
 With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*): **hold RT** and speak — on release the text is recognized by the Diktilo daemon on the Steam Deck and inserted at the cursor; **B** during a recording cancels it, the other buttons do nothing until it ends. Dictation comes first in a text dialog: RT works with the on-screen keyboard open, over another plugin's selection, and with the focus on the dialog's buttons (it moves back to the field). (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, RT does nothing there.

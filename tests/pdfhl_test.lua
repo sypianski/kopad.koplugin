@@ -49,14 +49,14 @@ stub("ui/widget/textwidget", { new = function(_, o)
                                                paintTo = function() end, free = function() end } })
 end })
 stub("ui/uimanager", { show = function(_, w) shown[#shown + 1] = w end, close = function() end,
-                       setDirty = function() end })
+                       setDirty = function() end, nextTick = function(_, f) f() end })
 stub("util", { cleanupSelectedText = function(s) return s end })
 stub("gettext", function(s) return s end)
 stub("ui/font", { getFace = function() return {} end })
 local menus = {}
 local dialogs = {}
 stub("ui/widget/inputdialog", { new = function(_, t)
-    t.getInputText = function(self) return self._typed or "" end
+    t.getInputText = function(self) return self._typed or self.input or "" end
     dialogs[#dialogs + 1] = t; return t end })
 stub("ui/widget/buttondialog", { new = function(_, t) menus[#menus + 1] = t; return t end })
 local claims = 0
@@ -358,11 +358,41 @@ sel, ui = fresh({ annotations = { h2 } })
 sel:_open_highlights()
 dialogs = {}
 sel.overlay:_do_note(sel.overlay:_get_selection())
+assert(dialogs[1].input == "n", "the note window opens with the saved note")
 dialogs[1]._typed = "edited"
 dialogs[1].buttons[1][2].callback()
 assert(#ui.annotation.annotations == 1 and h2.note == "edited" and log.modified.nb_notes_added == 0,
     "a browsed highlight's note is edited in place")
 assert(sel.overlay:_status_text():find("%[note%]"))
+-- saved unchanged: nothing sent; emptied: the note goes, the highlight stays
+log.modified = nil
+sel.overlay:_do_note(sel.overlay:_get_selection())
+dialogs[2].buttons[1][2].callback()
+assert(log.modified == nil and h2.note == "edited", "unchanged: no event")
+sel.overlay:_do_note(sel.overlay:_get_selection())
+dialogs[3]._typed = ""
+dialogs[3].buttons[1][2].callback()
+assert(h2.note == nil and #ui.annotation.annotations == 1, "emptied note removed")
+assert(log.modified.nb_notes_added == -1 and log.modified.nb_highlights_added == 1, "counted back as a highlight")
+-- the window: wide, medium height; grows to large once the text overflows
+local d4
+sel.overlay:_do_note(sel.overlay:_get_selection())
+d4 = dialogs[4]
+local w, mid = Selector._PagedOverlay._note_size(600, 800, false)
+local _, big = Selector._PagedOverlay._note_size(600, 800, true)
+assert(d4.width == w and d4.text_height == mid and big > mid and d4.allow_newline, "medium, wide, multi-line")
+local lines, reinits = 3, 0
+d4._input_widget = { text_widget = { text_widget = {
+    getAllLineCount = function() return lines end, getVisLineCount = function() return 8 end } } }
+d4.reinit = function(self) reinits = reinits + 1 end
+d4.edited_callback(true)
+assert(reinits == 0 and d4.text_height == mid, "fits: stays medium")
+lines = 9
+d4.edited_callback(true)
+assert(reinits == 1 and d4.text_height == big and d4.orig_text_height == big, "overflow: large")
+lines = 30
+d4.edited_callback(true)
+assert(reinits == 1, "large is the last step")
 sel:_close()
 assert(claims == 0)
 

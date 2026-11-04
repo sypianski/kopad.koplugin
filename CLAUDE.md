@@ -549,7 +549,7 @@ nearest word box) to the selection's end words (finger highlights do not sit
 at word centres, so never compare positions with `==`); found -> 
 `rh:deleteHighlight(index)` (index re-checked by identity; deletes from the
 PDF, `index_modified` shifts the box cache), else save. Highlight in the menu
-on a browsed highlight does nothing (no duplicate). **Note**: base
+on a browsed highlight does nothing (no duplicate). **The note window** (`SelectorOverlay:_do_note`, EPUB and PDF): opens with the target's saved note (`a.note`), `width` / `text_height` from `_note_size` (85 % of the width, at most 1.3 x the height; text 30 % of the screen height, 62 % = large), `allow_newline`; `edited_callback` -> `UIManager:nextTick(grow)`: once the text overflows (`getAllLineCount` > `getVisLineCount` of the ScrollTextWidget's TextBoxWidget) it re-inits ONCE to large (`text_height` and `orig_text_height`); a long note opens large. Saved unchanged = no event, emptied = the note is removed (`nb_notes_added = -1`, the highlight stays). diktonoti writes its live transcript into this field and follows the new InputText after the re-init. In an EPUB the browsed highlight is the target too (`hl_ann` in the mode `hl` selection). **Note**: base
 `_do_note` is split into `_note_target(sel)` (EPUB: a new highlight;
 PagedOverlay: the browsed highlight itself, else a new one) and
 `_note_saved(a, note)` (PagedOverlay: `writePdfAnnotation("content")`, as the

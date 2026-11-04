@@ -863,7 +863,7 @@ function SelectorOverlay:_get_selection()
             return self.doc:getTextFromXPointers(ann.pos0, ann.pos1)
         end)
         return { text = (ok and text) or "", pos0 = ann.pos0, pos1 = ann.pos1,
-                 sboxes = item.boxes }
+                 sboxes = item.boxes, hl_ann = ann }
     end
     local xp0, xp1
     if self.mode == "walk" then
@@ -1002,9 +1002,15 @@ function SelectorOverlay:_do_toggle_highlight(sel)
     self:_refresh()
 end
 
--- The annotation index a note goes to: a new highlight of the selection
--- (PagedOverlay: the browsed highlight itself in mode "hl").
+-- The annotation index a note goes to: the browsed highlight itself in mode
+-- "hl" (sel.hl_ann), else a new highlight of the selection (PagedOverlay has
+-- its own, same rule).
 function SelectorOverlay:_note_target(sel)
+    if sel.hl_ann then
+        local anns = self.ui.annotation and self.ui.annotation.annotations
+        for i, a in ipairs(anns or {}) do if a == sel.hl_ann then return i end end
+        return nil
+    end
     local rh = self.ui.highlight
     if not rh then return nil end
     rh.selected_text = sel
@@ -1016,15 +1022,53 @@ end
 -- After a note was saved (PagedOverlay: write it into the PDF, refresh).
 function SelectorOverlay:_note_saved() end
 
+-- The note window: wide, in two heights (fractions of the screen height):
+-- medium, and large once the text no longer fits (a long note opens large).
+-- Dictation (diktonoti) writes its live transcript into the field, so the
+-- window grows while one speaks too.
+local NOTE_MEDIUM, NOTE_LARGE = 0.30, 0.62
+
+function SelectorOverlay._note_size(sw, sh, large)
+    return math.floor(math.min(sw * 0.85, sh * 1.3)),
+        math.floor(sh * (large and NOTE_LARGE or NOTE_MEDIUM))
+end
+
+-- More lines than the field shows (ScrollTextWidget > TextBoxWidget).
+local function note_overflows(input)
+    local tb = input and input.text_widget and input.text_widget.text_widget
+    if not (tb and tb.getAllLineCount and tb.getVisLineCount) then return false end
+    return tb:getAllLineCount() > tb:getVisLineCount()
+end
+
 function SelectorOverlay:_do_note(sel)
     local index = self:_note_target(sel)
     if not index then return end
     local ui, overlay = self.ui, self
     local InputDialog = require("ui/widget/inputdialog")
-    local dlg
+    local a0 = ui.annotation.annotations[index]
+    local old = a0 and a0.note or ""
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local width, medium = SelectorOverlay._note_size(sw, sh, false)
+    local large = select(2, SelectorOverlay._note_size(sw, sh, true))
+    local dlg, grown
+    local function grow()
+        if grown or not dlg or not dlg._input_widget then return end
+        if not note_overflows(dlg._input_widget) then return end
+        grown = true
+        -- reinit() restores orig_text_height, so both change
+        dlg.text_height, dlg.orig_text_height = large, large
+        dlg:reinit()
+    end
     dlg = InputDialog:new{
         title = _("Note"),
-        input = "",
+        input = old,
+        width = width,
+        text_height = medium,
+        allow_newline = true,
+        edited_callback = function()
+            -- not inside InputText's own update: reinit() replaces it
+            if not grown then UIManager:nextTick(grow) end
+        end,
         buttons = {{
             {
                 text = _("Cancel"),
@@ -1037,22 +1081,29 @@ function SelectorOverlay:_do_note(sel)
                 callback = function()
                     local note = dlg:getInputText()
                     UIManager:close(dlg)
-                    if note == "" then return end
                     local a = ui.annotation.annotations[index]
-                    if a then
+                    if not a or note == old then return end
+                    local had = a.note ~= nil and a.note ~= ""
+                    if note == "" then
+                        if not had then return end
+                        -- an emptied note is removed, the highlight stays
+                        a.note = nil
+                        ui:handleEvent(Event:new("AnnotationsModified",
+                            { a, nb_highlights_added = 1, nb_notes_added = -1 }))
+                    else
                         -- a highlight that already had a note stays one
-                        local had = a.note ~= nil and a.note ~= ""
                         a.note = note
                         ui:handleEvent(Event:new("AnnotationsModified",
                             { a, nb_highlights_added = had and 0 or -1,
                               nb_notes_added = had and 0 or 1 }))
-                        overlay:_note_saved(a, note)
                     end
+                    overlay:_note_saved(a, a.note)
                 end,
             },
         }},
     }
     UIManager:show(dlg)
+    grow()
 end
 
 -- The text of the collected page (the AI passage), nil when none.
