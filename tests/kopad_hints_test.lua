@@ -523,4 +523,174 @@ do
     assert(pick(q, "word", 13) == "done" and q.start == 12 and q.stop == 13, "two words from the middle")
 end
 
+-- 9. Shortcut badges (TASK-41): on the word level st.shortcuts = an arrow
+-- badge where the arrow leads (x, y = the badge's top left, d = the letter
+-- badge size). Page: 4 lines of 5 words with room between the lines (x = 20
+-- + k * 60, w = 50; y = 20 + line * 40, h = 20), screen 320 x 200; default
+-- badge 13 px, gap 3.
+local function airy(nwords)
+    local boxes = {}
+    for i = 1, nwords do
+        local k, line = (i - 1) % 5, math.floor((i - 1) / 5)
+        boxes[i] = { x = 20 + k * 60, y = 20 + line * 40, w = 50, h = 20 }
+    end
+    return boxes
+end
+local function cuts(st)
+    local out = {}
+    for _, v in ipairs(st.shortcuts or {}) do out[#out + 1] = v.symbol .. v.word end
+    return table.concat(out, " ")
+end
+local function cut(st, sym)
+    for _, v in ipairs(st.shortcuts or {}) do if v.symbol == sym then return v end end
+end
+-- no badge over a word box, a letter badge or another shortcut, on the screen
+local function clear(p, st, W, Hs)
+    local rs = {}
+    for _, v in ipairs(st.items) do
+        rs[#rs + 1] = { x = v.side == "right" and (v.x - v.d) or v.x, y = v.y, w = v.d, h = v.d }
+    end
+    for k, v in ipairs(st.shortcuts) do
+        local r = { x = v.x, y = v.y, w = v.d, h = v.d }
+        assert(r.x >= 0 and r.y >= 0 and r.x + r.w <= W and r.y + r.h <= Hs, v.symbol .. ": on the screen")
+        for i, b in ipairs(p.boxes) do
+            if b then assert(H._overlap(r, b) == 0, v.symbol .. " over word " .. i) end
+        end
+        for j, o in ipairs(rs) do assert(H._overlap(r, o) == 0, v.symbol .. " over badge " .. j) end
+        rs[#rs + 1] = r
+    end
+end
+do
+    local W, Hs = 320, 200
+    local boxes = airy(20)
+    local opts = { width = W, height = Hs }
+    -- start step, S2 (4..12, paragraph 1 from word 1): ← left of the A badge
+    -- over word 4 at the same height; ↑ over word 1 (the paragraph starts
+    -- earlier)
+    local p = H.Pointer.new(SENTS, boxes, opts)
+    pick(p, "sent", 2)
+    local st = p:stage()
+    assert(cuts(st) == "left4 up1", cuts(st))
+    local a = st.items[1]
+    assert(a.symbol == "A" and a.word == 4 and a.place == "above")
+    local l = cut(st, "left")
+    assert(l.d == 13 and l.y == a.y and l.x + l.d + 3 == a.x and l.place == "beside", "← just left of A")
+    local u = cut(st, "up")
+    assert(u.x == boxes[1].x and u.y + u.d == boxes[1].y and u.place == "above", "↑ over word 1")
+    clear(p, st, W, Hs)
+    -- shown at every stage (after a letter too)
+    assert(p:press("X") == "prefix" and cuts(p:stage()) == "left4 up1")
+    -- S1 starts the paragraph: no ↑
+    p = H.Pointer.new(SENTS, boxes, opts)
+    pick(p, "sent", 1)
+    assert(cuts(p:stage()) == "left1", cuts(p:stage()))
+    clear(p, p:stage(), W, Hs)
+    -- the sentence level has no shortcut badges
+    p = H.Pointer.new(SENTS, boxes, opts)
+    assert(p:stage().shortcuts == nil)
+
+    -- no room left of A (the screen edge): below the start of the word
+    local edge = { { x = 0, y = 20, w = 50, h = 20 }, { x = 60, y = 20, w = 50, h = 20 } }
+    p = H.Pointer.new({ { first = 1, last = 2 } }, edge, opts)
+    pick(p, "sent", 1)
+    st = p:stage()
+    l = cut(st, "left")
+    assert(l.x == 0 and l.y == 40 and l.place == "below", "← below the first word")
+    clear(p, st, W, Hs)
+    -- ... and when the A badge is below too (top line): right of the A badge
+    local top = { { x = 0, y = 0, w = 50, h = 20 }, { x = 60, y = 0, w = 50, h = 20 } }
+    p = H.Pointer.new({ { first = 1, last = 2 } }, top, opts)
+    pick(p, "sent", 1)
+    st = p:stage()
+    l = cut(st, "left")
+    assert(st.items[1].place == "below" and l.y == st.items[1].y and l.x == 13 + 3, "← right of A below")
+    clear(p, st, W, Hs)
+
+    -- end step: start on 9 (S2), E = S2 = ..12: ← just after 12, ↓ after 14
+    -- (the end of paragraph 1: S3), → over 13 (S3's first word; shifted
+    -- one badge in, ← sits over its start)
+    p = H.Pointer.new(SENTS, boxes, opts)
+    pick(p, "sent", 2)
+    assert(p:press("X") == "prefix" and p:press("Y") == "start" and p.start == 9)
+    st = p:stage()
+    assert(cuts(st) == "left12 down14 right13", cuts(st))
+    l = cut(st, "left")
+    assert(l.x == boxes[12].x + boxes[12].w + 3 and l.y + l.d == boxes[12].y and l.place == "beside",
+        "← right after the end of E, at the badge height")
+    local dn = cut(st, "down")
+    assert(dn.x == boxes[14].x + boxes[14].w + 3 and dn.y == l.y, "↓ after the paragraph's last word")
+    local r = cut(st, "right")
+    assert(r.y + r.d == boxes[13].y and r.x == boxes[13].x + 13 + 3, "→ over 13, beside ←")
+    clear(p, st, W, Hs)
+    -- → moves E to S3 = the end of the paragraph: no ↓; → over 15 (S4)
+    assert(p:press("right") == "sentence")
+    st = p:stage()
+    assert(cuts(st) == "left14 right15", cuts(st))
+    r = cut(st, "right")
+    assert(r.y + r.d == boxes[15].y and r.x >= boxes[15].x and r.x + r.d <= boxes[15].x + boxes[15].w,
+        "→ over 15 (← sits between 14 and 15)")
+    clear(p, st, W, Hs)
+    -- the page's last sentence: no →
+    assert(p:press("right") == "sentence" and cuts(p:stage()) == "left20", cuts(p:stage()))
+    -- no room after the last word (screen edge): below its end
+    p = H.Pointer.new({ { first = 1, last = 2 } }, { { x = 200, y = 20, w = 50, h = 20 },
+                                                     { x = 260, y = 20, w = 60, h = 20 } }, opts)
+    pick(p, "sent", 1)
+    assert(p:press("left") == "start")
+    st = p:stage()
+    l = cut(st, "left")
+    assert(l.x == 320 - 13 and l.y == 40 and l.place == "below", "← below the end of the word")
+    clear(p, st, W, Hs)
+
+    -- RTL: mirrored; the "back" arrow is → (physical), the next sentence ←
+    p = H.Pointer.new(SENTS, boxes, { rtl = true, width = W, height = Hs })
+    pick(p, "sent", 2)
+    st = p:stage()
+    assert(cuts(st) == "right4 up1", cuts(st))
+    l = cut(st, "right")
+    assert(l.x == boxes[4].x + boxes[4].w + 3 and l.y == st.items[1].y, "RTL: right of the A badge")
+    u = cut(st, "up")
+    assert(u.x == boxes[1].x + boxes[1].w - 13, "RTL ↑ at the right edge")
+    clear(p, st, W, Hs)
+    assert(p:press("X") == "prefix" and p:press("Y") == "start" and p.start == 9)
+    st = p:stage()
+    assert(cuts(st) == "right12 down14 left13", cuts(st))
+    assert(cut(st, "right").x == boxes[12].x - 3 - 13, "RTL ← end of E: left of 12")
+    r = cut(st, "left")
+    assert(r.y + r.d == boxes[13].y and r.x >= boxes[13].x and r.x + r.d <= boxes[13].x + boxes[13].w,
+        "RTL next sentence over 13")
+    -- (the fixture's words run left to right, so RTL's ↓ after 14 = left of
+    -- 14 takes 13's right edge; → moves one badge in)
+    assert(r.x == boxes[13].x + boxes[13].w - 13 - 16, "RTL: one badge in from the right edge")
+    clear(p, st, W, Hs)
+
+    -- tight lines (no room between them): the badges still never cover a
+    -- letter badge or each other
+    local tight = page(20)
+    p = H.Pointer.new(SENTS, tight, opts)
+    pick(p, "sent", 2)
+    assert(p:press("X") == "prefix" and p:press("Y") == "start")
+    st = p:stage()
+    assert(#st.shortcuts == 3)
+    for k, v in ipairs(st.shortcuts) do
+        local rv = { x = v.x, y = v.y, w = v.d, h = v.d }
+        for _, it in ipairs(st.items) do
+            assert(H._overlap(rv, { x = it.x, y = it.y, w = it.d, h = it.d }) == 0, "tight: over a letter")
+        end
+        for j = k + 1, #st.shortcuts do
+            local o = st.shortcuts[j]
+            assert(H._overlap(rv, { x = o.x, y = o.y, w = o.d, h = o.d }) == 0, "tight: over a shortcut")
+        end
+    end
+
+    -- the dashed line: pieces of 4 px, 3 px apart, 1 px under the line
+    local ds = H.dashes({ { x = 0, y = 0, w = 10, h = 20 }, { x = 5, y = 40, w = 4, h = 20 } })
+    assert(#ds == 3, #ds)
+    assert(ds[1].x == 0 and ds[1].w == 4 and ds[1].y == 21 and ds[1].h == 1)
+    assert(ds[2].x == 7 and ds[2].w == 3, "the last piece cut at the line's end")
+    assert(ds[3].x == 5 and ds[3].y == 61)
+    ds = H.dashes({ { x = 0, y = 0, w = 20, h = 10 } }, { dash = 6, space = 2, thick = 2, offset = 2 })
+    assert(#ds == 3 and ds[2].x == 8 and ds[1].h == 2 and ds[1].y == 12)
+end
+
 print("kopad_hints_test: OK")

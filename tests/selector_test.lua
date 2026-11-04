@@ -382,10 +382,24 @@ end
 local function badges()
     local out, seen = {}, {}
     for _, r in ipairs(rects) do
-        assert(r.k == "paintCircle", "letter badges only: " .. r.k)
-        local key = r.x .. "," .. r.y
-        if not seen[key] then seen[key] = true; out[#out + 1] = r end
+        if r.k == "paintCircle" then
+            local key = r.x .. "," .. r.y
+            if not seen[key] then seen[key] = true; out[#out + 1] = r end
+        end
     end
+    return out
+end
+-- the shortcut badges (TASK-41): a rounded square = one paintBorder each
+-- (over a white paintRect of the same size)
+local function arrows()
+    local out = {}
+    for _, r in ipairs(rects) do if r.k == "paintBorder" then out[#out + 1] = r end end
+    return out
+end
+-- the dashed line: thin paintRects (h <= 2)
+local function dashes()
+    local out = {}
+    for _, r in ipairs(rects) do if r.k == "paintRect" and r.h <= 2 then out[#out + 1] = r end end
     return out
 end
 local st = ov.pointer:stage()
@@ -393,7 +407,13 @@ assert(st.kind == "words" and #st.items == 2 and st.items[1].word == 1 and st.it
 draw_point()
 nothing_on_words("stage 1")
 local bs = badges()
-assert(#rects == 4 and #bs == 2, "two badges (fill + ring each): " .. #rects)
+local as = arrows()
+assert(#rects == 6 and #bs == 2 and #as == 1, "two letter badges + the ← badge: " .. #rects)
+-- ← (the sentence start t1): left of the A badge is off the screen, below
+-- t1 is the A badge itself -> right of the A badge; S1 starts the
+-- paragraph: no ↑
+assert(as[1].x == bs[1].x + 13 + 3 and as[1].y == bs[1].y and as[1].w == 13, "← beside the A badge")
+assert(st.shortcuts[1].symbol == "left" and #st.shortcuts == 1)
 assert(bs[1].x == doc:box(1).x and bs[1].y == doc:box(1).y + doc:box(1).h, "A below t1 (above = off the screen)")
 assert(bs[2].x == doc:box(4).x and bs[2].y + 13 == doc:box(4).y, "X just above t4, at its left edge")
 -- a letter = that piece's words, one badge each, above / below as before
@@ -424,8 +444,74 @@ assert(ov.pointer.step == "end")
 assert(words_of(ov) == "2,3,4", "end step: S1 from the start word: " .. words_of(ov))
 assert(ov:_status_text() == "TO \xC2\xB7 A X \xC2\xB7 " .. LEFT .. " end " .. RIGHT .. " next " .. DOWN
     .. " paragraph \xC2\xB7 B one word", ov:_status_text())
-paint()
-assert(painted.invertRect, "end step: the preview t2 .. t4 inverted")
+-- TASK-41: only the start word t2 inverted; t3 .. t4 = a dashed line 1 px
+-- under their lines; ← after t4, ↓ after t6 (the paragraph's end), → over
+-- t5 (S2's first word)
+draw_point()
+local inv = {}
+for _, r in ipairs(rects) do if r.k == "invertRect" then inv[#inv + 1] = r end end
+local b2 = doc:box(2)
+assert(#inv >= 1 and inv[1].x == b2.x and inv[1].y == b2.y and inv[1].w == b2.w and inv[1].h == b2.h,
+    "the start word's box inverted")
+for _, r in ipairs(inv) do
+    assert(r.x >= b2.x and r.y >= b2.y and r.x + r.w <= b2.x + b2.w and r.y + r.h <= b2.y + b2.h,
+        "nothing inverted but t2")
+end
+local ds = dashes()
+local function dash_rows()
+    local rows = {}
+    for _, r in ipairs(dashes()) do
+        assert(r.h == 1 and r.w <= 4, "thin short pieces")
+        local row = rows[r.y] or { x0 = math.huge, x1 = -math.huge, n = 0 }
+        row.x0, row.x1, row.n = math.min(row.x0, r.x), math.max(row.x1, r.x + r.w), row.n + 1
+        rows[r.y] = row
+    end
+    return rows
+end
+local rows = dash_rows()
+assert(#ds > 0 and rows[31] and rows[71], "under line 1 (t3) and line 2 (t4)")
+-- a row ends within one dash + space of the line's end
+local function ends_at(row, x) return row.x1 <= x and row.x1 > x - 7 end
+assert(rows[31].x0 == doc:box(3).x and ends_at(rows[31], doc:box(3).x + 80), "line 1: t3 only")
+assert(rows[71].x0 == doc:box(4).x and ends_at(rows[71], doc:box(4).x + 80), "line 2: t4 only")
+local nrows = 0
+for _ in pairs(rows) do nrows = nrows + 1 end
+assert(nrows == 2)
+as = arrows()
+st = ov.pointer:stage()
+local cs = {}
+for _, v in ipairs(st.shortcuts) do cs[#cs + 1] = v.symbol .. v.word end
+assert(table.concat(cs, " ") == "left4 down6 right5", table.concat(cs, " "))
+assert(#as == 3, "three shortcut badges painted: " .. #as)
+assert(as[1].x == doc:box(4).x + 80 + 3 and as[1].y + 13 == doc:box(4).y, "← just after t4")
+assert(as[2].x == doc:box(6).x + 80 + 3, "↓ after t6")
+-- (t5's left edge is taken by t2's letter badge, which hangs below line 1:
+-- one badge further in)
+assert(as[3].x == doc:box(5).x + 13 + 3 and as[3].y + 13 == doc:box(5).y, "→ over t5")
+do
+    local all = rects
+    rects = {}
+    for _, r in ipairs(all) do if r.k ~= "invertRect" then rects[#rects + 1] = r end end
+    nothing_on_words("end step: dashes and badges")
+    rects = all
+end
+-- → = E on S2: the line runs on to t6, the badges follow
+assert(ov:point_press("right") == "sentence")
+draw_point()
+rows = dash_rows()
+assert(ends_at(rows[31], doc:box(3).x + 80) and rows[71].x0 == doc:box(4).x and ends_at(rows[71], doc:box(6).x + 80),
+    "→ moves the line: t3 .. t6")
+inv = 0
+for _, r in ipairs(rects) do
+    if r.k == "invertRect" then
+        assert(r.x >= b2.x and r.x + r.w <= b2.x + b2.w and r.y >= b2.y and r.y + r.h <= b2.y + b2.h)
+        inv = inv + 1
+    end
+end
+assert(inv >= 1, "still only t2 inverted")
+as = arrows()
+assert(#as == 1 and as[1].x == doc:box(6).x + 80 + 3, "only ← (after t6): S2 ends the paragraph and the page")
+assert(ov:point_press("up") == "sentence")
 assert(ov:point_press("left") == "done")
 assert(ov.mode == "walk" and ov.pointer == nil and text(ov) == "t2 t3 t4", "t2 .. end of S1: " .. tostring(text(ov)))
 -- then the usual walk: A + arrows move the end, the anchor stays

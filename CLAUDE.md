@@ -368,8 +368,10 @@ the next word's letters; another end sentence after → / ↑ counts from its ow
 first visible word): the last letter / ← (end of E) / ↓ (end of E's
 paragraph) = `done`; → = the next sentence with a visible word (`sentence`;
 none = `ignored`: a range stays on the page), ↑ = the previous one, never
-before `start_sent`. `preview()` = start .. last visible word of E (what
-selector.lua inverts). `typed` is a list (the letters of the stages);
+before `start_sent`. `preview()` = start .. last visible word of E (TASK-41:
+selector.lua inverts only the start word and draws start + 1 .. E's end as a
+dashed line, `M.dashes(lines, {dash, space, thick, offset})` = pieces 1 px
+under each line of `lines_from_boxes`). `typed` is a list (the letters of the stages);
 `press(sym)` -> `prefix` (the next stage) / `unprefix` (B drops the LAST
 symbol when no label goes on with B = back one stage) / `sentence` / `back`
 (B on the start step's word level, nothing typed) / `start` / `done`
@@ -392,6 +394,21 @@ word, `label`, `box`, `side` left / RTL right, `x` = that edge of the word,
 above leaves the screen (`box.y - d < 0`), `y` = the badge's top (`box.y - d`
 above, `box.y + box.h` below), `h`. A letter = its piece's sub-pieces, the
 last stage = the word; B = unprefix = the previous stage; `done` = no items.
+**Shortcut badges (TASK-41).** On the word level `stage().shortcuts` =
+`{ symbol, word, x, y, d, place }` (symbol = the PHYSICAL arrow, ← / →
+swapped in RTL; `x`, `y` = the badge's top left; `place` beside / above /
+below), at every stage: start step ← beside the A badge over the sentence's
+first word (outside it, same height; screen edge -> below the word's start,
+then on the other side of A), ↑ over the paragraph's first visible word when
+↑ leads elsewhere than ←; end step ← just after E's last word (badge height;
+no room -> below the word's end), ↓ after the paragraph's last visible word
+when that is not E's end, → over the next visible sentence's first word.
+`_shortcut_badges` / `_place`: candidate spots in that order, the first one
+on the screen (`opts.width` / `height`), clear of the letter badges and the
+shortcuts already placed AND of every word box wins; when none is clear of
+the words (lines without room between them) the one covering the least
+word area is taken, never one over a badge. `opts.gap` = px between
+badges (default d / 4).
 The R-stick refinement of TASK-35 (`refine_to_word`) is gone.
 `M.lines_from_boxes(boxes)` (word boxes -> lines `{ x, y, w, h, first, last
 }`) draws the end step's preview. The adapter is
@@ -673,8 +690,14 @@ removes with `table.remove` (no `index_modified`) -- left as it was.
   `POINT_BADGE_MIN` / `_MAX` (scaleBySize 12 / 18), defined before
   `_point_begin`, which hands it to the pointer as `opts.badge`; face from
   `point_face(d)`. Then, in the end step, the preview `pointer:preview()` = start .. the end
-  of the current end sentence inverted ALWAYS (also while that is the start
-  sentence: the range ← would give; line boxes via `lines_from_boxes`).
+  of the current end sentence ALWAYS (also while that is the start
+  sentence: the range ← would give). TASK-41: only the start word's `sbox`
+  is inverted; start + 1 .. the end = a dashed line (`Hints.dashes` over
+  `lines_from_boxes`, `paintRect` pieces of scaleBySize 4 / gap 3, 1–2 px,
+  1 px under each line), so it does not look like a finished selection;
+  → / ↑ move it. Last, the shortcut badges `st.shortcuts` with `paint_badge`
+  (an arrow in a rounded square); `_point_begin` passes the pointer the
+  screen size and `gap` (scaleBySize 3). PDF: the same method.
   Status `_point_status(short)`: `FROM · label = sentence · B close`, `FROM
   WORD · A X Y · ← sentence ↑ paragraph · B sentences`, `TO · A X Y · ← end
   → next [↑ previous] ↓ paragraph · B one word` (the letters = those of the

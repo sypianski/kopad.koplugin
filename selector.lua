@@ -749,7 +749,8 @@ function SelectorOverlay:_point_begin()
     local boxes = {}
     for i, w in ipairs(self.words) do boxes[i] = w.sbox or false end
     local pointer = Hints.Pointer.new(self:_point_sentences(), boxes,
-        { rtl = self.is_rtl, badge = badge_size })
+        { rtl = self.is_rtl, badge = badge_size, gap = Screen:scaleBySize(3),
+          width = Screen:getWidth(), height = Screen:getHeight() })
     if #pointer:visible() == 0 then return false end
     self.mode = "point"
     self.pointer = pointer
@@ -1274,16 +1275,22 @@ end
 
 -- Point from-to: what kopad_hints.lua's Pointer:stage() says for the typed
 -- prefix, and in the end step the preview: start word .. the end of the
--- current end sentence inverted, always (also while that is the start
--- sentence), so the range the ← shortcut would give is on the screen and
--- → / ↑ visibly move it (TASK-36).
+-- current end sentence, always (also while that is the start sentence), so
+-- the range the ← shortcut would give is on the screen and → / ↑ visibly
+-- move it (TASK-36). Since TASK-41 only the start word is inverted; the rest
+-- of the range is a thin dashed line just under its lines (Hints.dashes), so
+-- it does not look like a finished selection (that is the walk after the
+-- end is chosen).
 --   sentence level: a pill with the whole label next to each sentence start
 --     (over the text when the margin is too narrow), as since TASK-35;
 --   word level (TASK-39): one small badge per piece of the current stage
 --     with its letter (A / X / Y in reading order), its left edge on the
 --     left edge of the piece's first word (RTL: right edges), just above the
 --     word (below it when above would leave the screen; kopad_hints.lua
---     decides). Nothing else: no underline, no badge on the other words.
+--     decides). No underline, no badge on the other words;
+--   shortcut badges (TASK-41, word level): an arrow in a rounded square
+--     where ← / ↑ (start step) or ← / ↓ / → (end step) lead, at the spot
+--     kopad_hints.lua picked (st.shortcuts: never over a letter badge).
 -- Badges are badge_size (about 65 % of the line height). D-pad symbols are
 -- rounded squares with an arrow, letters are circles; a symbol already
 -- pressed (sentence pills) is grey.
@@ -1327,13 +1334,19 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
     if not p then return end
     local from, to = p:preview()
     if from then
+        local w0 = self.words[from]
+        local b0 = w0 and w0.sbox
+        if b0 then invert_rounded_rect(bb, ox, oy, b0.x, b0.y, b0.w, b0.h) end
         local boxes = {}
-        for i = from, to do
+        for i = from + 1, to do
             local w = self.words[i]
             boxes[#boxes + 1] = w and w.sbox or false
         end
-        for _, l in ipairs(Hints.lines_from_boxes(boxes)) do
-            invert_rounded_rect(bb, ox, oy, l.x, l.y, l.w, l.h)
+        local dashes = Hints.dashes(Hints.lines_from_boxes(boxes), {
+            dash = Screen:scaleBySize(4), space = Screen:scaleBySize(3),
+            thick = math.max(1, math.min(2, Screen:scaleBySize(1))), offset = 1 })
+        for _, r in ipairs(dashes) do
+            bb:paintRect(ox + r.x, oy + r.y, r.w, r.h, Blitbuffer.COLOR_BLACK)
         end
     end
     local st = p:stage()
@@ -1347,6 +1360,9 @@ function SelectorOverlay:_draw_point(bb, ox, oy)
         x = math.max(0, math.min(sw - d, x))
         local y = math.max(0, math.min(sh - d, v.y))
         paint_badge(bb, ox, oy, x, y, d, v.symbol, Blitbuffer.COLOR_BLACK, border, point_face(d))
+    end
+    for _, v in ipairs(st.shortcuts or {}) do
+        paint_badge(bb, ox, oy, v.x, v.y, v.d, v.symbol, Blitbuffer.COLOR_BLACK, border, point_face(v.d))
     end
 end
 

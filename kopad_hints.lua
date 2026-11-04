@@ -59,10 +59,15 @@ API:
                                             { x, y, w, h, first, last } lines
                                             (nil boxes skipped; selector.lua
                                             draws the end step's preview with it)
+  M.dashes(lines, opts) -> pieces           the dashed line under those lines
+                                            (the end step's range, TASK-41)
   M.Pointer.new(sentences, boxes, opts)     opts.rtl = right-to-left script,
                                             opts.badge = function(h) -> the
                                             badge size in px for a word of
-                                            height h (default BADGE_RATIO * h)
+                                            height h (default BADGE_RATIO * h),
+                                            opts.gap = px between badges,
+                                            opts.width / opts.height = the
+                                            screen (shortcut badges stay on it)
   pointer:press(sym) -> result              see Pointer below
   pointer:preview() -> from, to             the end step's range (word indices)
   pointer:visible() -> { {sent, word, label, x, y, side, h, typed}, ... }
@@ -71,7 +76,9 @@ API:
                                             (TASK-39): sentence labels, or one
                                             one-letter badge per piece of the
                                             current stage, above its first
-                                            word; see "Stages" below
+                                            word, plus st.shortcuts = the arrow
+                                            badges (TASK-41); see "Stages" and
+                                            "Shortcut badges" below
 ]]
 
 local M = {}
@@ -273,7 +280,9 @@ end
 --   "done". Shortcuts: ← = the end of E, done; → = E + 1 (the labels move
 --   there; nothing on the page's last sentence: a range never leaves the
 --   page); ↑ = E - 1 (never before the start sentence); ↓ = the end of E's
---   paragraph, done. preview() = start .. the end of E (what ← gives).
+--   paragraph, done. preview() = start .. the end of E (what ← gives;
+--   selector.lua inverts only the start word and draws the rest as a dashed
+--   line under the lines, TASK-41).
 -- Word labels: M.word_labels over ALL the visible words of the sentence:
 --   every word has one, however long the sentence (more stages). In the end
 --   step's start sentence the tree is the start step's (TASK-40), so a word
@@ -313,6 +322,8 @@ function Pointer.new(sentences, boxes, opts)
         sentences = sentences or {}, boxes = boxes or {},
         rtl = opts and opts.rtl or false,
         badge = opts and opts.badge or nil,
+        gap = opts and opts.gap or nil,
+        width = opts and opts.width or nil, height = opts and opts.height or nil,
     }, Pointer)
     self:_sentence_labels()
     return self
@@ -561,6 +572,13 @@ end
 
 local function copy_box(b) return { x = b.x, y = b.y, w = b.w, h = b.h } end
 
+-- A letter badge's top for word box b: above it, below when above would
+-- leave the screen.
+local function badge_top(b, d)
+    if b.y - d >= 0 then return b.y - d, "above" end
+    return b.y + b.h, "below"
+end
+
 function Pointer:_badge(h)
     if self.badge then return self.badge(h) end
     return math.floor((h or 0) * M.BADGE_RATIO + 0.5)
@@ -583,17 +601,186 @@ function Pointer:stage()
         if sym and not g then
             local b = box_of(self, v.word)
             local d = self:_badge(b.h)
-            local above = b.y - d >= 0
+            local y, place = badge_top(b, d)
             g = { symbol = sym, word = v.word, label = v.label, box = copy_box(b), side = side,
-                  x = self.rtl and (b.x + b.w) or b.x, d = d, h = b.h,
-                  place = above and "above" or "below",
-                  y = above and (b.y - d) or (b.y + b.h) }
+                  x = self.rtl and (b.x + b.w) or b.x, d = d, h = b.h, place = place, y = y }
             by[sym] = g
             items[#items + 1] = g
         end
         if g then g.last = v.word end
     end
-    return { kind = "words", typed = typed, items = items }
+    return { kind = "words", typed = typed, items = items, shortcuts = self:_shortcut_badges(items) }
+end
+
+----------------------------------------------------------------------
+-- Shortcut badges (TASK-41): where the arrows lead, on the text
+----------------------------------------------------------------------
+-- On the word level the arrow shortcuts get a badge of their own (the same
+-- size as the letter badges, drawn as an arrow in a rounded square), at the
+-- word the arrow leads to:
+--   start step: ← next to the A badge over the sentence's first word (on its
+--     left, at the same height; no room at the screen edge -> below the
+--     start of that word, then right of the A badge); ↑ over the first word
+--     of the paragraph, only when ↑ leads to another word than ←.
+--   end step: ← just after the last word of E (right of it, at the badge
+--     height; no room -> below the end of the word); ↓ after the last visible
+--     word of E's paragraph, only when it is not the end of E; → over the
+--     first word of the next visible sentence, when there is one.
+--   RTL: mirrored (the sides, and ← / → swapped as in _shortcut).
+-- A badge never covers a letter badge or another shortcut badge, and never
+-- leaves the screen (opts.width / opts.height, when given); of the
+-- candidate spots the first one clear of every word box wins. When none is
+-- clear (lines with no space between them) the spot covering the least of
+-- the words is taken rather than dropping the badge; no spot at all = no
+-- badge (the shortcut still works).
+--
+-- st.shortcuts = { { symbol (the PHYSICAL arrow to press: "left", "up",
+--   "down", "right"), word (where it leads), x, y (the badge's top left), d,
+--   place ("beside" | "above" | "below") }, ... }
+
+local function overlap(a, b)
+    local w = math.min(a.x + a.w, b.x + b.w) - math.max(a.x, b.x)
+    local h = math.min(a.y + a.h, b.y + b.h) - math.max(a.y, b.y)
+    if w > 0 and h > 0 then return w * h end
+    return 0
+end
+M._overlap = overlap
+
+function Pointer:_gap(d)
+    return self.gap or math.max(2, math.floor(d / 4))
+end
+
+-- The first clear spot of `cands` ({ x, y, place }) for a badge of d px.
+function Pointer:_place(cands, d, taken)
+    local best, best_cost
+    for _, c in ipairs(cands) do
+        local r = { x = c.x, y = c.y, w = d, h = d }
+        local ok = r.x >= 0 and r.y >= 0 and (not self.width or r.x + d <= self.width)
+            and (not self.height or r.y + d <= self.height)
+        if ok then
+            for _, t in ipairs(taken) do
+                if overlap(r, t) > 0 then ok = false; break end
+            end
+        end
+        if ok then
+            local cost = 0
+            for i = 1, #self.boxes do
+                local b = box_of(self, i)
+                if b then cost = cost + overlap(r, b) end
+            end
+            if cost == 0 then return c end
+            if not best_cost or cost < best_cost then best, best_cost = c, cost end
+        end
+    end
+    return best
+end
+
+function Pointer:_shortcut_badges(items)
+    local out, taken = {}, {}
+    local W, Hs = self.width, self.height
+    for _, v in ipairs(items) do
+        local x = v.side == "right" and (v.x - v.d) or v.x
+        if W then x = math.max(0, math.min(W - v.d, x)) end
+        local y = v.y
+        if Hs then y = math.max(0, math.min(Hs - v.d, y)) end
+        taken[#taken + 1] = { x = x, y = y, w = v.d, h = v.d }
+    end
+    local rtl = self.rtl
+    -- mk(b, d, lead, trail, before, after, inward) -> candidate spots; lead /
+    -- trail = a badge at the word's start / end edge, before / after = just
+    -- outside the word on that side, inward = one badge further into the line
+    local function add(sym, wi, mk)
+        local b = wi and box_of(self, wi)
+        if not b then return end
+        local d = self:_badge(b.h)
+        local g = self:_gap(d)
+        local lead = rtl and (b.x + b.w - d) or b.x          -- badge at the word's start
+        local trail = rtl and b.x or (b.x + b.w - d)         -- badge at the word's end
+        local before = rtl and (b.x + b.w + g) or (b.x - g - d)  -- outside, before the start
+        local after = rtl and (b.x - g - d) or (b.x + b.w + g)   -- outside, after the end
+        local inward = rtl and -(d + g) or (d + g)
+        local c = self:_place(mk(b, d, lead, trail, before, after, inward), d, taken)
+        if not c then return end
+        out[#out + 1] = { symbol = sym, word = wi, x = c.x, y = c.y, d = d, place = c.place }
+        taken[#taken + 1] = { x = c.x, y = c.y, w = d, h = d }
+    end
+    local back = rtl and "right" or "left"
+    local E = self.sent
+    if self.step == "start" then
+        local first = self:_vis(E)[1]
+        add(back, first, function(b, d, lead, _, before, _, inward)
+            local ay = badge_top(b, d)
+            return { { x = before, y = ay, place = "beside" },
+                     { x = lead, y = b.y + b.h, place = "below" },
+                     { x = lead + inward, y = ay, place = "beside" } }
+        end)
+        local para
+        for j = self:_para_bound(E, -1), E do
+            para = self:_vis(j)[1]
+            if para then break end
+        end
+        if para and para ~= first then
+            add("up", para, function(b, d, lead, _, _, _, inward)
+                return { { x = lead, y = b.y - d, place = "above" },
+                         { x = lead + inward, y = b.y - d, place = "above" },
+                         { x = lead, y = b.y + b.h, place = "below" },
+                         { x = lead + inward, y = b.y + b.h, place = "below" } }
+            end)
+        end
+        return out
+    end
+    if self.step ~= "end" then return out end
+    local vis = self:_vis(E)
+    local last = vis[#vis]
+    local function after_word(b, d, _, trail, _, after)
+        local ay = badge_top(b, d)
+        return { { x = after, y = ay, place = "beside" },
+                 { x = trail, y = b.y + b.h, place = "below" },
+                 { x = trail, y = b.y - d, place = "above" } }
+    end
+    add(back, last, after_word)
+    local pend
+    for j = self:_para_bound(E, 1), E, -1 do
+        local v = self:_vis(j)
+        if #v > 0 then pend = v[#v]; break end
+    end
+    if pend and pend ~= last then add("down", pend, after_word) end
+    local nj = self:_next_sent(E, 1, self.start_sent)
+    local nw = nj and self:_vis(nj)[1]
+    if nw then
+        add(rtl and "left" or "right", nw, function(b, d, lead, _, _, _, inward)
+            return { { x = lead, y = b.y - d, place = "above" },
+                     { x = lead + inward, y = b.y - d, place = "above" },
+                     { x = lead, y = b.y + b.h, place = "below" },
+                     { x = lead + inward, y = b.y + b.h, place = "below" } }
+        end)
+    end
+    return out
+end
+
+----------------------------------------------------------------------
+-- The end step's range as a dashed line (TASK-41)
+----------------------------------------------------------------------
+-- M.dashes(lines, opts) -> { { x, y, w, h }, ... }: short pieces under each
+-- line (M.lines_from_boxes): opts.dash px long (4), opts.space px apart (3),
+-- opts.thick px thick (1), opts.offset px below the line's bottom edge (1).
+function M.dashes(lines, opts)
+    opts = opts or {}
+    local dash = math.max(1, opts.dash or 4)
+    local space = math.max(1, opts.space or 3)
+    local thick = math.max(1, opts.thick or 1)
+    local off = opts.offset or 1
+    local out = {}
+    for _, l in ipairs(lines or {}) do
+        local x1 = l.x + l.w
+        local y = l.y + l.h + off
+        local x = l.x
+        while x < x1 do
+            out[#out + 1] = { x = x, y = y, w = math.min(dash, x1 - x), h = thick }
+            x = x + dash + space
+        end
+    end
+    return out
 end
 
 return M

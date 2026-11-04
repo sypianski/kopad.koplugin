@@ -337,23 +337,70 @@ local function clear_of_words(o, what)
 end
 local st = ov.pointer:stage()
 assert(st.kind == "words" and #st.items == 3, "S1: one stage of three")
-local function circles_only(rs, n, what)
-    for _, r in ipairs(rs) do assert(r.k == "paintCircle", what .. ": letter badges only, got " .. r.k) end
-    assert(#rs == 2 * n, what .. ": " .. n .. " badges (fill + ring), got " .. #rs)
+-- n letter badges (two circles each) and `arrows` shortcut badges (TASK-41:
+-- a white paintRect + a paintBorder each); nothing else (no dashes in the
+-- start step)
+local function circles_only(rs, n, what, arrows, dashes)
+    local c, r, b = 0, 0, 0
+    for _, x in ipairs(rs) do
+        if x.k == "paintCircle" then c = c + 1
+        elseif x.k == "paintBorder" then b = b + 1
+        elseif x.k == "paintRect" and x.w == x.h then r = r + 1
+        elseif not (dashes and x.k == "paintRect" and x.h <= 2) then error(what .. ": unexpected " .. x.k) end
+    end
+    assert(c == 2 * n, what .. ": " .. n .. " badges (fill + ring), got " .. c)
+    assert(b == (arrows or 0) and r == b, what .. ": " .. (arrows or 0) .. " shortcut badges, got " .. b)
 end
-circles_only(clear_of_words(ov, "PDF words"), 3, "S1")
+circles_only(clear_of_words(ov, "PDF words"), 3, "S1", 1)   -- ← at Alpha (S1 starts the paragraph: no ↑)
+do
+    local sc = ov.pointer:stage().shortcuts
+    local a = ov.pointer:stage().items[1]
+    assert(#sc == 1 and sc[1].symbol == "left" and sc[1].word == 1 and sc[1].y == a.y
+        and sc[1].x + sc[1].d + 3 == a.x, "← just left of Alpha's A badge")
+end
 for k, v in ipairs(st.items) do
     local b = ov.words[k].sbox
     assert(v.symbol == ({ "A", "X", "Y" })[k] and v.word == k, "A X Y in reading order")
     assert(v.x == b.x and v.place == "above" and v.y + v.d == b.y, "above the word, at its left edge")
 end
 assert(ov:point_press("left") == "start" and ov.pointer.start == 1)
+-- the end step (TASK-41): only Alpha inverted, beta .. the end of E as a
+-- dashed line 1 px under the lines; → moves it on to zeta
+local function end_step(what)
+    painted = {}
+    ov:_screen_boxes()
+    ov:_draw_point(bb, 0, 0)   -- not paintTo: the status bar's rule is a thin paintRect too
+    local a, inv, rows = ov.words[1].sbox, 0, {}
+    for _, c in ipairs(painted) do
+        if c[1] == "invertRect" then
+            local x, y, w, h = c[2], c[3], c[4], c[5]
+            assert(x >= a.x and y >= a.y and x + w <= a.x + a.w and y + h <= a.y + a.h, what .. ": only Alpha inverted")
+            inv = inv + 1
+        elseif c[1] == "paintRect" and c[5] <= 2 then
+            local row = rows[c[3]] or { x0 = math.huge, x1 = -math.huge }
+            row.x0, row.x1 = math.min(row.x0, c[2]), math.max(row.x1, c[2] + c[4])
+            rows[c[3]] = row
+        end
+    end
+    assert(inv >= 1, what .. ": Alpha inverted")
+    return rows
+end
+local function bottom(i) local b = ov.words[i].sbox; return b.y + b.h + 1 end
+local rows = end_step("E = S1")
+local n = 0
+for _ in pairs(rows) do n = n + 1 end
+assert(n == 1 and rows[bottom(2)] and rows[bottom(2)].x0 == ov.words[2].sbox.x, "beta gamma: one dashed line")
+local sc = {}
+for _, v in ipairs(ov.pointer:stage().shortcuts) do sc[#sc + 1] = v.symbol .. v.word end
+assert(table.concat(sc, " ") == "left3 down6 right4", "← after gamma, ↓ after zeta, → over Delta: "
+    .. table.concat(sc, " "))
+circles_only(clear_of_words(ov, "PDF end step S1"), 3, "end step S1", 3, true)   -- A X Y from Alpha
 assert(ov:point_press("right") == "sentence")
-painted = {}
-ov:paintTo(bb, 0, 0)
-local inv = 0
-for _, c in ipairs(painted) do if c[1] == "invertRect" then inv = inv + 1 end end
-assert(inv >= 2, "the preview Alpha .. zeta inverted (two lines)")
+rows = end_step("E = S2")
+n = 0
+for _ in pairs(rows) do n = n + 1 end
+assert(n == 2 and rows[bottom(4)] and rows[bottom(4)].x0 == ov.words[4].sbox.x, "→: on to the second line")
+assert(#ov.pointer:stage().shortcuts == 1, "only ←: zeta ends the paragraph, no sentence after it")
 assert(ov:point_press("left") == "done" and ov.mode == "walk")
 assert(text(ov) == "T:Alpha beta gamma. Delta eps zeta", "S1 start .. S2 end: " .. tostring(text(ov)))
 sel:_close()
@@ -393,11 +440,11 @@ press(ov, label_of(ov, 1))
 st = ov.pointer:stage()
 assert(#st.items == 3 and st.items[1].word == 1 and st.items[2].word == 4 and st.items[3].word == 7,
     "badges only at the pieces' first words")
-circles_only(clear_of_words(ov, "PDF stage 1"), 3, "stage 1")
+circles_only(clear_of_words(ov, "PDF stage 1"), 3, "stage 1", 1)
 assert(ov:point_press("X") == "prefix" and ov:_status_text():find("B back", 1, true))
 st = ov.pointer:stage()
 assert(st.items[1].word == 4 and st.items[2].word == 5 and st.items[3].word == 6)
-circles_only(clear_of_words(ov, "PDF stage 2"), 3, "stage 2")
+circles_only(clear_of_words(ov, "PDF stage 2"), 3, "stage 2", 1)
 assert(st.items[2].place == "above" and st.items[2].y + st.items[2].d == ov.words[5].sbox.y,
     "five: above, in the gap between the lines")
 assert(ov:point_press("X") == "start" and ov.pointer.start == 5)
@@ -422,7 +469,7 @@ assert(label_of(ov, nil, 4) == nil, "four, before the start: no label")
 st = ov.pointer:stage()
 assert(#st.items == 2 and st.items[1].symbol == "X" and st.items[1].word == 5 and st.items[2].word == 7,
     "no badge for One two three, X over five")
-circles_only(clear_of_words(ov, "PDF end step"), 2, "end step")
+circles_only(clear_of_words(ov, "PDF end step"), 2, "end step", 1, true)
 assert(ov:point_press("A") == "ignored", "A = One two three, before the start")
 assert(press(ov, { "X", "X" }) == "done" and ov.ww_anchor == nil and text(ov) == "T:five",
     "X X again = one word: " .. tostring(text(ov)))
