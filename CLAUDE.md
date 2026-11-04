@@ -12,7 +12,7 @@ words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
-padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch),
+padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch), `lua tests/keyhints_test.lua` (file browser shortcut letters, both modes),
 `lua tests/padconfirm_test.lua` (button letters on confirmation dialogs),
 `lua tests/padopen_test.lua` (opening every gamepad), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
@@ -103,6 +103,12 @@ contribute menu entries via an optional `getMenuItems()` method that
 `restore()` hide / put back KOReader's Q-W-E-R-T-Y shortcut letter labels on
 file browser items by `rawset`-ing `BookList.is_enable_shortcut`; main.lua calls
 it via `_sync_key_hints()` from `init` and the toggle (idempotent, pcall-guarded).
+Two modes, chosen on every `apply()`: stock = `is_enable_shortcut` off; when
+keyreader's `menupage` is installed (`Menu.shortcut_box_manicule`) shortcuts
+stay and only `BookList.hide_shortcut_letters` is set, because menupage paints
+the focus hand (☞) INSIDE the shortcut box -- switching shortcuts off took the
+hand away (0.1.21). Contract with keyreader >= 0.1.3 (`getItemShortCutIcon`
+reads `self.hide_shortcut_letters`); `lua tests/keyhints_test.lua`.
 
 ### `padnav.lua` — event router (`InputContainer`, `PadNav`)
 Owns all gamepad `key_events` bindings and the **key-suppression** mechanism.

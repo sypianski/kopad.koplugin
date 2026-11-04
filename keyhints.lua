@@ -27,6 +27,14 @@ registers when the flag is on, and redraw the page via updateItems() (only when
 the effective value actually changed). A FileManager created later needs
 nothing: kopad's init runs before FileManager builds its FileChooser.
 
+Two modes. Stock KOReader: the flag above is switched off. With keyreader's
+menupage installed (it sets `Menu.shortcut_box_manicule`) switching shortcuts
+off would also take away the hand (☞) it paints on the focused item INSIDE the
+shortcut box, so there only the letters are hidden: `hide_shortcut_letters`
+on BookList, which menupage's `getItemShortCutIcon` reads (a box with no letter
+and no backdrop; the shortcuts and the box stay). The mode is chosen on every
+apply(): when the keyreader loads after kopad, the next sync switches over.
+
 State is module-level on purpose: the plugin is instantiated once per UI
 (FileManager / ReaderUI), but the class patch is process-global; apply() and
 restore() are idempotent so any instance may call them in any order.
@@ -36,6 +44,7 @@ Everything is pcall-guarded; a failure only logs a warning.
 local KeyHints = {}
 
 local FIELD = "is_enable_shortcut"
+local HIDE_FIELD = "hide_shortcut_letters"
 -- Lowest class shared by every cover/list browser (see header).
 local TARGET_MODULES = { "ui/widget/booklist" }
 
@@ -44,8 +53,25 @@ if not ok_logger then
     logger = { warn = function() end, dbg = function() end }
 end
 
--- nil while not applied; otherwise { { cls = <class>, had_own = bool, value = <raw value> }, ... }
+-- nil while not applied; otherwise { field = <name>, list = { { cls = <class>,
+-- had_own = bool, value = <raw value> }, ... } }
 local saved = nil
+
+-- The field to set: HIDE_FIELD when menupage keeps the hand in the shortcut
+-- box (see header), else FIELD.
+local function wanted_field()
+    local Menu = package.loaded["ui/widget/menu"]
+    if type(Menu) == "table" and rawget(Menu, "shortcut_box_manicule") then
+        return HIDE_FIELD
+    end
+    return FIELD
+end
+
+-- What the live browser shows, to redraw only when it changes.
+local function effective(fc)
+    if not fc then return nil end
+    return (fc[FIELD] and "s" or "-") .. (fc[HIDE_FIELD] and "h" or "-")
+end
 
 -- The live FileManager file browser, or nil. Never forces a module load:
 -- when the FileManager module was not loaded no instance can exist.
@@ -78,7 +104,7 @@ local function refresh_live(fc, before)
     if not fc then return end
     local ok, err = pcall(function()
         sync_shortcut_keys(fc)
-        if (fc[FIELD] and true or false) == (before and true or false) then
+        if effective(fc) == before then
             return
         end
         local select_number
@@ -99,27 +125,32 @@ function KeyHints.is_applied()
 end
 
 -- Hide the letter labels. Idempotent: a second call never re-saves (which
--- would capture our own `false` as the "original").
+-- would capture our own `false` as the "original"); it only switches the mode
+-- when the keyreader's menupage appeared since the last call.
 function KeyHints.apply()
-    if saved then return false end
+    local field = wanted_field()
+    if saved then
+        if saved.field == field then return false end
+        KeyHints.restore()
+    end
 
     local fc = live_file_chooser()
-    local before = fc and fc[FIELD]
+    local before = effective(fc)
 
     local list = {}
     for _, modname in ipairs(TARGET_MODULES) do
         local ok, cls = pcall(require, modname)
         if ok and type(cls) == "table" then
-            local own = rawget(cls, FIELD)
+            local own = rawget(cls, field)
             list[#list + 1] = { cls = cls, had_own = own ~= nil, value = own }
-            rawset(cls, FIELD, false)
+            rawset(cls, field, field == HIDE_FIELD)
         else
             logger.warn("kopad keyhints: cannot load " .. modname .. ": " .. tostring(cls))
         end
     end
     if #list == 0 then return false end
 
-    saved = list
+    saved = { field = field, list = list }
     refresh_live(fc, before)
     return true
 end
@@ -128,17 +159,17 @@ end
 function KeyHints.restore()
     if not saved then return false end
 
-    local list = saved
+    local current = saved
     saved = nil
 
     local fc = live_file_chooser()
-    local before = fc and fc[FIELD]
+    local before = effective(fc)
 
-    for _, entry in ipairs(list) do
+    for _, entry in ipairs(current.list) do
         if entry.had_own then
-            rawset(entry.cls, FIELD, entry.value)
+            rawset(entry.cls, current.field, entry.value)
         else
-            rawset(entry.cls, FIELD, nil) -- fall back to Menu.is_enable_shortcut
+            rawset(entry.cls, current.field, nil) -- fall back to the inherited value
         end
     end
 
