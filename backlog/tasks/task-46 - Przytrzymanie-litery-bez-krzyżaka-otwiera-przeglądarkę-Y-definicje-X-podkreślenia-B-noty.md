@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-04 09:49'
-updated_date: '2026-11-04 11:12'
+updated_date: '2026-11-04 11:19'
 labels: []
 dependencies: []
 priority: medium
@@ -51,4 +51,6 @@ Do rozważenia w padmap: akcje przytrzymania jako konfigurowalne (np. , addytywn
 Uzupełnienie opisu (fragment wypadł przy zakładaniu): akcje przytrzymania jako konfigurowalne w padmap, np. klucz hold = { y = "vortpaf_glosses", x = "bookmarks_highlights", b = "bookmarks_notes" }, addytywnie w version 1.
 
 Zgoda usera na wdrożenie (2026-11-04), z wydaniem na Decka; push publicznego repo za osobną zgodą.
+
+Wydane 2026-11-04: 0.1.17 (eb40329) pushed, galeria koligilo → Bigyo, ONYX Go6, Onyx NoteAir3C, SteamDeck. Decyzja usera: X = wszystkie podkreślenia (highlight+note), B = tylko z notatką. Testy: 12/12 zestawów OK. Do sprawdzenia na Decku: dymek po ~0,6 s; Y przytrzymane → lista glos Vortpafa 0.7.0 (EPUB); X/B → lista zakładek z filtrem, po zamknięciu lista bez filtra; Y/B w zaznaczeniu działają od razu; w PDF B + krzyżak dalej zoomuje. Koligilo (padmap.go/web) nie zna jeszcze klucza hold ani nowych id akcji.
 <!-- SECTION:NOTES:END -->
