@@ -512,7 +512,7 @@ still returns our handle. Test: `lua tests/padopen_test.lua`.
 ### `kopad_trace.lua` — optional diagnostic trace
 Zero-dependency logger (`Trace.log/active/begin_event/end_event`, always pcall-guarded); writes `<settings dir>/kopad-trace.log` ONLY while the flag file `<settings dir>/kopad-trace` exists (cached ~2 s; capped ~256 KB, ~20 lines/s, axis repeats collapsed). `main.lua` and `padnav.lua` load it via `pcall(require, "kopad_trace")` with a no-op stub fallback; trace points never alter return values. Named `kopad_trace` (not `trace`) to avoid `package.loaded` collisions.
 
-### `pdftext.lua` — words split by the gap between glyphs (TASK-37 tests it on more PDFs)
+### `pdftext.lua` — words split by the gap between glyphs (TASK-37)
 `document:getTextBoxes(page)` is koreader-base `page:getPageText()`, which cuts
 words ONLY at space characters. A PDF whose text layer has none (TeX / Typst
 output, e.g. papeteria's PDFs) has the word gap only as a gap between glyph
@@ -523,8 +523,15 @@ state_fn, warn)` (main.lua `_install_pdftext`, from `onReaderReady`, paging
 documents only) replaces `getPageText` on the mupdf page class ONCE per run:
 a copy of the stock function whose word loop (`M.split_line`, pure, over plain
 chars) also breaks where the gap along the line exceeds `M.GAP_EM` = 0.10 em
-of the larger glyph (calibrated on 7 000 glyph pairs of one Alegreya PDF:
-inside words <= 0.066 em, between words >= 0.125 em). It must sit THERE and
+of the larger glyph PLUS the line's own typical glyph gap (`M.baseline`, the
+lower quartile of its gaps, ~0 in ordinary text): letter-spaced text
+(tracking, e.g. Elsevier's "journal homepage" header, 0.114 em on every pair)
+must not be cut into letters, and a fixed limit could not tell it from a
+squeezed justified line (0.123 em). Measured (TASK-37, 16 PDFs: arXiv LaTeX,
+Chromium prints, Word, journals, papeteria; 216 000 glyph pairs, `pdftotext`
+as the reference): 210 splits added, 207 agree, 3 false (OCR rubbish in a
+scan); at 0.06 / 0.08 false splits are 85 / 56, at 0.12 / 0.14 the missed
+real gaps grow (166 / 205 vs 127) -- 0.10 stays. It must sit THERE and
 not in pdfwords.lua: saving a selection goes through `getTextFromPositions`,
 which takes the word boundaries from the same boxes, so kopad and KOReader
 have to see the same words (a touch selection benefits too). Everything else
@@ -533,8 +540,8 @@ is stock: the same whitespace / bullet / CJK / General Punctuation rules (so
 call (kopad off = stock), a failing adapter warns once and falls back to the
 original for the rest of the run; non-mupdf documents (DjVu) and bare Lua get
 `false`. Text boxes already in KOReader's DocCache keep their old words until
-the document is reopened. Not tried in KOReader yet; `GAP_EM` is known on one
-font only (TASK-37).
+the document is reopened. Works on the Deck (papeteria PDF, 0.1.5); the measurement
+scripts were throw-away (PyMuPDF dump of glyph boxes + pdftotext -bbox).
 
 ### `pdfpara.lua` — paragraphs of a PDF / DjVu page (pure, TASK-32)
 No KOReader dependency; tested by `tests/pdfpara_test.lua`. PDF knows no

@@ -84,6 +84,35 @@ assert(box and box[1] == 70.7 and box[3] == 167.9, "line box = union of the glyp
 local none, nbox = M.split_line(line({ { " ", 0, 3 } }), u)
 assert(#none == 0 and nbox == nil, "only white space: no words, no box")
 
+-- 11. Letter-spaced text (tracking): every pair has the same extra gap
+-- (0.114 em at 8 pt = 0.91 pt, the Elsevier "journal homepage" header, which
+-- a fixed 0.10 em limit cut into letters). The limit is relative to the line:
+-- the real word gap is tracking + a space (here 0.91 + 2.4 pt).
+local function tracked(text, size, track, word)
+    local spec, x = {}, 0
+    for i = 1, #text do
+        local ch = text:sub(i, i)
+        if ch == " " then
+            x = x + word
+        else
+            local w = size * 0.5
+            spec[#spec + 1] = { ch, x, x + w }
+            x = x + w + track
+        end
+    end
+    return line(spec, size)
+end
+local tr = tracked("journal homepage", 8, 0.91, 2.4)
+assert(texts((M.split_line(tr, u))) == "journal|homepage", "tracking kept: " .. texts((M.split_line(tr, u))))
+assert(math.abs(M.baseline(tr) - 0.114) < 0.01, "baseline = the tracking, got " .. M.baseline(tr))
+assert(M.baseline(real) < 0.01, "ordinary squeezed line: baseline ~0, got " .. M.baseline(real))
+assert(M.baseline(line({ { "a", 0, 5 }, { "b", 9, 14 } })) == 0, "fewer than 4 gaps: 0")
+-- a line of single letters with no spaces at all: the word gaps are most
+-- pairs, but the quartile (not the median) still sees the glyphs that touch
+local short = line({ { "I", 0, 4 }, { "a", 4, 8 }, { "m", 8, 14 }, { "a", 15.5, 20 }, { "b", 20, 25 },
+                      { "o", 25, 30 }, { "y", 31.5, 36 } })
+assert(texts((M.split_line(short, u))) == "Iam|abo|y", "short words: " .. texts((M.split_line(short, u))))
+
 -- 10. install() without KOReader: refuses, never raises
 assert(M.install(nil, function() return true end) == false)
 assert(M.install({ _document = {} }, function() return true end) == false)

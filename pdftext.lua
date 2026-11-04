@@ -11,6 +11,10 @@ of about 0.13 em, so the whole line came out as ONE "word" (one box, no spaces
 in its text) and the pad could select nothing smaller than the line.
 Measured on such a PDF (papeteria, Alegreya): gaps inside words <= 0.066 em,
 gaps between words >= 0.125 em; M.GAP_EM = 0.10 sits between the two.
+Letter-spaced text (tracking: every glyph pair has the same extra gap, e.g.
+Elsevier's "journal homepage" header, 0.114 em) would be cut into letters by a
+fixed limit, so the limit is relative to the line: GAP_EM above the line's
+typical glyph gap (M.baseline, the lower quartile of its gaps; ~0 in normal text).
 
 The fix has to be where the words are made, not in pdfwords.lua: the selection
 is saved through getTextFromPositions, which takes its word boundaries from
@@ -80,6 +84,34 @@ function M.skip_starting_bullet(first)
     return found and ch or first
 end
 
+-- The typical gap between neighbouring glyphs of a line, in em: the lower
+-- quartile of all the gaps (never below 0). ~0 in ordinary text; tracking
+-- (letter-spaced text) raises every gap alike, so it shows up here and is
+-- not mistaken for word gaps. Lines with fewer than 4 gaps count as 0. The
+-- quartile (not the median) keeps a line of short words without spaces
+-- ("a b c d" as glyphs) from taking its word gaps for the baseline.
+function M.baseline(first)
+    local gaps, prev = {}, nil
+    local ch = first
+    while ch ~= nil do
+        if is_wspace(ch.c) then
+            prev = nil
+        else
+            if prev then
+                local size = math.max(prev.size or 0, ch.size or 0)
+                if size > 0 then
+                    gaps[#gaps + 1] = math.max(ch.s0 - prev.s1, prev.s0 - ch.s1) / size
+                end
+            end
+            prev = ch
+        end
+        ch = ch.next
+    end
+    if #gaps < 4 then return 0 end
+    table.sort(gaps)
+    return math.max(0, gaps[math.floor(#gaps / 4) + 1])
+end
+
 -- One line as words. `first` = the line's first char (a linked list through
 -- `.next`; a char has c = code point, x0 y0 x1 y1 = its box, s0 s1 = extent
 -- along the line, size). `utf8` = function(code) -> string. `gaps` = false
@@ -90,6 +122,7 @@ function M.split_line(first, utf8, gaps)
     local words = {}
     local lx0, ly0, lx1, ly1
     local ch = M.skip_starting_bullet(first)
+    local limit = M.GAP_EM + (gaps ~= false and M.baseline(ch) or 0)
     while ch ~= nil do
         local parts, n = {}, 0
         local x0, y0, x1, y1
@@ -97,7 +130,7 @@ function M.split_line(first, utf8, gaps)
         local gap_break = false
         while ch ~= nil do
             if is_wspace(ch.c) then break end
-            if prev and gaps ~= false and M.is_gap(prev, ch) then
+            if prev and gaps ~= false and M.is_gap(prev, ch, limit) then
                 gap_break = true
                 break
             end
