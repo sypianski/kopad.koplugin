@@ -363,7 +363,16 @@ MultiInputDialog through `onSwitchFocus`. `M.wrap_focus` replaces
 `InputText.onFocus`: while `quiet_focus` (dialog qualifies, keyboard not up
 already) it only focuses the field (`onSwitchFocus` with
 `skip_first_show_keyboard` set for the call). `InputText.initInputEvents()`
-redefines `onFocus`, so the wrapper is re-checked on every `InputDialog.init`. Pad check:
+redefines `onFocus`, so the wrapper is re-checked on every `InputDialog.init`.
+The third keyboard is Steam's: `InputText:focus()` -> `Device:startTextInput()`
+= `SDL_StartTextInput`, which SDL3 on a Steam Deck turns into
+`steam://open/keyboard` (visible in Steam's `logs/console_log.txt`). While it
+is up Steam drives the pad with its "Keyboard" action set (RT = press the key
+under the right trackpad, B / hide = Back -> the dialog closes), kopad gets
+nothing useful. `M.wrap_text_input` wraps `Device.startTextInput` once and
+sets the SDL hint `SDL_ENABLE_SCREEN_KEYBOARD` = `"0"` before every start in
+`pad_mode()` (kopad enabled + pad), `SDL_ResetHint` (cdef'd here) otherwise;
+SDL text input itself stays on, so a physical keyboard still types. Pad check:
 `SDL_GetJoysticks` + `SDL_IsGamepad` through `require("ffi/SDL3").SDL`, only
 when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
 the last pad is unplugged. Text input with a pad: RT held = dictation, X =

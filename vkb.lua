@@ -19,6 +19,16 @@ the keyboard is hidden, the wrapped onFocus only focuses the field (the
 physical-keyboard branch of stock). InputText.initInputEvents() redefines
 onFocus, so the wrapper is checked again on every InputDialog init.
 
+The third keyboard is not KOReader's: InputText:focus() calls
+Device:startTextInput() = SDL_StartTextInput, and SDL3 on a Steam Deck then
+opens STEAM's keyboard (steam://open/keyboard). While it is up Steam switches
+the pad to its own "Keyboard" action set (RT = press the key under the right
+trackpad, B / hide = Back), so the pad no longer reaches kopad and Back
+closes the dialog under it. wrap_text_input sets the SDL hint
+SDL_ENABLE_SCREEN_KEYBOARD = "0" before every start while kopad is enabled
+and a pad is connected (text input itself stays on: a physical keyboard still
+types), and resets it otherwise.
+
 `state_fn` (kopad enabled) is replaced by every kopad instance, like
 wheel.install. The pad check asks SDL directly (SDL_GetJoysticks +
 SDL_IsGamepad): ffi/SDL3's own `S.controller` keeps a stale handle after the
@@ -59,7 +69,7 @@ end
 
 function M.should_hide(dlg)
     if type(dlg) ~= "table" or dlg.readonly then return false end
-    return M._state_fn ~= nil and M._state_fn() and M.pad_connected() or false
+    return M.pad_mode()
 end
 
 -- A focus coming to `input` (InputText) should not open the keyboard: the
@@ -100,8 +110,52 @@ function M.wrap_focus()
     return true
 end
 
+-- kopad enabled and a pad connected: no screen keyboard of any kind pops up
+-- by itself.
+function M.pad_mode()
+    return M._state_fn ~= nil and M._state_fn() and M.pad_connected() or false
+end
+
+local SCREEN_KB_HINT = "SDL_ENABLE_SCREEN_KEYBOARD"
+
+-- Set (off = true: "0") or reset SDL's screen-keyboard hint. SDL_ResetHint is
+-- missing from koreader-base's SDL3_h, so it is declared here (once, guarded).
+function M.screen_kb_hint(off)
+    local ok, err = pcall(function()
+        local SDL = require("ffi/SDL3").SDL
+        if off then
+            SDL.SDL_SetHint(SCREEN_KB_HINT, "0")
+            return
+        end
+        if not M._reset_cdef then
+            pcall(function() require("ffi").cdef("bool SDL_ResetHint(const char *name);") end)
+            M._reset_cdef = true
+        end
+        SDL.SDL_ResetHint(SCREEN_KB_HINT)
+    end)
+    return ok, err
+end
+
+-- Wrap Device.startTextInput once (SDL only): the hint follows pad_mode() at
+-- the moment SDL decides whether to show the keyboard.
+function M.wrap_text_input()
+    if M._sti_wrapped then return true end
+    if not is_sdl() then return false end
+    local ok, Device = pcall(require, "device")
+    if not ok or type(Device) ~= "table" or type(Device.startTextInput) ~= "function" then return false end
+    local stock = Device.startTextInput
+    Device.startTextInput = function(...)
+        local okm, off = pcall(M.pad_mode)
+        M.screen_kb_hint(okm and off)
+        return stock(...)
+    end
+    M._sti_wrapped = true
+    return true
+end
+
 function M.install(state_fn)
     M._state_fn = state_fn
+    pcall(M.wrap_text_input)
     if M._installed then return true end
     local ok, ID = pcall(require, "ui/widget/inputdialog")
     if not ok or type(ID) ~= "table" or type(ID.init) ~= "function" then return false end

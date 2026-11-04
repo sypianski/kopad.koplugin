@@ -85,7 +85,38 @@ assert(IT.onFocus ~= stock_focus, "re-wrapped on init")
 new_input({ parent = new_dlg() }):onFocus()
 assert(shown == 2, "still quiet after re-wrap")
 
--- 6. pad check on a non-SDL device: false without touching SDL
+-- 6. Steam's keyboard (SDL_StartTextInput on a Deck): the screen-keyboard hint
+-- is "0" in pad mode, reset otherwise; text input itself still starts
+do
+    local hints, started = {}, 0
+    package.preload["ffi/SDL3"] = function()
+        return { SDL = {
+            SDL_SetHint = function(k, v) hints[#hints + 1] = k .. "=" .. v end,
+            SDL_ResetHint = function(k) hints[#hints + 1] = k .. "=reset" end,
+        } }
+    end
+    package.loaded["ffi/SDL3"] = nil
+    local Dev = { isSDL = function() return true end }
+    Dev.startTextInput = function() started = started + 1 end
+    package.loaded["device"] = Dev
+    V._sti_wrapped = nil
+    assert(V.wrap_text_input() == true, "startTextInput wrapped")
+    enabled, pad = true, true
+    Dev:startTextInput()
+    assert(started == 1 and hints[1] == "SDL_ENABLE_SCREEN_KEYBOARD=0", "pad mode: hint 0")
+    pad = false
+    Dev:startTextInput()
+    assert(started == 2 and hints[2] == "SDL_ENABLE_SCREEN_KEYBOARD=reset", "no pad: hint reset")
+    pad, enabled = true, false
+    Dev:startTextInput()
+    assert(hints[3] == "SDL_ENABLE_SCREEN_KEYBOARD=reset", "kopad off: hint reset")
+    enabled = true
+    local wrapped = Dev.startTextInput
+    assert(V.wrap_text_input() == true and Dev.startTextInput == wrapped, "wrapped once")
+    package.loaded["device"], package.loaded["ffi/SDL3"], package.preload["ffi/SDL3"] = nil, nil, nil
+end
+
+-- 7. pad check on a non-SDL device: false without touching SDL
 package.loaded.vkb = nil
 package.preload["device"] = function() return { isSDL = function() return false end } end
 local V2 = require("vkb")
