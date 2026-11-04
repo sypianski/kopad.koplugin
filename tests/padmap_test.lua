@@ -1532,6 +1532,18 @@ do
     assert(n:onGamepadButtonDown({ button = 0 }) == false and #log == 2, "A on a button row: stock")
     dlg.selected = nil
 
+    -- Y = KOReader's keyboard on / off (vkb.toggle_keyboard), past the startup skip
+    dlg.skip_first_show_keyboard = true
+    dlg.isKeyboardVisible = function(self) return self.kb == true end
+    dlg.onShowKeyboard = function(self)
+        if self.skip_first_show_keyboard then self.skip_first_show_keyboard = nil; return end
+        self.kb = true
+    end
+    dlg.onCloseKeyboard = function(self) self.kb = false end
+    assert(n:onGamepadButtonDown({ button = 3 }) == true and dlg.kb == true, "Y shows the keyboard")
+    assert(n:onGamepadButtonDown({ button = 3 }) == true and dlg.kb == false, "Y hides it")
+    assert(#log == 2, "Y presses no button")
+
     -- RT held: start, auto-repeats consumed without new calls, release -> stop
     held[5] = "plus"
     assert(n:onGamepadAxisMotion({ axis = 5, value = 32767 }) == true and calls[1] == "start", "RT press starts")

@@ -307,6 +307,10 @@ end
 local ok_confirm, PadConfirm = pcall(require, "padconfirm")
 if not ok_confirm or type(PadConfirm) ~= "table" then PadConfirm = nil end
 
+-- Y = keyboard in text dialogs (vkb.lua); missing = stock key.
+local ok_vkb, Vkb = pcall(require, "vkb")
+if not ok_vkb or type(Vkb) ~= "table" then Vkb = nil end
+
 -- Optional button remapping (padmap.lua, PC-011). PadNav only calls
 -- Padmap.resolve on the table main.lua hands over via set_padmap(); a missing
 -- module or no table = identity mapping (behaviour before remapping existed).
@@ -1927,9 +1931,20 @@ end
 -- Buttons in a text-input dialog (ctx "window"): X = backspace, A = accept
 -- (the default button, like Enter) while the focus is on the text field; B
 -- keeps the stock Back = close without saving (or cancels a recording, see
--- _diktonoti_route). Stock gives these dialogs no pad action for X, and A on
+-- _diktonoti_route). Y = KOReader's on-screen keyboard on / off (vkb.lua hides
+-- it at the start; dictation still works under it), with the focus anywhere
+-- in the dialog. Stock gives these dialogs no pad action for X or Y, and A on
 -- the field does nothing. Returns true = consumed.
 function PadNav:_text_field_button(btn)
+    if btn == BTN_Y and Vkb then
+        local dlg, input = text_dialog(true)
+        if not dlg then return false end
+        if input.focused ~= true then focus_field(dlg, input) end
+        local ok, res = pcall(Vkb.toggle_keyboard, dlg)
+        if not ok then logger.warn("kopad: keyboard toggle failed: " .. tostring(res)) end
+        Trace.log("padnav btn=%s: keyboard toggle ok=%s res=%s", tostring(btn), tostring(ok), tostring(res))
+        return ok and res == true
+    end
     if btn ~= BTN_X and btn ~= BTN_A then return false end
     local dlg, input, under_kb = text_dialog()
     if not dlg then return false end

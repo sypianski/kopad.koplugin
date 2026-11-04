@@ -420,7 +420,18 @@ SDL text input itself stays on, so a physical keyboard still types. Pad check:
 `SDL_GetJoysticks` + `SDL_IsGamepad` through `require("ffi/SDL3").SDL`, only
 when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
 the last pad is unplugged. Text input with a pad: RT held = dictation, X =
-backspace, A = accept (`_text_field_button`, `_dictate_hold`). Test:
+backspace, A = accept, Y = KOReader's keyboard on / off (`M.toggle_keyboard`:
+clears the startup skip flag; works with the focus anywhere in the dialog,
+dictation keeps working under it) (`_text_field_button`, `_dictate_hold`).
+**A keyboard is the user's choice, hiding it never closes the dialog:**
+Steam's keyboard opened by hand (Steam + X) hides with a Back (Escape) key,
+and stock InputText (`onKeyPress`, focused field) / InputDialog (key event
+`CloseDialog`, which gets the key as its 2nd argument; a tap outside calls
+`onCloseDialog()` without one) answer Back by closing. `M.wrap_back` (once)
+drops a plain Back while `back_guarded(dlg)`: `device/sdl/gamepad` loads
+(on older patched builds the pad's B IS a Back key), `pad_mode()`, and
+padconfirm labelled the dialog's B (kopad's B then presses that button
+itself, so such a Back never comes from the pad). Test:
 `lua tests/vkb_test.lua`. Related: TASK-34 (kopad off without a pad).
 
 ### `padconfirm.lua` — A / B / X / Y on confirmation dialogs
@@ -706,7 +717,7 @@ first moves it back to the field (`focus_field`, FocusManager
 passes L3 / R3 to KOReader. kopad's own text-field controls, with or without
 diktonoti (`_text_field_button`): X = backspace, A = the dialog's
 `is_enter_default` button (Save / Search) while the focus is on the field,
-B stays the stock Back = close;
+Y = KOReader's keyboard on / off, B presses the dialog's B button = close;
 section 15 of `tests/padmap_test.lua`); every
 other plugin's windows simply get stock keys from kopad (context `window`) and
 need no pad code. The rules below describe how that integration works and how to

@@ -9,7 +9,7 @@ InputDialog.init ONCE per KOReader run (MultiInputDialog calls it too) and,
 on a first init (not a reinit) of an editable dialog, does what stock does for
 a physical keyboard with "virtual_keyboard_enabled" off: keyboard_visible =
 false + skip_first_show_keyboard, so the caller's onShowKeyboard() is
-skipped. Tapping the field or the dialog's keyboard toggle still opens it.
+skipped. Y, tapping the field or the dialog's keyboard toggle still opens it.
 
 The second way in is the focus: on a D-pad device InputText:onFocus (sent by
 FocusManager whenever the D-pad / L-stick brings the focus back onto the
@@ -28,6 +28,16 @@ closes the dialog under it. wrap_text_input sets the SDL hint
 SDL_ENABLE_SCREEN_KEYBOARD = "0" before every start while kopad is enabled
 and a pad is connected (text input itself stays on: a physical keyboard still
 types), and resets it otherwise.
+
+The keyboard stays the user's choice: Y on the pad (padnav:
+_text_field_button), a tap on the field or Steam's own keyboard (Steam + X)
+open one by hand, and dictation keeps working under KOReader's. What must not
+happen is that hiding a keyboard closes the dialog: Steam's keyboard hides
+with a Back (Escape) key, and stock InputDialog / InputText answer a Back key
+with onCloseDialog. wrap_back drops that Back while back_guarded(dlg): the
+Gamepad* path (>= 2026.07), pad mode, and a dialog whose B padconfirm
+labelled -- kopad's B then presses that button itself, so a Back key there
+never comes from the pad. A tap outside and the buttons still close it.
 
 `state_fn` (kopad enabled) is replaced by every kopad instance, like
 wheel.install. The pad check asks SDL directly (SDL_GetJoysticks +
@@ -153,9 +163,74 @@ function M.wrap_text_input()
     return true
 end
 
+-- KOReader >= 2026.07: pad buttons come as Gamepad* events (older patched
+-- builds turn the pad's B into a Back key, which must keep closing).
+function M.gamepad_events()
+    local ok, G = pcall(require, "device/sdl/gamepad")
+    return ok and type(G) == "table"
+end
+
+-- A Back key in `dlg` comes from a keyboard, not from the pad (see the header).
+function M.back_guarded(dlg)
+    if type(dlg) ~= "table" then return false end
+    local keys = rawget(dlg, "_kopad_confirm")
+    if not (type(keys) == "table" and keys.B) then return false end
+    return M.gamepad_events() and M.pad_mode()
+end
+
+local function plain_back(key)
+    return type(key) == "table" and key["Back"]
+        and not (key["Ctrl"] or key["Shift"] or key["Alt"] or key["ScreenKB"]) and true or false
+end
+
+-- Wrap once: InputText.onKeyPress (a focused field closes its dialog on Back)
+-- and InputDialog.onCloseDialog, which the key event reaches with the key as
+-- its second argument (a tap outside calls it with none).
+function M.wrap_back()
+    if M._back_wrapped then return true end
+    local ok, IT = pcall(require, "ui/widget/inputtext")
+    local ok2, ID = pcall(require, "ui/widget/inputdialog")
+    if not (ok and type(IT) == "table" and type(IT.onKeyPress) == "function"
+            and ok2 and type(ID) == "table" and type(ID.onCloseDialog) == "function") then
+        return false
+    end
+    local stock_key, stock_close = IT.onKeyPress, ID.onCloseDialog
+    IT.onKeyPress = function(self, key, ...)
+        if self.focused and plain_back(key) then
+            local okg, guarded = pcall(M.back_guarded, self.parent)
+            if okg and guarded then return true end
+        end
+        return stock_key(self, key, ...)
+    end
+    ID.onCloseDialog = function(self, args, key, ...)
+        if key ~= nil then
+            local okg, guarded = pcall(M.back_guarded, self)
+            if okg and guarded then return true end
+        end
+        return stock_close(self, args, key, ...)
+    end
+    M._back_wrapped = true
+    return true
+end
+
+-- Y on the pad: open KOReader's keyboard for `dlg`, or hide it when it is up.
+-- The startup skip flag (should_hide) would eat the first show, so it goes.
+function M.toggle_keyboard(dlg)
+    if type(dlg) ~= "table" or dlg.readonly then return false end
+    if type(dlg.isKeyboardVisible) == "function" and dlg:isKeyboardVisible() then
+        dlg:onCloseKeyboard()
+        return true
+    end
+    if type(dlg.onShowKeyboard) ~= "function" then return false end
+    dlg.skip_first_show_keyboard = nil
+    dlg:onShowKeyboard()
+    return true
+end
+
 function M.install(state_fn)
     M._state_fn = state_fn
     pcall(M.wrap_text_input)
+    pcall(M.wrap_back)
     if M._installed then return true end
     local ok, ID = pcall(require, "ui/widget/inputdialog")
     if not ok or type(ID) ~= "table" or type(ID.init) ~= "function" then return false end

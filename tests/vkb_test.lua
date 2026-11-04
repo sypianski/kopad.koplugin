@@ -116,6 +116,56 @@ do
     package.loaded["device"], package.loaded["ffi/SDL3"], package.preload["ffi/SDL3"] = nil, nil, nil
 end
 
+-- 8. a Back key (Steam's keyboard hiding = Escape) does not close a dialog
+-- whose B kopad handles; the pad path only (Gamepad* events), pad mode only
+do
+    local closed, typed = 0, {}
+    function ID.onCloseDialog() closed = closed + 1; return true end
+    function IT.onKeyPress(self, key)
+        typed[#typed + 1] = key
+        if key["Back"] and not key["Shift"] then return self.parent:onCloseDialog() end
+        return true
+    end
+    package.loaded["device/sdl/gamepad"] = {}
+    assert(V.wrap_back() == true, "Back wrapped")
+    local BACK, SHIFT_BACK = { Back = true }, { Back = true, Shift = true }
+    local dlg = new_dlg({ _kopad_confirm = { A = true, B = true } })
+    local field = new_input({ parent = dlg, focused = true })
+    assert(field:onKeyPress(BACK) == true and closed == 0 and #typed == 0, "field: Back swallowed")
+    field:onKeyPress(SHIFT_BACK)
+    assert(#typed == 1, "field: Shift + Back stock")
+    assert(dlg:onCloseDialog(nil, BACK) == true and closed == 0, "dialog key event: swallowed")
+    dlg:onCloseDialog()
+    assert(closed == 1, "tap outside / direct call: closes")
+    pad = false
+    dlg:onCloseDialog(nil, BACK)
+    assert(closed == 2, "no pad: Back closes")
+    pad = true
+    new_dlg({ _kopad_confirm = { A = true } }):onCloseDialog(nil, BACK)
+    assert(closed == 3, "no B label: Back closes")
+    package.loaded["device/sdl/gamepad"] = nil
+    package.preload["device/sdl/gamepad"] = function() error("old build") end
+    dlg:onCloseDialog(nil, BACK)
+    assert(closed == 4, "legacy key path (pad B = Back): closes")
+    package.preload["device/sdl/gamepad"] = nil
+    local w = IT.onKeyPress
+    assert(V.wrap_back() == true and IT.onKeyPress == w, "wrapped once")
+end
+
+-- 9. toggle_keyboard (Y): shows past the startup skip flag, hides when up
+do
+    local d9 = new_dlg({ skip_first_show_keyboard = true })
+    function d9:isKeyboardVisible() return self.kb == true end
+    function d9:onShowKeyboard()
+        if self.skip_first_show_keyboard then self.skip_first_show_keyboard = nil; return end
+        self.kb = true
+    end
+    function d9:onCloseKeyboard() self.kb = false end
+    assert(V.toggle_keyboard(d9) == true and d9.kb == true, "Y shows the keyboard")
+    assert(V.toggle_keyboard(d9) == true and d9.kb == false, "Y hides it")
+    assert(V.toggle_keyboard(new_dlg({ readonly = true })) == false, "read-only: nothing")
+end
+
 -- 7. pad check on a non-SDL device: false without touching SDL
 package.loaded.vkb = nil
 package.preload["device"] = function() return { isSDL = function() return false end } end
