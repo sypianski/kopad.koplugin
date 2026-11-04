@@ -161,7 +161,7 @@ function kopad:_trace_start()
         tostring(self.ui and self.ui.name), tostring(self.ui and self.ui.rolling ~= nil),
         tostring(self.enabled), tostring(dir))
     if dir then
-        for _, f in ipairs({ "main.lua", "padnav.lua", "keyhints.lua" }) do
+        for _, f in ipairs({ "main.lua", "padnav.lua", "keyhints.lua", "focushand.lua" }) do
             Trace.log("file %s: %s", f, Trace.file_stamp(dir .. "/" .. f))
         end
     end
@@ -182,6 +182,7 @@ function kopad:init()
     self:_install_wheel()
     self:_install_vkb()
     self:_install_confirm()
+    self:_install_focushand()
     self:_install_padopen()
     Trace.log("subs: nav=%s keyhints=%s selector=%s",
         tostring(self.subs.nav ~= nil), tostring(self.subs.keyhints ~= nil),
@@ -302,6 +303,17 @@ function kopad:_install_confirm()
     local ok, res = pcall(PadConfirm.install, function() return self.enabled end, logger.warn)
     if not ok then logger.warn("kopad: confirm install failed: " .. tostring(res)) end
     Trace.log("confirm: installed=%s", tostring(ok and res))
+end
+
+-- The hand (☞) on the menu item the pad has focused (focushand.lua): kopad's
+-- own, no keyreader needed. Before _sync_key_hints, which hides the letters
+-- with a factory from this module. Once-per-run patch, per-instance state.
+function kopad:_install_focushand()
+    local FocusHand = safe_require("focushand")
+    if not FocusHand then return end
+    local ok, res = pcall(FocusHand.install, function() return self.enabled end)
+    if not ok then logger.warn("kopad: focushand install failed: " .. tostring(res)) end
+    Trace.log("focushand: installed=%s", tostring(ok and res))
 end
 
 -- Open every connected gamepad, not only the first one koreader-base opens

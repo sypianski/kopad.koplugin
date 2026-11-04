@@ -12,7 +12,7 @@ words or sentences for highlight / dictionary / AI lookup. Name = KO(Reader) +
 There is **no build step and no package manager**. Development is
 edit-Lua → load into KOReader → observe. The repo *is* the plugin source. The
 automated tests are `lua tests/padmap_test.lua` (pure remapping layer, plus the
-padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch), `lua tests/keyhints_test.lua` (file browser shortcut letters, both modes),
+padnav wiring), `lua tests/vkb_test.lua` (InputDialog keyboard patch), `lua tests/keyhints_test.lua` (file browser shortcut letters), `lua tests/focushand_test.lua` (the hand on the focused item),
 `lua tests/padconfirm_test.lua` (button letters on confirmation dialogs),
 `lua tests/padopen_test.lua` (opening every gamepad), `lua tests/wheel_test.lua` (wheel.lua: sectors, pages, stick
 directions, glyphs, controller), `lua tests/selector_test.lua` (selector.lua
@@ -101,14 +101,36 @@ contribute menu entries via an optional `getMenuItems()` method that
 
 `self.subs.keyhints` = `keyhints.lua` (plain module, global state): `apply()` /
 `restore()` hide / put back KOReader's Q-W-E-R-T-Y shortcut letter labels on
-file browser items by `rawset`-ing `BookList.is_enable_shortcut`; main.lua calls
-it via `_sync_key_hints()` from `init` and the toggle (idempotent, pcall-guarded).
-Two modes, chosen on every `apply()`: stock = `is_enable_shortcut` off; when
-keyreader's `menupage` is installed (`Menu.shortcut_box_manicule`) shortcuts
-stay and only `BookList.hide_shortcut_letters` is set, because menupage paints
-the focus hand (☞) INSIDE the shortcut box -- switching shortcuts off took the
-hand away (0.1.21). Contract with keyreader >= 0.1.3 (`getItemShortCutIcon`
-reads `self.hide_shortcut_letters`); `lua tests/keyhints_test.lua`.
+file browser items; main.lua calls it via `_sync_key_hints()` from `init` and
+the toggle (idempotent, pcall-guarded). Since 0.1.22 it leaves the shortcuts ON
+and gives `BookList` a `getItemShortCutIcon` that hides the letter
+(`focushand.wrap_factory`, `hidden`): the slot stays for the hand (below).
+Without `focushand.lua` it falls back to `is_enable_shortcut = false`.
+`lua tests/keyhints_test.lua`.
+
+### `focushand.lua` — the hand (☞) on the focused menu item (0.1.22)
+kopad's own, independent of keyreader's menupage (0.1.21 had asked menupage to
+keep its shortcut box; the flags it added, `Menu.shortcut_box_manicule` and
+`hide_shortcut_letters`, are no longer used). It uses the squares KOReader
+already reserves: the shortcut icon slot of `Menu` / `BookList` / list / mosaic
+items (`menu:getItemShortCutIcon`; `focushand.wrap_icon` replaces the returned
+icon's `paintTo`: the focused item gets a white square with the hand, the others
+what they had, or nothing when `hidden`) and the check mark slot of
+`TouchMenuItem` (the top menu; its class `paintTo` is wrapped once, found the
+first time such an item is focused). `main.lua:_install_focushand()` ->
+`FocusHand.install(state_fn)` (once per run, state replaced by every instance)
+wraps `FocusManager.onFocusMove` / `moveFocusTo` -- the only senders of
+Focus / Unfocus -- to learn the focused item (`note_focus`, weak reference), and
+wraps `Menu.getItemShortCutIcon` so the TOC, history and so on get the hand too
+(a menupage installed later replaces that factory and paints its own). An icon
+does not know its item: it asks whether it is being painted inside the focused
+item's `dimen` (InputContainer:paintTo sets `dimen.x/y` before the children); an
+item is focused while `_underline_container.color` is black (what Focus sets in
+all four item classes), so a stale reference paints nothing. RTL UI: ☜. A
+checked item loses its check mark under the hand while focused. Not covered: a
+Menu on a device with no keyboard (`is_enable_shortcut` off, no slot) other than
+BookList. Verified against KOReader 2026.07.1 sources, not yet on a device.
+`lua tests/focushand_test.lua`.
 
 ### `padnav.lua` — event router (`InputContainer`, `PadNav`)
 Owns all gamepad `key_events` bindings and the **key-suppression** mechanism.
