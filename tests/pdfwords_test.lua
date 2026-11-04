@@ -403,6 +403,33 @@ assert(st.items[2].place == "above" and st.items[2].y + st.items[2].d == ov.word
 assert(ov:point_press("X") == "start" and ov.pointer.start == 5)
 assert(ov:point_press("left") == "done" and text(ov) == "T:five six seven.", tostring(text(ov)))
 sel:_close()
+-- the end step keeps the start step's letters (TASK-40): start "five" = X X;
+-- One two three (A) get no badge, X sits over five; X X again = five alone,
+-- X Y = five six (two words from the middle)
+local function at_five()
+    local s5 = fresh({ zoom = 1, vx = 0, vy = 0 })
+    s5:_open_point()
+    local o = s5.overlay
+    press(o, label_of(o, 1))
+    assert(table.concat(label_of(o, nil, 5)) == "XX" and table.concat(label_of(o, nil, 6)) == "XY")
+    assert(press(o, { "X", "X" }) == "start" and o.pointer.start == 5)
+    return s5, o
+end
+sel, ov = at_five()
+assert(table.concat(label_of(ov, nil, 5)) == "XX" and table.concat(label_of(ov, nil, 7)) == "YA",
+    "end step: the same letters")
+assert(label_of(ov, nil, 4) == nil, "four, before the start: no label")
+st = ov.pointer:stage()
+assert(#st.items == 2 and st.items[1].symbol == "X" and st.items[1].word == 5 and st.items[2].word == 7,
+    "no badge for One two three, X over five")
+circles_only(clear_of_words(ov, "PDF end step"), 2, "end step")
+assert(ov:point_press("A") == "ignored", "A = One two three, before the start")
+assert(press(ov, { "X", "X" }) == "done" and ov.ww_anchor == nil and text(ov) == "T:five",
+    "X X again = one word: " .. tostring(text(ov)))
+sel:_close()
+sel, ov = at_five()
+assert(press(ov, { "X", "Y" }) == "done" and text(ov) == "T:five six", "two words: " .. tostring(text(ov)))
+sel:_close()
 TEXT[1] = saved_text
 -- page 2: the sentence begun on page 1 is labelled at its visible part
 sel = fresh({ page = 2, zoom = 1, vx = 0, vy = 0 })

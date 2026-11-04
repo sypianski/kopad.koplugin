@@ -422,7 +422,7 @@ press(ov, label_of(ov, 1))
 assert(ov:point_press("A") == "prefix" and ov:point_press("X") == "start" and ov.pointer.start == 2)
 assert(ov.pointer.step == "end")
 assert(words_of(ov) == "2,3,4", "end step: S1 from the start word: " .. words_of(ov))
-assert(ov:_status_text() == "TO \xC2\xB7 A X Y \xC2\xB7 " .. LEFT .. " end " .. RIGHT .. " next " .. DOWN
+assert(ov:_status_text() == "TO \xC2\xB7 A X \xC2\xB7 " .. LEFT .. " end " .. RIGHT .. " next " .. DOWN
     .. " paragraph \xC2\xB7 B one word", ov:_status_text())
 paint()
 assert(painted.invertRect, "end step: the preview t2 .. t4 inverted")
@@ -476,6 +476,29 @@ press(ov, label_of(ov, 2))
 assert(ov:point_press("up") == "start" and ov.pointer.start == 3, "↑: S3 begins paragraph 2")
 assert(ov:point_press("B") == "done" and ov.mode == "walk" and ov.ww_anchor == nil and text(ov) == "t9",
     "B = one word: " .. tostring(text(ov)))
+sel:_close()
+-- the end step keeps the start step's letters (TASK-40): S1 = t1 AA, t2 AX,
+-- t3 AY, t4 XA; start t2, then t1 has no label, A X again = t2 alone, A Y =
+-- t2 t3 (two words from the middle)
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1))
+local s1 = {}
+for _, v in ipairs(ov.pointer:visible()) do s1[v.word] = table.concat(v.label) end
+assert(s1[1] == "AA" and s1[2] == "AX" and s1[3] == "AY" and s1[4] == "XA")
+assert(press(ov, { "A", "X" }) == "start" and ov.pointer.start == 2)
+for _, v in ipairs(ov.pointer:visible()) do
+    assert(table.concat(v.label) == s1[v.word], "same letters for t" .. v.word)
+end
+assert(label_of(ov, nil, 1) == nil, "t1, before the start: no label")
+assert(press(ov, { "A", "X" }) == "done" and ov.mode == "walk" and ov.ww_anchor == nil and text(ov) == "t2",
+    "the start's letters again = one word: " .. tostring(text(ov)))
+sel:_close()
+sel, doc = fresh()
+sel:_open_point(); ov = sel.overlay
+press(ov, label_of(ov, 1)); press(ov, { "A", "X" })
+assert(ov:point_press("A") == "prefix" and ov:point_press("A") == "ignored", "A A = t1, before the start")
+assert(ov:point_press("Y") == "done" and text(ov) == "t2 t3", "two words from the middle: " .. tostring(text(ov)))
 sel:_close()
 -- B in the start step on the sentences: cancel (padnav closes the overlay)
 sel = fresh()

@@ -31,7 +31,8 @@ neighbours share their first symbol.
 Word labels (M.word_labels, TASK-39) are LETTERS only, A / X / Y: a tree of
 threes in reading order. n words = k stages (the smallest k with 3^k >= n);
 stage i cuts the current range into pieces of 3^(k-i) words from its start
-(the last one shorter), A = the first piece, X = the second, Y = the third.
+(the last one shorter), A = the first piece, X = the second, Y = the third
+(the tree always spans the whole sentence, also in the end step, TASK-40).
 A word's label = k letters (2 up to 9 words, 3 up to 27, 4 up to 81). The
 arrows are never in a label (on the word level they are shortcuts, see
 Pointer), nor is B (B = back one stage).
@@ -267,14 +268,20 @@ end
 --   with the same `para` up to it); → / ↓ nothing.
 -- step "end" (always level "word"): the current end sentence E (self.sent,
 --   at first the start sentence) and letter labels over its words (in the
---   start sentence from the start word on). A label = the end on that word ->
+--   start sentence only the words from the start word on, with their start
+--   step letters, TASK-40). A label = the end on that word ->
 --   "done". Shortcuts: ← = the end of E, done; → = E + 1 (the labels move
 --   there; nothing on the page's last sentence: a range never leaves the
 --   page); ↑ = E - 1 (never before the start sentence); ↓ = the end of E's
 --   paragraph, done. preview() = start .. the end of E (what ← gives).
--- Word labels: M.word_labels over the step's visible words of the sentence
---   (in the end step's start sentence from the start word on): every word
---   has one, however long the sentence (more stages).
+-- Word labels: M.word_labels over ALL the visible words of the sentence:
+--   every word has one, however long the sentence (more stages). In the end
+--   step's start sentence the tree is the start step's (TASK-40), so a word
+--   keeps its letters; the words before the start word have no target: a
+--   piece wholly before it gets no badge, the piece holding it gets its badge
+--   over the start word, a letter leading only before it is "ignored". One
+--   word = the start's letters again (or B), two = the next word's letters.
+--   Another end sentence (→ / ↑) counts from its own first visible word.
 -- press(sym) results:
 --   "prefix"    a symbol of a label typed: only the labels with it stay
 --               (on the word level: the next stage)
@@ -370,17 +377,26 @@ function Pointer:_sentence_labels()
 end
 
 -- Word labels of sentence si (level "word"), one per visible word; (x, y) =
--- the top centre of the word (side "top"), for visible().
+-- the top centre of the word (side "top"), for visible(). The tree is always
+-- built over ALL the visible words of the sentence (TASK-40), so a word keeps
+-- its letters between the start and the end step; in the end step's start
+-- sentence the words before the start word then lose their target (no label,
+-- no badge, their letters are ignored).
 function Pointer:_word_labels(si)
     self.level, self.sent = "word", si
-    local vis = self:_vis(si)
-    local targets = {}
+    local vis = self:_visible_words(si)
+    local labels = M.word_labels(#vis)
+    local from = self:_from_word(si)
+    local targets, kept = {}, {}
     for k = 1, #vis do
-        local b = box_of(self, vis[k])
-        targets[k] = { sent = si, word = vis[k], x = b.x + b.w / 2, y = b.y,
-                       side = "top", h = b.h }
+        if not from or vis[k] >= from then
+            local b = box_of(self, vis[k])
+            targets[#targets + 1] = { sent = si, word = vis[k], x = b.x + b.w / 2, y = b.y,
+                                      side = "top", h = b.h }
+            kept[#kept + 1] = labels[k]
+        end
     end
-    self:_set_targets(targets, M.word_labels(#targets))
+    self:_set_targets(targets, kept)
 end
 
 -- The next / previous sentence (dir) from si with a visible word in this

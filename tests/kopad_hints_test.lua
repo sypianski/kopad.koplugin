@@ -308,8 +308,8 @@ do
 end
 
 -- 7. Long sentences: more stages, every word labelled (no window any more,
--- TASK-39); B drops one letter at a time; the end step counts from the start
--- word.
+-- TASK-39); B drops one letter at a time; the end step keeps the start
+-- step's letters (TASK-40) and labels only the words from the start on.
 do
     local boxes = page(30, 10)
     local p = H.Pointer.new({ { first = 1, last = 8 }, { first = 9, last = 30 } }, boxes)
@@ -325,9 +325,9 @@ do
     assert(p:visible()[1].typed == 2)
     assert(p:press("B") == "unprefix" and p:visible()[1].typed == 1, "B drops the last letter")
     assert(p:press(l[2]) == "prefix" and p:press(l[3]) == "start" and p.start == 20)
-    -- the end step: S2 from word 20 = 11 words, three letters
+    -- the end step: S2 from word 20 = 11 words, the same three letters
     wv = p:visible()
-    assert(#wv == 11 and #wv[1].label == 3 and wv[1].word == 20)
+    assert(#wv == 11 and wv[1].word == 20 and table.concat(wv[1].label) == table.concat(l))
 
     local big = page(160, 10)
     p = H.Pointer.new({ { first = 1, last = 160 } }, big)
@@ -336,7 +336,8 @@ do
     assert(#wv == 160 and #wv[1].label == 5 and wv[160].word == 160, "160 words: all, five letters")
     assert(pick(p, "word", 3) == "start")
     wv = p:visible()
-    assert(#wv == 158 and wv[1].word == 3 and table.concat(wv[1].label) == "AAAAA", "end: from the start word")
+    assert(#wv == 158 and wv[1].word == 3 and table.concat(wv[1].label) == "AAAAY",
+        "end: from the start word, with its start-step letters")
     assert(p:press("left") == "done" and p.stop == 160, "← = the end of the sentence")
 end
 
@@ -387,7 +388,7 @@ do
     pick(p, "sent", 2)
     assert(p:press("X") == "prefix" and p:press("Y") == "start" and p.start == 9)
     st = p:stage()
-    assert(syms(st) == "A9 X12", "end step: 9..12 = pieces 9..11 and 12: " .. syms(st))
+    assert(syms(st) == "X9 Y10", "end step: the start step's pieces, 9 in X (7..9), Y = 10..12: " .. syms(st))
     assert(p:press("left") == "done" and p.start == 9 and p.stop == 12)
     assert(p:stage().kind == "done" and #p:stage().items == 0)
 
@@ -449,6 +450,77 @@ do
     assert(p:press("X") == "prefix" and p:press("left") == "ignored", "RTL ←: on, nothing in the start step")
     assert(p:press("right") == "start" and p.start == 4, "RTL → after X: the sentence start")
     assert(p:press("A") == "prefix" and p:press("right") == "done" and p.stop == 12, "RTL →: the end")
+end
+
+-- 9. The end step keeps the start step's letters (TASK-40): in the start
+-- sentence the tree is the one of the start step (all the visible words of
+-- the sentence); the words before the start word lose their target: no
+-- label, no badge for a piece wholly before it, the piece holding it gets
+-- its badge over the start word, a prefix leading only before it = ignored.
+-- Another end sentence (→ / ↑) counts from its own first word.
+local function lab(p, w) local l = label_for(p, "word", w); return l and table.concat(l) end
+do
+    local boxes = page(30, 10)
+    local S9 = { { first = 1, last = 9, para = 1 }, { first = 10, last = 18, para = 1 } }
+    local function at5(opts)
+        local p = H.Pointer.new(S9, boxes, opts)
+        pick(p, "sent", 1)
+        local before = {}
+        for _, v in ipairs(p:visible()) do before[v.word] = table.concat(v.label) end
+        assert(before[5] == "XX" and before[6] == "XY" and before[7] == "YA")
+        assert(p:press("X") == "prefix" and p:press("X") == "start" and p.start == 5)
+        return p, before
+    end
+    local p, before = at5()
+    assert(words(p) == "5,6,7,8,9", "end step: only from the start word: " .. words(p))
+    for w = 5, 9 do assert(lab(p, w) == before[w], "word " .. w .. ": same letters as in the start step") end
+    assert(syms(p:stage()) == "X5 Y7", "no badge for A (1..3), X over the start word: " .. syms(p:stage()))
+    assert(p:press("A") == "ignored" and #p.typed == 0, "A = words 1..3, before the start")
+    assert(p:press("X") == "prefix" and syms(p:stage()) == "X5 Y6", "in X: 4 dropped, " .. syms(p:stage()))
+    assert(p:press("A") == "ignored", "XA = word 4, before the start")
+    assert(p:press("X") == "done" and p.start == 5 and p.stop == 5, "XX again = one word")
+    p = at5()
+    assert(p:press("X") == "prefix" and p:press("Y") == "done" and p.stop == 6, "XY = words 5..6")
+    p = at5()
+    assert(p:press("B") == "done" and p.stop == nil, "B = one word")
+    p = at5()
+    assert(p:press("Y") == "prefix" and p:press("A") == "done" and p.stop == 7, "YA = words 5..7")
+    p = at5()
+    assert(p:press("X") == "prefix" and p:press("B") == "unprefix" and syms(p:stage()) == "X5 Y7")
+    assert(select(2, p:preview()) == 9 and p:press("left") == "done" and p.stop == 9, "← unchanged")
+    -- → : the next sentence counts from its own first word, as in the start step
+    p = at5()
+    assert(p:press("right") == "sentence" and p.sent == 2)
+    assert(words(p) == "10,11,12,13,14,15,16,17,18" and lab(p, 10) == "AA" and lab(p, 18) == "YY")
+    assert(syms(p:stage()) == "A10 X13 Y16", syms(p:stage()))
+    assert(p:press("up") == "sentence" and p.sent == 1 and syms(p:stage()) == "X5 Y7", "↑: S1 again, same letters")
+    -- RTL: the same letters, the badge at the start word's right edge
+    p, before = at5({ rtl = true })
+    for w = 5, 9 do assert(lab(p, w) == before[w], "RTL word " .. w) end
+    local st = p:stage()
+    assert(syms(st) == "X5 Y7" and st.items[1].x == boxes[5].x + boxes[5].w, "RTL: right edge")
+    assert(p:press("left") == "sentence" and p.sent == 2, "RTL ← = the next sentence")
+
+    -- 22 words, the start in the middle (word 12 = XAY): three stages
+    local S22 = { { first = 1, last = 22 } }
+    local function at12()
+        local q = H.Pointer.new(S22, boxes)
+        pick(q, "sent", 1)
+        assert(lab(q, 12) == "XAY" and lab(q, 13) == "XXA")
+        assert(pick(q, "word", 12) == "start" and q.start == 12)
+        return q
+    end
+    local q = at12()
+    assert(lab(q, 12) == "XAY" and lab(q, 13) == "XXA" and lab(q, 22) == "YXA", "same letters in the end step")
+    assert(label_for(q, "word", 11) == nil, "no label before the start")
+    assert(syms(q:stage()) == "X12 Y19", "A (1..9) gone, X over 12: " .. syms(q:stage()))
+    assert(q:press("A") == "ignored")
+    assert(q:press("X") == "prefix" and syms(q:stage()) == "A12 X13 Y16", syms(q:stage()))
+    assert(q:press("A") == "prefix" and syms(q:stage()) == "Y12", "XA: 10, 11 gone")
+    assert(q:press("A") == "ignored" and q:press("X") == "ignored")
+    assert(q:press("Y") == "done" and q.stop == 12, "XAY again = one word")
+    q = at12()
+    assert(pick(q, "word", 13) == "done" and q.start == 12 and q.stop == 13, "two words from the middle")
 end
 
 print("kopad_hints_test: OK")

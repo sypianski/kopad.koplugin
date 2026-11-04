@@ -358,7 +358,14 @@ resets `typed`, an `ignored` one keeps it; ← / → swapped in RTL): start
 step ← = the sentence's first word, ↑ = the first visible word of its
 paragraph (the run of sentences with equal `para`), → / ↓ ignored. Step
 `end` begins at once on level `word` with E = `self.sent` = the start
-sentence (from the start word on): the last letter / ← (end of E) / ↓ (end of E's
+sentence (from the start word on; TASK-40: `_word_labels` builds the tree over
+ALL the sentence's visible words, as in the start step, then drops the
+targets before `self.start` (`_from_word`), so a word keeps its letters; a
+piece wholly before the start gets no badge in `stage()`, the piece holding it
+has its badge over the start word, a prefix leading only before it =
+`ignored`; one word = the start's letters again (stop = start) or B, two =
+the next word's letters; another end sentence after → / ↑ counts from its own
+first visible word): the last letter / ← (end of E) / ↓ (end of E's
 paragraph) = `done`; → = the next sentence with a visible word (`sentence`;
 none = `ignored`: a range stays on the page), ↑ = the previous one, never
 before `start_sent`. `preview()` = start .. last visible word of E (what
