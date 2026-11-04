@@ -422,9 +422,15 @@ SDL text input itself stays on, so a physical keyboard still types. Pad check:
 `SDL_GetJoysticks` + `SDL_IsGamepad` through `require("ffi/SDL3").SDL`, only
 when `Device:isSDL()` — not ffi/SDL3's `S.controller`, which stays stale after
 the last pad is unplugged. Text input with a pad: RT held = dictation, X =
-backspace, A = accept, Y = KOReader's keyboard on / off (`M.toggle_keyboard`:
-clears the startup skip flag; works with the focus anywhere in the dialog,
-dictation keeps working under it) (`_text_field_button`, `_dictate_hold`).
+backspace, A = accept, Y and Start = a keyboard by hand (`M.toggle_keyboard`,
+focus anywhere in the dialog; Start used to be padconfirm's "A" = Save, which
+closed the note): KOReader's when up = hide it; else `M.system_keyboard()` =
+Steam's on a Deck the way SDL opens it (`SDL_HasScreenKeyboardSupport`,
+cdef'd; `SDL_StopTextInput` -- SDL skips a keyboard it thinks is up, and
+Steam's own hide does not tell it -- hint `"1"`, `SDL_StartTextInput`, hint
+back to `"0"`); no SDL screen keyboard (a desktop) = KOReader's (startup skip
+flag cleared; dictation keeps working under it). While Steam's is up Steam
+owns the pad, so RT types there instead of dictating (`_text_field_button`, `_dictate_hold`).
 **A keyboard is the user's choice, hiding it never closes the dialog:**
 Steam's keyboard opened by hand (Steam + X) hides with a Back (Escape) key,
 and stock InputText (`onKeyPress`, focused field) / InputDialog (key event
@@ -457,7 +463,8 @@ first `_("Cancel")` / `_("Close")` = B. `dlg._kopad_confirm` = the letters set
 `_diktonoti_route` and `_text_field_button`): A = `press(dlg, "A")` unless
 `focus_shown(dlg)` (any `frame` / `_frame` / `image` with `invert == true`: on a
 touch device the initial FocusManager focus is not painted, so painted = the
-user moved it -> stock press of the highlighted thing); Start = A always;
+user moved it -> stock press of the highlighted thing); Start = A always
+(except in a text-input dialog: the keyboard, `_text_field_button` first);
 B / X / Y = their buttons. `press` finds the Button by its label prefix in the
 widget tree (array children only) and runs its `callback`; a disabled button
 is consumed without action. Why: stock A pressed the unpainted focus at
@@ -721,7 +728,7 @@ first moves it back to the field (`focus_field`, FocusManager
 passes L3 / R3 to KOReader. kopad's own text-field controls, with or without
 diktonoti (`_text_field_button`): X = backspace, A = the dialog's
 `is_enter_default` button (Save / Search) while the focus is on the field,
-Y = KOReader's keyboard on / off, B presses the dialog's B button = close;
+Y / Start = a keyboard (Steam's on a Deck), B presses the dialog's B button = close;
 section 15 of `tests/padmap_test.lua`); every
 other plugin's windows simply get stock keys from kopad (context `window`) and
 need no pad code. The rules below describe how that integration works and how to

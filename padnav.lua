@@ -1938,12 +1938,14 @@ end
 -- Buttons in a text-input dialog (ctx "window"): X = backspace, A = accept
 -- (the default button, like Enter) while the focus is on the text field; B
 -- keeps the stock Back = close without saving (or cancels a recording, see
--- _diktonoti_route). Y = KOReader's on-screen keyboard on / off (vkb.lua hides
--- it at the start; dictation still works under it), with the focus anywhere
--- in the dialog. Stock gives these dialogs no pad action for X or Y, and A on
--- the field does nothing. Returns true = consumed.
+-- _diktonoti_route). Y and Start = KOReader's on-screen keyboard on / off
+-- (vkb.lua hides it at the start; dictation still works under it), with the
+-- focus anywhere in the dialog. Start comes here before _confirm_button,
+-- whose Start = the "A" button (Save) closed a note meant to be typed into.
+-- Stock gives these dialogs no pad action for X or Y, and A on the field does
+-- nothing. Returns true = consumed.
 function PadNav:_text_field_button(btn)
-    if btn == BTN_Y and Vkb then
+    if (btn == BTN_Y or btn == BTN_START) and Vkb then
         local dlg, input = text_dialog(true)
         if not dlg then return false end
         if input.focused ~= true then focus_field(dlg, input) end

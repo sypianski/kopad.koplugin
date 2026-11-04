@@ -29,8 +29,8 @@ SDL_ENABLE_SCREEN_KEYBOARD = "0" before every start while kopad is enabled
 and a pad is connected (text input itself stays on: a physical keyboard still
 types), and resets it otherwise.
 
-The keyboard stays the user's choice: Y on the pad (padnav:
-_text_field_button), a tap on the field or Steam's own keyboard (Steam + X)
+The keyboard stays the user's choice: Y or Start on the pad (padnav:
+_text_field_button; system_keyboard = Steam's on a Deck), a tap on the field or Steam's own keyboard (Steam + X)
 open one by hand, and dictation keeps working under KOReader's. What must not
 happen is that hiding a keyboard closes the dialog: Steam's keyboard hides
 with a Back (Escape) key, and stock InputDialog / InputText answer a Back key
@@ -213,7 +213,32 @@ function M.wrap_back()
     return true
 end
 
--- Y on the pad: open KOReader's keyboard for `dlg`, or hide it when it is up.
+-- Open the system's screen keyboard (Steam's on a Deck) the way SDL does it
+-- for a focused field: SDL_StartTextInput with the hint on, then the hint
+-- back to "0" so later focus changes do not open it. A stop first, because
+-- SDL does not show a keyboard it believes is up (Steam's own hide button
+-- does not tell SDL). False when SDL has no screen keyboard (a desktop).
+function M.system_keyboard()
+    if not is_sdl() then return false end
+    local ok, res = pcall(function()
+        local S = require("ffi/SDL3")
+        local SDL = S.SDL
+        if not M._has_skb_cdef then
+            pcall(function() require("ffi").cdef("bool SDL_HasScreenKeyboardSupport(void);") end)
+            M._has_skb_cdef = true
+        end
+        if not SDL.SDL_HasScreenKeyboardSupport() then return false end
+        SDL.SDL_StopTextInput(S.screen)
+        SDL.SDL_SetHint(SCREEN_KB_HINT, "1")
+        SDL.SDL_StartTextInput(S.screen)
+        SDL.SDL_SetHint(SCREEN_KB_HINT, "0")
+        return true
+    end)
+    return ok and res == true
+end
+
+-- Y / Start on the pad: the system's screen keyboard (Steam's on a Deck),
+-- else KOReader's for `dlg`; KOReader's, when up (a tap opened it), is hidden.
 -- The startup skip flag (should_hide) would eat the first show, so it goes.
 function M.toggle_keyboard(dlg)
     if type(dlg) ~= "table" or dlg.readonly then return false end
@@ -221,6 +246,7 @@ function M.toggle_keyboard(dlg)
         dlg:onCloseKeyboard()
         return true
     end
+    if M.system_keyboard() then return true end
     if type(dlg.onShowKeyboard) ~= "function" then return false end
     dlg.skip_first_show_keyboard = nil
     dlg:onShowKeyboard()

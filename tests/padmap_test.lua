@@ -1542,7 +1542,9 @@ do
     dlg.onCloseKeyboard = function(self) self.kb = false end
     assert(n:onGamepadButtonDown({ button = 3 }) == true and dlg.kb == true, "Y shows the keyboard")
     assert(n:onGamepadButtonDown({ button = 3 }) == true and dlg.kb == false, "Y hides it")
-    assert(#log == 2, "Y presses no button")
+    assert(n:onGamepadButtonDown({ button = 6 }) == true and dlg.kb == true, "Start shows the keyboard")
+    assert(n:onGamepadButtonDown({ button = 6 }) == true and dlg.kb == false, "Start hides it")
+    assert(#log == 2, "Y / Start press no button (not Save)")
 
     -- RT held: start, auto-repeats consumed without new calls, release -> stop
     held[5] = "plus"

@@ -121,9 +121,9 @@ While kopad is on and a gamepad is connected, KOReader's confirmation and value 
 | Yes/no question (`ConfirmBox`: delete, overwrite, reset, …) | the action (OK, Delete, …) | Cancel | — |
 | Three-way question (`MultiConfirmBox`) | the main choice, by its text (Save, Connect, Open, Yes, Download) | Cancel | **X** = the other choice (Discard, Turn Wi-Fi off, Another, No); a pair without a main choice (Default / Fallback, http / https) gets **X** = left, **Y** = right and no **A** |
 | Number, two numbers, date / time, list of options (`SpinWidget`, `DoubleSpinWidget`, `DateTimeWidget`, `RadioButtonWidget`) | Apply / Set | Close | — |
-| Text input (`InputDialog`) | the main button (Save, Search, …) | Cancel / Close | **X** = backspace, **Y** = on-screen keyboard on / off |
+| Text input (`InputDialog`) | the main button (Save, Search, …) | Cancel / Close | **X** = backspace, **Y** / **Start** = on-screen keyboard (Steam's on a Steam Deck) |
 
-**A** follows the label only while nothing is highlighted. Once the D-pad has moved the focus (to a button, a ▲/▼ arrow, an option in a list), **A** presses what is highlighted, as in stock KOReader, and **Start** still does the labelled **A** action. **LB** / **RB** change the value in the number dialogs (stock).
+**A** follows the label only while nothing is highlighted. Once the D-pad has moved the focus (to a button, a ▲/▼ arrow, an option in a list), **A** presses what is highlighted, as in stock KOReader, and **Start** still does the labelled **A** action (in a text dialog **Start** opens the keyboard instead). **LB** / **RB** change the value in the number dialogs (stock).
 
 #### Dialogs as a wheel
 
@@ -211,11 +211,11 @@ Without keyreader, or with the switch off, nothing changes. Windows opened by ot
 
 ### Text fields and dictation (diktonoti, opt-in via pluginaro)
 
-In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **Y** = KOReader's on-screen keyboard on / off, **B** = close without saving.
+In any dialog with a text field (a note to a highlight, search, dictionary lookup, …): **X** = backspace, **A** = accept (the dialog's main button: Save, Search) while the focus is on the field, **Y** or **Start** = the on-screen keyboard (on a Steam Deck Steam's own, elsewhere KOReader's), **B** = close without saving.
 
 The note window of the selection's action menu opens with the highlight's saved note, is wide, and grows from a medium to a large height once the text no longer fits; an emptied note is removed when saved.
 
-While kopad is enabled and a gamepad is connected, these dialogs open **without the on-screen keyboard** (it would cover half of the screen), and moving the focus back onto the field with the D-pad does not bring it up either. On a Steam Deck this includes Steam's own keyboard, which SDL would otherwise open over KOReader (and which takes the pad over: its hide button closed the dialog); press **Y**, tap the field or the dialog's keyboard button to bring it up. The keyboard and dictation work together: with the keyboard open, the D-pad and **A** type, **B** hides it, **RT** still dictates into the same field. Hiding a keyboard never closes the dialog, Steam's own (Steam + X) included.
+While kopad is enabled and a gamepad is connected, these dialogs open **without the on-screen keyboard** (it would cover half of the screen), and moving the focus back onto the field with the D-pad does not bring it up either. On a Steam Deck this includes Steam's own keyboard, which SDL would otherwise open over KOReader (and which takes the pad over: its hide button closed the dialog); press **Y** or **Start** (Steam's keyboard on a Deck), or tap the field (KOReader's keyboard). Dictation and typing go into the same field in any order: dictate, open the keyboard, add by hand, close it, dictate again. While Steam's keyboard is up Steam owns the pad (RT types there); under KOReader's keyboard the D-pad and **A** type, **B** hides it and **RT** still dictates. Hiding a keyboard never closes the dialog, Steam's own (Steam + X) included.
 
 With the diktonoti plugin and its switch on (diktonoti's menu → *Extensions*): **hold RT** and speak — on release the text is recognized by the Diktilo daemon on the Steam Deck and inserted at the cursor; **B** during a recording cancels it, the other buttons do nothing until it ends. Dictation comes first in a text dialog: RT works with the on-screen keyboard open, over another plugin's selection, and with the focus on the dialog's buttons (it moves back to the field). (Not a stick click: on the Deck, Steam Input does not pass L3 / R3 to KOReader.) Without diktonoti, or with the switch off, RT does nothing there.
 

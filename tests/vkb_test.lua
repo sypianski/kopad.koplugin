@@ -166,6 +166,29 @@ do
     assert(V.toggle_keyboard(new_dlg({ readonly = true })) == false, "read-only: nothing")
 end
 
+-- 10. Y / Start on a Deck: Steam's keyboard through SDL (stop, hint "1",
+-- start, hint "0"), not KOReader's; no SDL screen keyboard -> KOReader's
+do
+    local calls, support = {}, true
+    package.loaded["ffi/SDL3"] = { screen = "win", SDL = {
+        SDL_HasScreenKeyboardSupport = function() return support end,
+        SDL_StopTextInput = function(w) calls[#calls + 1] = "stop:" .. w end,
+        SDL_StartTextInput = function(w) calls[#calls + 1] = "start:" .. w end,
+        SDL_SetHint = function(k, v) calls[#calls + 1] = "hint=" .. v end,
+    } }
+    package.loaded["device"] = { isSDL = function() return true end }
+    local d10 = new_dlg({ skip_first_show_keyboard = true })
+    function d10:isKeyboardVisible() return self.kb == true end
+    function d10:onShowKeyboard() self.kb = true end
+    function d10:onCloseKeyboard() self.kb = false end
+    assert(V.toggle_keyboard(d10) == true and d10.kb == nil, "Steam's keyboard, not KOReader's")
+    assert(table.concat(calls, ",") == "stop:win,hint=1,start:win,hint=0", "SDL sequence: " .. table.concat(calls, ","))
+    support = false
+    assert(V.toggle_keyboard(d10) == true and d10.kb == true, "no screen keyboard: KOReader's")
+    assert(V.toggle_keyboard(d10) == true and d10.kb == false, "KOReader's up: hidden")
+    package.loaded["ffi/SDL3"], package.loaded["device"] = nil, nil
+end
+
 -- 7. pad check on a non-SDL device: false without touching SDL
 package.loaded.vkb = nil
 package.preload["device"] = function() return { isSDL = function() return false end } end
